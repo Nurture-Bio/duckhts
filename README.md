@@ -347,10 +347,10 @@ dbGetQuery(con, "
   FROM read_hts_header('test/data/formatcols.vcf.gz', mode := 'raw')
   LIMIT 3
 ")
-#>   idx                  raw
-#> 1   0 ##fileformat=VCFv4.3
-#> 2   1 ##fileformat=VCFv4.3
-#> 3   2 ##fileformat=VCFv4.3
+#>   idx                                                 raw
+#> 1   0                                ##fileformat=VCFv4.3
+#> 2   1 ##FILTER=<ID=PASS,Description="All filters passed">
+#> 3   2                                     ##contig=<ID=1>
 
 dbGetQuery(con, "
   SELECT seqname, tid, index_type, chunk_beg_vo, chunk_end_vo
