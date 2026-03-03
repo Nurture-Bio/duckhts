@@ -153,6 +153,7 @@ typedef struct {
     tbx_t* tbx;               // VCF tabix index (TBI)
     hts_itr_t* itr;           // Iterator
     kstring_t kstr;           // String buffer for VCF text parsing
+    kstring_t gt_kstr;        // Thread-local reusable GT formatter buffer
     
     int64_t current_row;
     int done;
@@ -263,6 +264,7 @@ static void destroy_init_data(void* data) {
     if (init->fp) hts_close(init->fp);
     if (init->column_ids) duckdb_free(init->column_ids);
     ks_free(&init->kstr);
+    ks_free(&init->gt_kstr);
     
     duckdb_free(init);
 }
@@ -1866,30 +1868,39 @@ static void bcf_read_function(duckdb_function_info info, duckdb_data_chunk outpu
                             if (ret_gt > 0 && gt_arr) {
                                 int ploidy = ret_gt / bind->n_samples;
                                 int32_t* sample_gt = gt_arr + sample_idx * ploidy;
-                                
-                                // Build GT string (e.g., "0/1", "1|1", "./.")
-                                char gt_str[64];
-                                int pos = 0;
-                                
-                                for (int p = 0; p < ploidy && pos < 60; p++) {
-                                    if (p > 0) {
-                                        // Add separator: '|' for phased, '/' for unphased
-                                        gt_str[pos++] = bcf_gt_is_phased(sample_gt[p]) ? '|' : '/';
-                                    }
-                                    
+
+                                // Build GT string (e.g., "0/1", "1|1", "./.") with a reusable
+                                // thread-local dynamic buffer (no fixed-size truncation).
+                                init->gt_kstr.l = 0;
+                                if (init->gt_kstr.s) init->gt_kstr.s[0] = '\0';
+
+                                for (int p = 0; p < ploidy; p++) {
                                     if (sample_gt[p] == bcf_int32_vector_end) {
                                         break;  // End of genotype
-                                    } else if (bcf_gt_is_missing(sample_gt[p])) {
-                                        gt_str[pos++] = '.';
+                                    }
+                                    if (p > 0) {
+                                        // Add separator: '|' for phased, '/' for unphased
+                                        if (kputc(bcf_gt_is_phased(sample_gt[p]) ? '|' : '/', &init->gt_kstr) < 0) {
+                                            break;
+                                        }
+                                    }
+
+                                    if (bcf_gt_is_missing(sample_gt[p])) {
+                                        if (kputc('.', &init->gt_kstr) < 0) {
+                                            break;
+                                        }
                                     } else {
                                         int allele = bcf_gt_allele(sample_gt[p]);
-                                        pos += snprintf(gt_str + pos, sizeof(gt_str) - pos, "%d", allele);
+                                        if (kputw(allele, &init->gt_kstr) < 0) {
+                                            break;
+                                        }
                                     }
                                 }
-                                gt_str[pos] = '\0';
-                                
-                                if (pos > 0) {
-                                    duckdb_vector_assign_string_element(vec, row_count, gt_str);
+
+                                if (init->gt_kstr.l > 0 && init->gt_kstr.s) {
+                                    duckdb_vector_assign_string_element_len(
+                                        vec, row_count, init->gt_kstr.s, init->gt_kstr.l
+                                    );
                                 } else {
                                     duckdb_vector_ensure_validity_writable(vec);
                                     uint64_t* validity = duckdb_vector_get_validity(vec);

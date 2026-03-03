@@ -69,6 +69,18 @@ static int valid_header_mode(const char *s) {
     return strcasecmp(s, "parsed") == 0 || strcasecmp(s, "raw") == 0 || strcasecmp(s, "both") == 0;
 }
 
+typedef enum {
+    HTS_HEADER_MODE_PARSED = 0,
+    HTS_HEADER_MODE_RAW,
+    HTS_HEADER_MODE_BOTH
+} hts_header_mode_t;
+
+static hts_header_mode_t parse_header_mode(const char *s) {
+    if (!s || !*s || strcasecmp(s, "parsed") == 0) return HTS_HEADER_MODE_PARSED;
+    if (strcasecmp(s, "raw") == 0) return HTS_HEADER_MODE_RAW;
+    return HTS_HEADER_MODE_BOTH;
+}
+
 static hts_kind_t kind_from_hts_format(const htsFormat *fmt) {
     if (!fmt) return HTS_KIND_UNKNOWN;
     switch (fmt->format) {
@@ -82,6 +94,14 @@ static hts_kind_t kind_from_hts_format(const htsFormat *fmt) {
         case tbi: return HTS_KIND_TABIX;
         default: return HTS_KIND_UNKNOWN;
     }
+}
+
+static int has_tabix_index(const char *path) {
+    if (!path || !*path) return 0;
+    tbx_t *tbx = tbx_index_load(path);
+    if (!tbx) return 0;
+    tbx_destroy(tbx);
+    return 1;
 }
 
 static char *dup_str(const char *s) {
@@ -123,6 +143,7 @@ typedef struct {
     char *format_hint;
     char *file_format;
     char *compression;
+    hts_header_mode_t mode;
     hts_header_entry_t *entries;
     int64_t n_entries;
 } hts_header_bind_t;
@@ -169,13 +190,30 @@ static void destroy_hts_header_init(void *data) {
 
 static void header_add_kv(hts_header_entry_t *e, const char *key, const char *val) {
     int n = e->n_kv + 1;
-    char **new_keys = (char **)realloc(e->kv_keys, sizeof(char *) * (size_t)n);
-    char **new_vals = (char **)realloc(e->kv_vals, sizeof(char *) * (size_t)n);
-    if (!new_keys || !new_vals) return;
+    char **new_keys = (char **)calloc((size_t)n, sizeof(char *));
+    char **new_vals = (char **)calloc((size_t)n, sizeof(char *));
+    if (!new_keys || !new_vals) {
+        free(new_keys);
+        free(new_vals);
+        return;
+    }
+    if (e->n_kv > 0) {
+        memcpy(new_keys, e->kv_keys, sizeof(char *) * (size_t)e->n_kv);
+        memcpy(new_vals, e->kv_vals, sizeof(char *) * (size_t)e->n_kv);
+    }
+    free(e->kv_keys);
+    free(e->kv_vals);
     e->kv_keys = new_keys;
     e->kv_vals = new_vals;
     e->kv_keys[e->n_kv] = dup_str(key ? key : "");
     e->kv_vals[e->n_kv] = dup_str(val ? val : "");
+    if (!e->kv_keys[e->n_kv] || !e->kv_vals[e->n_kv]) {
+        free(e->kv_keys[e->n_kv]);
+        free(e->kv_vals[e->n_kv]);
+        e->kv_keys[e->n_kv] = NULL;
+        e->kv_vals[e->n_kv] = NULL;
+        return;
+    }
     e->n_kv = n;
 }
 
@@ -422,6 +460,7 @@ static void read_hts_header_bind(duckdb_bind_info info) {
     }
     bind->file_path = dup_str(file_path);
     bind->format_hint = format_hint ? dup_str(format_hint) : NULL;
+    bind->mode = parse_header_mode(mode);
 
     htsFile *fp = hts_open(file_path, "r");
     if (!fp) {
@@ -440,6 +479,11 @@ static void read_hts_header_bind(duckdb_bind_info info) {
 
     hts_kind_t hint_kind = parse_format_hint(format_hint);
     hts_kind_t kind = (hint_kind == HTS_KIND_AUTO) ? kind_from_hts_format(fmt) : hint_kind;
+    if (hint_kind == HTS_KIND_AUTO &&
+        (kind == HTS_KIND_UNKNOWN || kind == HTS_KIND_FASTA || kind == HTS_KIND_FASTQ) &&
+        has_tabix_index(file_path)) {
+        kind = HTS_KIND_TABIX;
+    }
 
     if (kind == HTS_KIND_VCF || kind == HTS_KIND_BCF) {
         bcf_hdr_t *hdr = bcf_hdr_read(fp);
@@ -476,17 +520,33 @@ static void read_hts_header_bind(duckdb_bind_info info) {
     duckdb_logical_type val_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_logical_type map_type = duckdb_create_map_type(key_type, val_type);
 
-    duckdb_bind_add_result_column(info, "file_format", varchar_type);
-    duckdb_bind_add_result_column(info, "compression", varchar_type);
-    duckdb_bind_add_result_column(info, "record_type", varchar_type);
-    duckdb_bind_add_result_column(info, "id", varchar_type);
-    duckdb_bind_add_result_column(info, "number", varchar_type);
-    duckdb_bind_add_result_column(info, "value_type", varchar_type);
-    duckdb_bind_add_result_column(info, "length", bigint_type);
-    duckdb_bind_add_result_column(info, "description", varchar_type);
-    duckdb_bind_add_result_column(info, "idx", bigint_type);
-    duckdb_bind_add_result_column(info, "key_values", map_type);
-    duckdb_bind_add_result_column(info, "raw", varchar_type);
+    if (bind->mode == HTS_HEADER_MODE_RAW) {
+        duckdb_bind_add_result_column(info, "idx", bigint_type);
+        duckdb_bind_add_result_column(info, "raw", varchar_type);
+    } else if (bind->mode == HTS_HEADER_MODE_PARSED) {
+        duckdb_bind_add_result_column(info, "file_format", varchar_type);
+        duckdb_bind_add_result_column(info, "compression", varchar_type);
+        duckdb_bind_add_result_column(info, "record_type", varchar_type);
+        duckdb_bind_add_result_column(info, "id", varchar_type);
+        duckdb_bind_add_result_column(info, "number", varchar_type);
+        duckdb_bind_add_result_column(info, "value_type", varchar_type);
+        duckdb_bind_add_result_column(info, "length", bigint_type);
+        duckdb_bind_add_result_column(info, "description", varchar_type);
+        duckdb_bind_add_result_column(info, "idx", bigint_type);
+        duckdb_bind_add_result_column(info, "key_values", map_type);
+    } else {
+        duckdb_bind_add_result_column(info, "file_format", varchar_type);
+        duckdb_bind_add_result_column(info, "compression", varchar_type);
+        duckdb_bind_add_result_column(info, "record_type", varchar_type);
+        duckdb_bind_add_result_column(info, "id", varchar_type);
+        duckdb_bind_add_result_column(info, "number", varchar_type);
+        duckdb_bind_add_result_column(info, "value_type", varchar_type);
+        duckdb_bind_add_result_column(info, "length", bigint_type);
+        duckdb_bind_add_result_column(info, "description", varchar_type);
+        duckdb_bind_add_result_column(info, "idx", bigint_type);
+        duckdb_bind_add_result_column(info, "key_values", map_type);
+        duckdb_bind_add_result_column(info, "raw", varchar_type);
+    }
 
     duckdb_destroy_logical_type(&varchar_type);
     duckdb_destroy_logical_type(&bigint_type);
@@ -514,92 +574,125 @@ static void read_hts_header_scan(duckdb_function_info info, duckdb_data_chunk ou
     idx_t vector_size = duckdb_vector_size();
     idx_t row_count = 0;
 
-    duckdb_vector vec_file_format = duckdb_data_chunk_get_vector(output, 0);
-    duckdb_vector vec_compression = duckdb_data_chunk_get_vector(output, 1);
-    duckdb_vector vec_record_type = duckdb_data_chunk_get_vector(output, 2);
-    duckdb_vector vec_id = duckdb_data_chunk_get_vector(output, 3);
-    duckdb_vector vec_number = duckdb_data_chunk_get_vector(output, 4);
-    duckdb_vector vec_value_type = duckdb_data_chunk_get_vector(output, 5);
-    duckdb_vector vec_length = duckdb_data_chunk_get_vector(output, 6);
-    duckdb_vector vec_desc = duckdb_data_chunk_get_vector(output, 7);
-    duckdb_vector vec_idx = duckdb_data_chunk_get_vector(output, 8);
-    duckdb_vector vec_kv = duckdb_data_chunk_get_vector(output, 9);
-    duckdb_vector vec_raw = duckdb_data_chunk_get_vector(output, 10);
+    duckdb_vector vec_file_format = NULL;
+    duckdb_vector vec_compression = NULL;
+    duckdb_vector vec_record_type = NULL;
+    duckdb_vector vec_id = NULL;
+    duckdb_vector vec_number = NULL;
+    duckdb_vector vec_value_type = NULL;
+    duckdb_vector vec_length = NULL;
+    duckdb_vector vec_desc = NULL;
+    duckdb_vector vec_idx = NULL;
+    duckdb_vector vec_kv = NULL;
+    duckdb_vector vec_raw = NULL;
+
+    if (bind->mode == HTS_HEADER_MODE_RAW) {
+        vec_idx = duckdb_data_chunk_get_vector(output, 0);
+        vec_raw = duckdb_data_chunk_get_vector(output, 1);
+    } else if (bind->mode == HTS_HEADER_MODE_PARSED) {
+        vec_file_format = duckdb_data_chunk_get_vector(output, 0);
+        vec_compression = duckdb_data_chunk_get_vector(output, 1);
+        vec_record_type = duckdb_data_chunk_get_vector(output, 2);
+        vec_id = duckdb_data_chunk_get_vector(output, 3);
+        vec_number = duckdb_data_chunk_get_vector(output, 4);
+        vec_value_type = duckdb_data_chunk_get_vector(output, 5);
+        vec_length = duckdb_data_chunk_get_vector(output, 6);
+        vec_desc = duckdb_data_chunk_get_vector(output, 7);
+        vec_idx = duckdb_data_chunk_get_vector(output, 8);
+        vec_kv = duckdb_data_chunk_get_vector(output, 9);
+    } else {
+        vec_file_format = duckdb_data_chunk_get_vector(output, 0);
+        vec_compression = duckdb_data_chunk_get_vector(output, 1);
+        vec_record_type = duckdb_data_chunk_get_vector(output, 2);
+        vec_id = duckdb_data_chunk_get_vector(output, 3);
+        vec_number = duckdb_data_chunk_get_vector(output, 4);
+        vec_value_type = duckdb_data_chunk_get_vector(output, 5);
+        vec_length = duckdb_data_chunk_get_vector(output, 6);
+        vec_desc = duckdb_data_chunk_get_vector(output, 7);
+        vec_idx = duckdb_data_chunk_get_vector(output, 8);
+        vec_kv = duckdb_data_chunk_get_vector(output, 9);
+        vec_raw = duckdb_data_chunk_get_vector(output, 10);
+    }
 
     while (row_count < vector_size && init->offset < bind->n_entries) {
         hts_header_entry_t *e = &bind->entries[init->offset];
 
-        duckdb_vector_assign_string_element(vec_file_format, row_count,
-                                            bind->file_format ? bind->file_format : "unknown");
-        duckdb_vector_assign_string_element(vec_compression, row_count,
-                                            bind->compression ? bind->compression : "unknown");
-        if (e->record_type) duckdb_vector_assign_string_element(vec_record_type, row_count, e->record_type);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_record_type);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_record_type), row_count);
+        if (bind->mode != HTS_HEADER_MODE_RAW) {
+            duckdb_vector_assign_string_element(vec_file_format, row_count,
+                                                bind->file_format ? bind->file_format : "unknown");
+            duckdb_vector_assign_string_element(vec_compression, row_count,
+                                                bind->compression ? bind->compression : "unknown");
+            if (e->record_type) duckdb_vector_assign_string_element(vec_record_type, row_count, e->record_type);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_record_type);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_record_type), row_count);
+            }
+            if (e->id) duckdb_vector_assign_string_element(vec_id, row_count, e->id);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_id);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_id), row_count);
+            }
+            if (e->number) duckdb_vector_assign_string_element(vec_number, row_count, e->number);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_number);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_number), row_count);
+            }
+            if (e->value_type) duckdb_vector_assign_string_element(vec_value_type, row_count, e->value_type);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_value_type);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_value_type), row_count);
+            }
+            if (e->length >= 0) {
+                int64_t *data = (int64_t *)duckdb_vector_get_data(vec_length);
+                data[row_count] = e->length;
+            } else {
+                duckdb_vector_ensure_validity_writable(vec_length);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_length), row_count);
+            }
+            if (e->description) duckdb_vector_assign_string_element(vec_desc, row_count, e->description);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_desc);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_desc), row_count);
+            }
+
+            if (e->n_kv > 0) {
+                duckdb_list_entry entry;
+                entry.offset = duckdb_list_vector_get_size(vec_kv);
+                entry.length = e->n_kv;
+                duckdb_list_vector_reserve(vec_kv, entry.offset + entry.length);
+                duckdb_list_vector_set_size(vec_kv, entry.offset + entry.length);
+
+                duckdb_vector child = duckdb_list_vector_get_child(vec_kv);
+                duckdb_vector key_vec = duckdb_struct_vector_get_child(child, 0);
+                duckdb_vector val_vec = duckdb_struct_vector_get_child(child, 1);
+
+                for (int i = 0; i < e->n_kv; i++) {
+                    duckdb_vector_assign_string_element(key_vec, entry.offset + i, e->kv_keys[i]);
+                    duckdb_vector_assign_string_element(val_vec, entry.offset + i, e->kv_vals[i]);
+                }
+
+                duckdb_list_entry *list_data = (duckdb_list_entry *)duckdb_vector_get_data(vec_kv);
+                list_data[row_count] = entry;
+            } else {
+                duckdb_vector_ensure_validity_writable(vec_kv);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_kv), row_count);
+                duckdb_list_entry entry = {duckdb_list_vector_get_size(vec_kv), 0};
+                duckdb_list_entry *list_data = (duckdb_list_entry *)duckdb_vector_get_data(vec_kv);
+                list_data[row_count] = entry;
+            }
         }
-        if (e->id) duckdb_vector_assign_string_element(vec_id, row_count, e->id);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_id);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_id), row_count);
-        }
-        if (e->number) duckdb_vector_assign_string_element(vec_number, row_count, e->number);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_number);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_number), row_count);
-        }
-        if (e->value_type) duckdb_vector_assign_string_element(vec_value_type, row_count, e->value_type);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_value_type);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_value_type), row_count);
-        }
-        if (e->length >= 0) {
-            int64_t *data = (int64_t *)duckdb_vector_get_data(vec_length);
-            data[row_count] = e->length;
-        } else {
-            duckdb_vector_ensure_validity_writable(vec_length);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_length), row_count);
-        }
-        if (e->description) duckdb_vector_assign_string_element(vec_desc, row_count, e->description);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_desc);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_desc), row_count);
-        }
+
         {
             int64_t *data = (int64_t *)duckdb_vector_get_data(vec_idx);
             data[row_count] = e->idx;
         }
 
-        if (e->n_kv > 0) {
-            duckdb_list_entry entry;
-            entry.offset = duckdb_list_vector_get_size(vec_kv);
-            entry.length = e->n_kv;
-            duckdb_list_vector_reserve(vec_kv, entry.offset + entry.length);
-            duckdb_list_vector_set_size(vec_kv, entry.offset + entry.length);
-
-            duckdb_vector child = duckdb_list_vector_get_child(vec_kv);
-            duckdb_vector key_vec = duckdb_struct_vector_get_child(child, 0);
-            duckdb_vector val_vec = duckdb_struct_vector_get_child(child, 1);
-
-            for (int i = 0; i < e->n_kv; i++) {
-                duckdb_vector_assign_string_element(key_vec, entry.offset + i, e->kv_keys[i]);
-                duckdb_vector_assign_string_element(val_vec, entry.offset + i, e->kv_vals[i]);
+        if (bind->mode != HTS_HEADER_MODE_PARSED) {
+            if (e->raw) duckdb_vector_assign_string_element(vec_raw, row_count, e->raw);
+            else {
+                duckdb_vector_ensure_validity_writable(vec_raw);
+                duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_raw), row_count);
             }
-
-            duckdb_list_entry *list_data = (duckdb_list_entry *)duckdb_vector_get_data(vec_kv);
-            list_data[row_count] = entry;
-        } else {
-            duckdb_vector_ensure_validity_writable(vec_kv);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_kv), row_count);
-            duckdb_list_entry entry = {duckdb_list_vector_get_size(vec_kv), 0};
-            duckdb_list_entry *list_data = (duckdb_list_entry *)duckdb_vector_get_data(vec_kv);
-            list_data[row_count] = entry;
-        }
-
-        if (e->raw) duckdb_vector_assign_string_element(vec_raw, row_count, e->raw);
-        else {
-            duckdb_vector_ensure_validity_writable(vec_raw);
-            duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec_raw), row_count);
         }
 
         row_count++;

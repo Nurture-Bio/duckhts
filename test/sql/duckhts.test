@@ -403,6 +403,20 @@ WHERE raw LIKE '##%';
 ----
 6
 
+# --- raw header mode schema ---
+query T
+SELECT string_agg(column_name, '|')
+FROM (DESCRIBE SELECT * FROM read_hts_header('__WORKING_DIRECTORY__/test/data/formatcols.vcf.gz', mode := 'raw'));
+----
+idx|raw
+
+# --- parsed header mode schema ---
+query T
+SELECT string_agg(column_name, '|')
+FROM (DESCRIBE SELECT * FROM read_hts_header('__WORKING_DIRECTORY__/test/data/formatcols.vcf.gz', mode := 'parsed'));
+----
+file_format|compression|record_type|id|number|value_type|length|description|idx|key_values
+
 # --- raw header mode preserves distinct line content ---
 query T
 SELECT string_agg(raw, '|')
@@ -414,6 +428,14 @@ FROM (
 ) t;
 ----
 ##fileformat=VCFv4.3|##FILTER=<ID=PASS,Description="All filters passed">|##contig=<ID=1>
+
+# --- tabix auto-detect (no explicit format) ---
+query I
+SELECT count(*)
+FROM read_hts_header('__WORKING_DIRECTORY__/test/data/meta_tabix.tsv.gz', mode := 'raw')
+WHERE raw LIKE '#%';
+----
+2
 
 # --- index type extracted from VCF/BCF ---
 query I
