@@ -1,5 +1,51 @@
 {
   "manifest_version": 1,
+  "community_extension": {
+    "extension": {
+      "name": "duckhts",
+      "description": "Read High Throughput Sequencing file formats in DuckDB via htslib",
+      "language": "C",
+      "build": "cmake",
+      "license": "MIT",
+      "requires_toolchains": "python3",
+      "excluded_platforms": "windows_amd64;windows_arm64",
+      "maintainers": [
+        "Sounkou Mahamane Toure <sounkoutoure@gmail.com>"
+      ]
+    },
+    "repo": {
+      "github": "RGenomicsETL/duckhts",
+      "ref_source": "git_head"
+    },
+    "docs": {
+      "hello_world_lines": [
+        "-- Load the extension",
+        "LOAD duckhts;",
+        "",
+        "-- Read a VCF/BCF file (tidy FORMAT columns)",
+        "SELECT CHROM, POS, REF, ALT, SAMPLE_ID",
+        "FROM read_bcf('test/data/formatcols.vcf.gz', tidy_format := true)",
+        "LIMIT 5;",
+        "",
+        "-- Read a BAM/SAM file",
+        "SELECT QNAME, RNAME, POS, READ_GROUP_ID, SAMPLE_ID",
+        "FROM read_bam('test/data/rg.sam.gz')",
+        "LIMIT 5;"
+      ],
+      "extended_intro": [
+        "DuckHTS provides DuckDB table functions for common high-throughput sequencing (HTS) formats using htslib. Query VCF, BCF, BAM, CRAM, FASTA, FASTQ, GTF, GFF, and tabix-indexed files directly in SQL.",
+        "The extension also includes sequence utility UDFs, SAM flag predicate helpers, and HTS metadata helpers."
+      ],
+      "feature_notes": [
+        "Paired FASTQ is supported via `mate_path` or `interleaved := true`.",
+        "CRAM reads are supported with an explicit reference file.",
+        "GTF/GFF attributes can be returned as a parsed `MAP` with `attributes_map := true`.",
+        "Optional SAM tag columns and an auxiliary tag map are available through `standard_tags` and `auxiliary_tags`.",
+        "Tabix readers support `header`, `header_names`, type inference with `auto_detect`, and explicit `column_types`.",
+        "MSVC builds (`windows_amd64`/`windows_arm64`) are not supported; use MinGW/RTools on Windows."
+      ]
+    }
+  },
   "functions": [
     {
       "name": "read_bcf",
