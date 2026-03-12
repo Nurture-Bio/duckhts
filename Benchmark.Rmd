@@ -900,7 +900,7 @@ Quick check that a file has VEP-like annotation fields:
 ```{r vep-check}
 if (has_vep) {
   q <- sprintf(
-    "SELECT DISTINCT id FROM read_hts_header('%s') WHERE record_type = 'INFO' AND id IN ('CSQ','ANN','BCSQ')",
+    "SELECT DISTINCT id FROM read_hts_header('%s') WHERE record_type = 'INFO' AND lower(id) IN ('csq','ann','bcsq','vep')",
     gsub("'", "''", vep_vcf)
   )
   DBI::dbGetQuery(con, q)

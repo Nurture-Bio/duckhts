@@ -101,7 +101,14 @@ const char* vep_type_name(vep_field_type_t type) {
 
 const char* vep_detect_tag(const bcf_hdr_t* hdr) {
     if (!hdr) return NULL;
-    const char* tags[] = {VEP_TAG_CSQ, VEP_TAG_BCSQ, VEP_TAG_ANN, NULL};
+    const char* tags[] = {
+        VEP_TAG_CSQ,
+        VEP_TAG_BCSQ,
+        VEP_TAG_ANN,
+        VEP_TAG_VEP,
+        VEP_TAG_vep,
+        NULL
+    };
     for (int i = 0; tags[i]; i++) {
         int id = bcf_hdr_id2int(hdr, BCF_DT_ID, tags[i]);
         if (id >= 0 && bcf_hdr_idinfo_exists(hdr, BCF_HL_INFO, id)) {
