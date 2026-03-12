@@ -5,6 +5,19 @@ DUCKDB_EXTENSION_EXTERN
 #include <stdint.h>
 #include <string.h>
 
+#define SAM_FLAG_PAIRED 0x1
+#define SAM_FLAG_PROPER_PAIR 0x2
+#define SAM_FLAG_UNMAPPED 0x4
+#define SAM_FLAG_MATE_UNMAPPED 0x8
+#define SAM_FLAG_REVERSE 0x10
+#define SAM_FLAG_MATE_REVERSE 0x20
+#define SAM_FLAG_READ1 0x40
+#define SAM_FLAG_READ2 0x80
+#define SAM_FLAG_SECONDARY 0x100
+#define SAM_FLAG_QCFAIL 0x200
+#define SAM_FLAG_DUPLICATE 0x400
+#define SAM_FLAG_SUPPLEMENTARY 0x800
+
 static inline void set_null_at(duckdb_vector vector, idx_t row) {
     duckdb_vector_ensure_validity_writable(vector);
     uint64_t *validity = duckdb_vector_get_validity(vector);
@@ -45,6 +58,45 @@ static inline const char *get_string_at(duckdb_vector vector, idx_t row, idx_t *
     duckdb_string_t val = data[row];
     *len = duckdb_string_t_length(val);
     return duckdb_string_t_data(&val);
+}
+
+static inline int64_t get_int64_at(duckdb_vector vector, idx_t row) {
+    duckdb_logical_type logical_type = duckdb_vector_get_column_type(vector);
+    duckdb_type type = duckdb_get_type_id(logical_type);
+    void *data = duckdb_vector_get_data(vector);
+    int64_t result = 0;
+
+    switch (type) {
+    case DUCKDB_TYPE_TINYINT:
+        result = ((int8_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_SMALLINT:
+        result = ((int16_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_INTEGER:
+        result = ((int32_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_BIGINT:
+        result = ((int64_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_UTINYINT:
+        result = ((uint8_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_USMALLINT:
+        result = ((uint16_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_UINTEGER:
+        result = ((uint32_t *)data)[row];
+        break;
+    case DUCKDB_TYPE_UBIGINT:
+        result = (int64_t)((uint64_t *)data)[row];
+        break;
+    default:
+        result = 0;
+        break;
+    }
+    duckdb_destroy_logical_type(&logical_type);
+    return result;
 }
 
 static void seq_revcomp_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
@@ -177,6 +229,130 @@ static void seq_hash_2bit_scalar(duckdb_function_info info, duckdb_data_chunk in
 
         out_data[row] = h;
     }
+}
+
+static void seq_gc_content_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    (void)info;
+    duckdb_vector seq_vec = duckdb_data_chunk_get_vector(input, 0);
+    double *out_data = (double *)duckdb_vector_get_data(output);
+    idx_t row_count = duckdb_data_chunk_get_size(input);
+
+    for (idx_t row = 0; row < row_count; row++) {
+        if (!row_is_valid(seq_vec, row)) {
+            set_null_at(output, row);
+            continue;
+        }
+
+        idx_t len = 0;
+        const char *seq = get_string_at(seq_vec, row, &len);
+        if (len == 0) {
+            set_null_at(output, row);
+            continue;
+        }
+
+        idx_t gc = 0;
+        idx_t called = 0;
+        int valid = 1;
+        for (idx_t i = 0; i < len; i++) {
+            unsigned char c = (unsigned char)toupper((unsigned char)seq[i]);
+            switch (c) {
+            case 'G':
+            case 'C':
+                gc++;
+                called++;
+                break;
+            case 'A':
+            case 'T':
+                called++;
+                break;
+            case 'N':
+                break;
+            default:
+                valid = 0;
+                break;
+            }
+            if (!valid) {
+                break;
+            }
+        }
+
+        if (!valid || called == 0) {
+            set_null_at(output, row);
+            continue;
+        }
+        out_data[row] = (double)gc / (double)called;
+    }
+}
+
+static void sam_flag_scalar(duckdb_function_info info,
+                            duckdb_data_chunk input,
+                            duckdb_vector output,
+                            uint16_t mask) {
+    (void)info;
+    duckdb_vector flag_vec = duckdb_data_chunk_get_vector(input, 0);
+    bool *out_data = (bool *)duckdb_vector_get_data(output);
+    idx_t row_count = duckdb_data_chunk_get_size(input);
+
+    for (idx_t row = 0; row < row_count; row++) {
+        if (!row_is_valid(flag_vec, row)) {
+            set_null_at(output, row);
+            continue;
+        }
+        int64_t flag_value = get_int64_at(flag_vec, row);
+        if (flag_value < 0 || flag_value > 0xffff) {
+            set_null_at(output, row);
+            continue;
+        }
+        out_data[row] = ((((uint16_t)flag_value) & mask) != 0);
+    }
+}
+
+static void sam_is_segmented_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_PAIRED);
+}
+
+static void sam_is_properly_aligned_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_PROPER_PAIR);
+}
+
+static void sam_is_unmapped_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_UNMAPPED);
+}
+
+static void sam_is_mate_unmapped_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_MATE_UNMAPPED);
+}
+
+static void sam_is_reverse_complemented_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_REVERSE);
+}
+
+static void sam_is_mate_reverse_complemented_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_MATE_REVERSE);
+}
+
+static void sam_is_first_segment_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_READ1);
+}
+
+static void sam_is_last_segment_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_READ2);
+}
+
+static void sam_is_secondary_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_SECONDARY);
+}
+
+static void sam_is_qc_fail_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_QCFAIL);
+}
+
+static void sam_is_duplicate_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_DUPLICATE);
+}
+
+static void sam_is_supplementary_scalar(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
+    sam_flag_scalar(info, input, output, SAM_FLAG_SUPPLEMENTARY);
 }
 
 typedef struct {
@@ -410,6 +586,42 @@ static void register_seq_hash_2bit_function(duckdb_connection connection) {
     duckdb_destroy_scalar_function(&fn);
 }
 
+static void register_seq_gc_content_function(duckdb_connection connection) {
+    duckdb_scalar_function fn = duckdb_create_scalar_function();
+    duckdb_scalar_function_set_name(fn, "seq_gc_content");
+
+    duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+    duckdb_logical_type double_type = duckdb_create_logical_type(DUCKDB_TYPE_DOUBLE);
+    duckdb_scalar_function_add_parameter(fn, varchar_type);
+    duckdb_scalar_function_set_return_type(fn, double_type);
+    duckdb_scalar_function_set_function(fn, seq_gc_content_scalar);
+
+    duckdb_register_scalar_function(connection, fn);
+
+    duckdb_destroy_logical_type(&varchar_type);
+    duckdb_destroy_logical_type(&double_type);
+    duckdb_destroy_scalar_function(&fn);
+}
+
+static void register_sam_flag_predicate_function(duckdb_connection connection,
+                                                 const char *name,
+                                                 duckdb_scalar_function_t function) {
+    duckdb_scalar_function fn = duckdb_create_scalar_function();
+    duckdb_scalar_function_set_name(fn, name);
+
+    duckdb_logical_type usmallint_type = duckdb_create_logical_type(DUCKDB_TYPE_USMALLINT);
+    duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+    duckdb_scalar_function_add_parameter(fn, usmallint_type);
+    duckdb_scalar_function_set_return_type(fn, bool_type);
+    duckdb_scalar_function_set_function(fn, function);
+
+    duckdb_register_scalar_function(connection, fn);
+
+    duckdb_destroy_logical_type(&usmallint_type);
+    duckdb_destroy_logical_type(&bool_type);
+    duckdb_destroy_scalar_function(&fn);
+}
+
 static void register_seq_kmers_function(duckdb_connection connection) {
     duckdb_table_function tf = duckdb_create_table_function();
     duckdb_table_function_set_name(tf, "seq_kmers");
@@ -438,5 +650,19 @@ void register_kmer_udf_functions(duckdb_connection connection) {
     register_seq_revcomp_function(connection);
     register_seq_canonical_function(connection);
     register_seq_hash_2bit_function(connection);
+    register_seq_gc_content_function(connection);
     register_seq_kmers_function(connection);
+    register_sam_flag_predicate_function(connection, "is_segmented", sam_is_segmented_scalar);
+    register_sam_flag_predicate_function(connection, "is_properly_aligned", sam_is_properly_aligned_scalar);
+    register_sam_flag_predicate_function(connection, "is_properly_segmented", sam_is_properly_aligned_scalar);
+    register_sam_flag_predicate_function(connection, "is_unmapped", sam_is_unmapped_scalar);
+    register_sam_flag_predicate_function(connection, "is_mate_unmapped", sam_is_mate_unmapped_scalar);
+    register_sam_flag_predicate_function(connection, "is_reverse_complemented", sam_is_reverse_complemented_scalar);
+    register_sam_flag_predicate_function(connection, "is_mate_reverse_complemented", sam_is_mate_reverse_complemented_scalar);
+    register_sam_flag_predicate_function(connection, "is_first_segment", sam_is_first_segment_scalar);
+    register_sam_flag_predicate_function(connection, "is_last_segment", sam_is_last_segment_scalar);
+    register_sam_flag_predicate_function(connection, "is_secondary", sam_is_secondary_scalar);
+    register_sam_flag_predicate_function(connection, "is_qc_fail", sam_is_qc_fail_scalar);
+    register_sam_flag_predicate_function(connection, "is_duplicate", sam_is_duplicate_scalar);
+    register_sam_flag_predicate_function(connection, "is_supplementary", sam_is_supplementary_scalar);
 }

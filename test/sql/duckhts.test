@@ -23,6 +23,52 @@ SELECT CHROM, POS, ID, REF FROM read_bcf('__WORKING_DIRECTORY__/test/data/format
 ----
 1	100	a	A
 
+# --- projection pushdown: no unpack required (rid/pos/qual only) ---
+query IIR
+SELECT CHROM, POS, QUAL FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf') LIMIT 1;
+----
+1	3000150	59.2
+
+# --- projection pushdown: string unpack only ---
+query TT
+SELECT REF, list_extract(ALT, 1)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf')
+WHERE POS = 3000150;
+----
+C	T
+
+# --- projection pushdown: filter unpack only ---
+query T
+SELECT list_extract(FILTER, 1)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf')
+WHERE POS = 3062915 AND ID = 'id3D';
+----
+q10
+
+# --- projection pushdown: info unpack only ---
+query I
+SELECT INFO_TEST
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf')
+WHERE POS = 3062915 AND ID = 'idSNP';
+----
+5
+
+# --- projection pushdown: format unpack only ---
+query TI
+SELECT FORMAT_GT_A, FORMAT_GQ_A
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf')
+WHERE POS = 3000150;
+----
+0/1	245
+
+# --- projection pushdown: tidy SAMPLE_ID without FORMAT decode ---
+query T
+SELECT string_agg(SAMPLE_ID, ',' ORDER BY SAMPLE_ID)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf', tidy_format := true)
+WHERE POS = 3000150;
+----
+A,B
+
 # --- larger BCF file ---
 query I
 SELECT count(*) FROM read_bcf('__WORKING_DIRECTORY__/test/data/vcf_file.bcf');
@@ -65,6 +111,14 @@ FROM read_bcf('__WORKING_DIRECTORY__/test/data/test_vep.vcf')
 LIMIT 1;
 ----
 1
+
+# --- projection pushdown: VEP columns only require INFO decode ---
+query TT
+SELECT list_extract(VEP_Allele, 1), list_extract(VEP_SYMBOL, 1)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/test_vep.vcf')
+LIMIT 1;
+----
+T	WASH7P
 
 # ==============================================================
 # read_bam – SAM/BAM/CRAM reader

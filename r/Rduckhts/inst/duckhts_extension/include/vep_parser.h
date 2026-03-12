@@ -20,6 +20,8 @@ extern "C" {
 #define VEP_TAG_CSQ   "CSQ"
 #define VEP_TAG_BCSQ  "BCSQ"
 #define VEP_TAG_ANN   "ANN"
+#define VEP_TAG_VEP   "VEP"
+#define VEP_TAG_vep   "vep"
 
 typedef enum {
     VEP_TYPE_STRING  = BCF_HT_STR,

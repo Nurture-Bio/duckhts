@@ -150,6 +150,14 @@ find_package(Threads REQUIRED)
 # MinGW regex (regcomp/regexec are in libgnurx)
 if(WIN32 AND MINGW)
     find_library(GNUREGEX_LIBRARY NAMES gnurx regex)
+    find_library(MINGW_LIBPSL_LIBRARY NAMES psl)
+    find_library(MINGW_LIBIDN2_LIBRARY NAMES idn2)
+    find_library(MINGW_LIBUNISTRING_LIBRARY NAMES unistring)
+    find_library(MINGW_LIBICONV_LIBRARY NAMES iconv)
+    find_library(MINGW_LIBSSH2_LIBRARY NAMES ssh2)
+    find_library(MINGW_LIBGCRYPT_LIBRARY NAMES gcrypt)
+    find_library(MINGW_LIBGPG_ERROR_LIBRARY NAMES gpg-error)
+    find_library(MINGW_LIBZSTD_LIBRARY NAMES zstd)
 endif()
 if(WIN32 AND MINGW AND PKG_CONFIG_FOUND)
     pkg_check_modules(PC_LIBCURL QUIET libcurl)
@@ -316,21 +324,37 @@ if(CURL_FOUND)
         else()
             list(APPEND HTSLIB_LINK_LIBS
                 -lcurl
-                -lpsl
                 -lbcrypt
-                -lidn2
-                -lunistring
-                -liconv
                 -lssl
                 -lcrypto
                 -lcrypt32
                 -lwsock32
                 -lwldap32
-                -lssh2
-                -lgcrypt
-                -lgpg-error
-                -lzstd
             )
+            if(MINGW_LIBPSL_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBPSL_LIBRARY})
+            endif()
+            if(MINGW_LIBIDN2_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBIDN2_LIBRARY})
+            endif()
+            if(MINGW_LIBUNISTRING_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBUNISTRING_LIBRARY})
+            endif()
+            if(MINGW_LIBICONV_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBICONV_LIBRARY})
+            endif()
+            if(MINGW_LIBSSH2_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBSSH2_LIBRARY})
+            endif()
+            if(MINGW_LIBGCRYPT_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBGCRYPT_LIBRARY})
+            endif()
+            if(MINGW_LIBGPG_ERROR_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBGPG_ERROR_LIBRARY})
+            endif()
+            if(MINGW_LIBZSTD_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBZSTD_LIBRARY})
+            endif()
         endif()
     else()
         list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)

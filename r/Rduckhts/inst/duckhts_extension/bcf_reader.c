@@ -161,6 +161,8 @@ typedef struct {
     // Projection pushdown
     idx_t column_count;
     idx_t* column_ids;
+    int unpack_mask;
+    int need_vep;
     
     // Parallel scan state
     int is_parallel;
@@ -324,6 +326,59 @@ static void parse_regions_duckdb(const char *region_str, char ***out_regions, un
     duckdb_free(dup);
     *out_regions = arr;
     *out_count = idx;
+}
+
+static int bcf_projection_unpack_mask(const bcf_bind_data_t* bind, const idx_t* column_ids, idx_t column_count) {
+    int mask = 0;
+    if (!bind || !column_ids) {
+        return mask;
+    }
+
+    for (idx_t i = 0; i < column_count; i++) {
+        idx_t col_id = column_ids[i];
+
+        if (col_id == COL_ID || col_id == COL_REF || col_id == COL_ALT) {
+            mask |= BCF_UN_STR;
+            continue;
+        }
+        if (col_id == COL_FILTER) {
+            mask |= BCF_UN_FLT;
+            continue;
+        }
+        if (bind->vep_schema &&
+            col_id >= (idx_t)bind->vep_col_start &&
+            col_id < (idx_t)(bind->vep_col_start + bind->n_vep_fields)) {
+            mask |= BCF_UN_INFO;
+            continue;
+        }
+        if (col_id >= (idx_t)bind->info_col_start &&
+            col_id < (idx_t)(bind->info_col_start + bind->n_info_fields)) {
+            mask |= BCF_UN_INFO;
+            continue;
+        }
+        if (col_id >= (idx_t)bind->format_col_start &&
+            col_id < (idx_t)bind->total_columns) {
+            mask |= BCF_UN_FMT;
+        }
+    }
+
+    return mask;
+}
+
+static int bcf_projection_needs_vep(const bcf_bind_data_t* bind, const idx_t* column_ids, idx_t column_count) {
+    if (!bind || !bind->vep_schema || !column_ids) {
+        return 0;
+    }
+
+    for (idx_t i = 0; i < column_count; i++) {
+        idx_t col_id = column_ids[i];
+        if (col_id >= (idx_t)bind->vep_col_start &&
+            col_id < (idx_t)(bind->vep_col_start + bind->n_vep_fields)) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 // =============================================================================
@@ -915,6 +970,8 @@ static void bcf_read_local_init(duckdb_init_info info) {
     for (idx_t i = 0; i < local->column_count; i++) {
         local->column_ids[i] = duckdb_init_get_column_index(info, i);
     }
+    local->unpack_mask = bcf_projection_unpack_mask(bind, local->column_ids, local->column_count);
+    local->need_vep = bcf_projection_needs_vep(bind, local->column_ids, local->column_count);
     
     // Store as local init data
     duckdb_init_set_init_data(info, local, destroy_init_data);
@@ -1111,20 +1168,6 @@ static void bcf_read_function(duckdb_function_info info, duckdb_data_chunk outpu
         return;
     }
 
-    // Determine if any VEP columns are requested for this scan
-    int need_vep = (bind->vep_schema != NULL);
-    if (need_vep) {
-        need_vep = 0;
-        for (idx_t i = 0; i < init->column_count; i++) {
-            idx_t col_id = init->column_ids[i];
-            if (col_id >= (idx_t)bind->vep_col_start &&
-                col_id < (idx_t)(bind->vep_col_start + bind->n_vep_fields)) {
-                need_vep = 1;
-                break;
-            }
-        }
-    }
-    
     // For parallel scans, claim first/next contig if needed
     if (init->needs_next_contig) {
         if (!claim_next_contig(init, global)) {
@@ -1294,8 +1337,9 @@ static void bcf_read_function(duckdb_function_info info, duckdb_data_chunk outpu
                 break;
             }
             
-            // Unpack record
-            bcf_unpack(init->rec, BCF_UN_ALL);
+            if (init->unpack_mask) {
+                bcf_unpack(init->rec, init->unpack_mask);
+            }
             
             // For tidy mode, reset sample counter
             if (tidy_mode) {
@@ -1324,7 +1368,7 @@ static void bcf_read_function(duckdb_function_info info, duckdb_data_chunk outpu
 
         // Parse VEP annotation once per record if needed (only on first sample in tidy mode)
         vep_record_t* vep_rec = NULL;
-        if (need_vep && (!tidy_mode || current_sample == 0)) {
+        if (init->need_vep && (!tidy_mode || current_sample == 0)) {
             vep_rec = vep_record_parse_bcf(bind->vep_schema, init->hdr, init->rec);
         }
         
