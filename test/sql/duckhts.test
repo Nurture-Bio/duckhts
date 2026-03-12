@@ -509,6 +509,12 @@ SELECT seq_hash_2bit('ACNT') IS NULL;
 ----
 1
 
+# --- GC content ignores N and returns fraction over called bases ---
+query TT
+SELECT printf('%.3f', seq_gc_content('ACGTNN')), seq_gc_content('NNNN') IS NULL;
+----
+0.500	true
+
 # --- k-mer emission ---
 query T
 SELECT string_agg(kmer, ',' ORDER BY pos)
@@ -528,3 +534,26 @@ query I
 SELECT count(*) FROM seq_kmers('AC', 3);
 ----
 0
+
+# --- SAM flag predicates on BAM FLAG column ---
+query TTTTT
+SELECT
+  CAST(is_segmented(FLAG) AS VARCHAR),
+  CAST(is_unmapped(FLAG) AS VARCHAR),
+  CAST(is_mate_unmapped(FLAG) AS VARCHAR),
+  CAST(is_reverse_complemented(FLAG) AS VARCHAR),
+  CAST(is_last_segment(FLAG) AS VARCHAR)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam')
+LIMIT 1;
+----
+true	false	false	true	true
+
+# --- duplicate Exon-compatible aliases stay aligned ---
+query TT
+SELECT
+  CAST(is_properly_aligned(FLAG) AS VARCHAR),
+  CAST(is_properly_segmented(FLAG) AS VARCHAR)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam')
+LIMIT 1;
+----
+false	false

@@ -142,9 +142,6 @@ endif()
 # Optional network / crypto
 find_package(CURL QUIET)
 find_package(OpenSSL QUIET)
-if(WIN32 AND MINGW AND NOT CURL_FOUND)
-    find_library(MINGW_CURL_LIBRARY NAMES curl libcurl)
-endif()
 
 # Threads (portable: resolves to -lpthread on Linux, nothing on macOS)
 find_package(Threads REQUIRED)
@@ -240,11 +237,41 @@ message(STATUS "htslib make args: ${HTSLIB_MAKE_ARGS}")
 # htslib uses GNU Makefiles (not Ninja), so we must always use `make`
 # even when the outer CMake build uses Ninja.
 find_program(MAKE_COMMAND NAMES gmake make REQUIRED)
+find_program(SH_COMMAND NAMES sh bash REQUIRED)
+
+set(HTSLIB_CONFIGURE_FLAGS "")
+if(NOT BZIP2_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-bz2)
+endif()
+if(NOT LIBLZMA_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-lzma)
+endif()
+if(NOT LIBDEFLATE_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libdeflate)
+endif()
+if(WIN32 AND MINGW)
+    # MinGW/Rtools builds should not rely on htslib's checked-in config.mk.
+    # Remote URL support is disabled here until the full Windows curl import
+    # chain is modeled explicitly in the outer extension link.
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libcurl --disable-plugins)
+elseif(NOT CURL_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libcurl)
+endif()
+
+set(HTSLIB_CONFIGURE_COMMAND
+    ${CMAKE_COMMAND} -E env
+    "CC=${CMAKE_C_COMPILER}"
+    "CPPFLAGS="
+    "CFLAGS=-O2 -fPIC ${HTSLIB_EXTRA_CFLAGS}"
+    "LDFLAGS=${HTSLIB_EXTRA_LDFLAGS}"
+    "LIBS=${HTSLIB_EXTRA_LIBS_STR}"
+    ${SH_COMMAND} ./configure ${HTSLIB_CONFIGURE_FLAGS}
+)
 
 ExternalProject_Add(htslib_build
     SOURCE_DIR        "${HTSLIB_SRC_DIR}"
     BUILD_IN_SOURCE   TRUE
-    CONFIGURE_COMMAND ""
+    CONFIGURE_COMMAND ${HTSLIB_CONFIGURE_COMMAND}
     BUILD_COMMAND     ${MAKE_COMMAND} -j lib-static ${HTSLIB_MAKE_ARGS}
     BUILD_ALWAYS      TRUE
     INSTALL_COMMAND   ""   # no install step; we link libhts.a directly
@@ -278,8 +305,6 @@ if(LIBDEFLATE_FOUND)
 endif()
 if(CURL_FOUND)
     list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)
-elseif(WIN32 AND MINGW AND MINGW_CURL_LIBRARY)
-    list(APPEND HTSLIB_LINK_LIBS ${MINGW_CURL_LIBRARY})
 endif()
 if(OPENSSL_FOUND)
     list(APPEND HTSLIB_LINK_LIBS OpenSSL::Crypto)

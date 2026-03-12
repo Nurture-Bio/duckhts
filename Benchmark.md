@@ -425,12 +425,14 @@ data.frame(
   bytes = c(clinvar_bytes, if (has_vep) vep_bytes else NULL, if (has_bam) bam_bytes else NULL),
   compressed_mb = c(clinvar_bytes, if (has_vep) vep_bytes else NULL, if (has_bam) bam_bytes else NULL) / (1024 * 1024)
 )
-#>   dataset                                                path     bytes
-#> 1 clinvar                                      clinvar.vcf.gz 189031261
-#> 2     bam HG00106.chrom11.ILLUMINA.bwa.GBR.exome.20130415.bam 330528619
+#>   dataset                                                  path      bytes
+#> 1 clinvar                                        clinvar.vcf.gz  189031261
+#> 2     vep gnomad.exomes.r2.1.1.sites.22.liftover_grch38.vcf.bgz 1405788912
+#> 3     bam   HG00106.chrom11.ILLUMINA.bwa.GBR.exome.20130415.bam  330528619
 #>   compressed_mb
 #> 1      180.2743
-#> 2      315.2167
+#> 2     1340.6648
+#> 3      315.2167
 ```
 
 # DuckHTS Scan Benchmarks
@@ -512,17 +514,17 @@ clinvar_results <- add_case_keys(clinvar_results)
 clinvar_results <- finalize_results(clinvar_results)
 clinvar_results
 #>                      case iterations min_sec median_sec mean_sec max_sec   rows
-#> 1       clinvar_count_all          5   1.243      1.248   1.2496   1.258      1
-#> 2 clinvar_core_projection          5   0.257      0.259   0.2602   0.267 200000
-#> 3 clinvar_info_projection          5   0.297      0.303   0.3020   0.305 200000
+#> 1       clinvar_count_all          5   1.222      1.234   1.2332   1.239      1
+#> 2 clinvar_core_projection          5   0.255      0.257   0.2578   0.262 200000
+#> 3 clinvar_info_projection          5   0.292      0.294   0.2968   0.305 200000
 #>   bytes_read compressed_mb compressed_mb_per_sec rows_hint rows_per_sec  engine
-#> 1  189031261      180.2743              144.4505   4352930    3487924.7 duckhts
-#> 2  189031261            NA                    NA    200000     772200.8 duckhts
-#> 3  189031261            NA                    NA    200000     660066.0 duckhts
+#> 1  189031261      180.2743              146.0894   4352930    3527495.9 duckhts
+#> 2  189031261            NA                    NA    200000     778210.1 duckhts
+#> 3  189031261            NA                    NA    200000     680272.1 duckhts
 #>   vs_scan_baseline_mb vs_scan_baseline_rows        case_key   workload
 #> 1            1.000000             1.0000000       count_all  full_scan
-#> 2            4.818533             0.2213926 core_projection projection
-#> 3            4.118812             0.1892432 info_projection projection
+#> 2            4.801556             0.2206126 core_projection projection
+#> 3            4.197279             0.1928484 info_projection projection
 ```
 
 # VEP Scan Benchmarks
@@ -592,7 +594,26 @@ if (has_vep) {
   vep_results <- data.frame()
   message("Skipping VEP benchmarks. Set env var VEP_VCF to a local VEP VCF/BCF file.")
 }
-#> Skipping VEP benchmarks. Set env var VEP_VCF to a local VEP VCF/BCF file.
+#> 
+#> ---
+#> vep_count_all
+#> SELECT COUNT(*) AS n FROM read_bcf('gnomad.exomes.r2.1.1.sites.22.liftover_grch38.vcf.bgz')
+#> 
+#> ---
+#> vep_annotation_projection
+#> SELECT VEP_Allele, VEP_Consequence, VEP_IMPACT, VEP_SYMBOL, VEP_Gene, VEP_Feature_type, VEP_Feature, VEP_BIOTYPE FROM read_bcf('gnomad.exomes.r2.1.1.sites.22.liftover_grch38.vcf.bgz') LIMIT 200000
+#>                        case iterations min_sec median_sec mean_sec max_sec
+#> 1             vep_count_all          5  29.373      29.91  29.8296  29.996
+#> 2 vep_annotation_projection          5  19.254      19.41  19.4000  19.613
+#>     rows bytes_read compressed_mb compressed_mb_per_sec rows_hint rows_per_sec
+#> 1      1 1405788912      1340.665               44.8233    416083     13911.17
+#> 2 200000 1405788912            NA                    NA    200000     10303.97
+#>    engine vs_scan_baseline_mb vs_scan_baseline_rows              case_key
+#> 1 duckhts            1.000000             1.0000000             count_all
+#> 2 duckhts            1.540958             0.7406975 annotation_projection
+#>     workload
+#> 1  full_scan
+#> 2 projection
 ```
 
 # DuckHTS Conversion Benchmarks
@@ -637,14 +658,14 @@ parquet_results <- add_case_keys(parquet_results)
 parquet_results <- finalize_results(parquet_results)
 parquet_results
 #>                        case iterations min_sec median_sec mean_sec max_sec
-#> 1 clinvar_copy_core_parquet          3   5.251      5.280 5.278333   5.304
-#> 2 clinvar_copy_info_parquet          3   6.195      6.267 6.254333   6.301
+#> 1 clinvar_copy_core_parquet          3   5.114      5.130 5.196000   5.344
+#> 2 clinvar_copy_info_parquet          3   6.192      6.281 6.256667   6.297
 #>      rows bytes_read compressed_mb compressed_mb_per_sec rows_hint rows_per_sec
-#> 1 4352930  189031261            NA                    NA   4352930     824418.6
-#> 2 4352930  189031261            NA                    NA   4352930     694579.5
+#> 1 4352930  189031261            NA                    NA   4352930     848524.4
+#> 2 4352930  189031261            NA                    NA   4352930     693031.4
 #>   parquet_bytes parquet_mb parquet_mb_per_sec  engine          case_key
-#> 1      11846170   11.29739           2.139657 duckhts copy_core_parquet
-#> 2      29680804   28.30582           4.516646 duckhts copy_info_parquet
+#> 1      11846170   11.29739           2.202220 duckhts copy_core_parquet
+#> 2      29680804   28.30582           4.506579 duckhts copy_info_parquet
 #>     workload
 #> 1 conversion
 #> 2 conversion
@@ -748,8 +769,8 @@ if (has_bam) {
 #> bam_region_core_projection
 #> SELECT QNAME, RNAME, POS, MAPQ, CIGAR FROM read_bam('HG00106.chrom11.ILLUMINA.bwa.GBR.exome.20130415.bam', region := '11:1-5000000') LIMIT 200000
 #>                         case iterations min_sec median_sec mean_sec max_sec
-#> 1           bam_region_count          5   0.046      0.046   0.0464   0.047
-#> 2 bam_region_core_projection          5   0.061      0.061   0.0618   0.064
+#> 1           bam_region_count          5   0.044      0.046   0.0456   0.046
+#> 2 bam_region_core_projection          5   0.060      0.061   0.0612   0.063
 #>     rows bytes_read compressed_mb compressed_mb_per_sec rows_hint rows_per_sec
 #> 1      1  330528619            NA                    NA    240068      5218870
 #> 2 200000  330528619            NA                    NA    200000      3278689
@@ -773,14 +794,18 @@ summary_cols <- c(
 )
 
 scan_summary[, intersect(summary_cols, names(scan_summary))]
-#>                      case median_sec compressed_mb_per_sec rows_per_sec
-#> 1       clinvar_count_all      1.248              144.4505    3487924.7
-#> 2 clinvar_core_projection      0.259                    NA     772200.8
-#> 3 clinvar_info_projection      0.303                    NA     660066.0
+#>                        case median_sec compressed_mb_per_sec rows_per_sec
+#> 1         clinvar_count_all      1.234              146.0894   3527495.95
+#> 2   clinvar_core_projection      0.257                    NA    778210.12
+#> 3   clinvar_info_projection      0.294                    NA    680272.11
+#> 4             vep_count_all     29.910               44.8233     13911.17
+#> 5 vep_annotation_projection     19.410                    NA     10303.97
 #>   vs_scan_baseline_mb vs_scan_baseline_rows
 #> 1            1.000000             1.0000000
-#> 2            4.818533             0.2213926
-#> 3            4.118812             0.1892432
+#> 2            4.801556             0.2206126
+#> 3            4.197279             0.1928484
+#> 4            1.000000             1.0000000
+#> 5            1.540958             0.7406975
 ```
 
 # bcftools Baselines
@@ -872,17 +897,17 @@ if (has_bcftools) {
 #> '/usr/local/bin/bcftools' 'query' '-f' '%INFO/AF_ESP %INFO/AF_EXAC   %INFO/AF_TGP    %INFO/ALLELEID  %INFO/CLNDN %INFO/CLNDNINCL
 #> ' 'clinvar.vcf.gz'
 #>     engine                     case iterations min_sec median_sec mean_sec
-#> 1 bcftools       bcftools_count_all          5   4.839      4.846   4.8608
-#> 2 bcftools bcftools_core_projection          5   2.797      2.836   2.8348
-#> 3 bcftools bcftools_info_projection          5   5.397      5.439   5.4506
+#> 1 bcftools       bcftools_count_all          5   4.834      4.878   4.8684
+#> 2 bcftools bcftools_core_projection          5   2.806      2.839   2.8316
+#> 3 bcftools bcftools_info_projection          5   5.353      5.385   5.3880
 #>   max_sec    rows bytes_read compressed_mb compressed_mb_per_sec rows_hint
-#> 1   4.920 4352930  189031261      180.2743              37.20063   4352930
-#> 2   2.863 4352930  189031261            NA                    NA   4352930
-#> 3   5.492 4352930  189031261            NA                    NA   4352930
+#> 1   4.882 4352930  189031261      180.2743              36.95659   4352930
+#> 2   2.842 4352930  189031261            NA                    NA   4352930
+#> 3   5.443 4352930  189031261            NA                    NA   4352930
 #>   rows_per_sec        case_key   workload
-#> 1     898252.2       count_all  full_scan
-#> 2    1534883.6 core_projection projection
-#> 3     800318.1 info_projection projection
+#> 1     892359.6       count_all  full_scan
+#> 2    1533261.7 core_projection projection
+#> 3     808343.5 info_projection projection
 ```
 
 # samtools Baselines
@@ -952,14 +977,14 @@ if (has_bam && has_samtools) {
 #> samtools_bam_region_core_projection
 #> '/usr/local/bin/samtools' view HG00106.chrom11.ILLUMINA.bwa.GBR.exome.20130415.bam 11:1-5000000
 #>     engine                                case iterations min_sec median_sec
-#> 1 samtools           samtools_bam_region_count          5   0.220      0.225
-#> 2 samtools samtools_bam_region_core_projection          5   0.307      0.312
+#> 1 samtools           samtools_bam_region_count          5   0.221      0.222
+#> 2 samtools samtools_bam_region_core_projection          5   0.298      0.308
 #>   mean_sec max_sec   rows bytes_read compressed_mb compressed_mb_per_sec
-#> 1   0.2236   0.225 240068         NA            NA                    NA
-#> 2   0.3130   0.319 240068  330528619            NA                    NA
+#> 1   0.2234   0.227 240068         NA            NA                    NA
+#> 2   0.3074   0.317 240068  330528619            NA                    NA
 #>   rows_hint rows_per_sec                   case_key workload
-#> 1    240068    1066968.9           bam_region_count   region
-#> 2    240068     769448.7 bam_region_core_projection   region
+#> 1    240068    1081387.4           bam_region_count   region
+#> 2    240068     779441.6 bam_region_core_projection   region
 ```
 
 # Matched Comparison Table
@@ -990,28 +1015,32 @@ comparison_results[, intersect(comparison_cols, names(comparison_results))]
 #> 1   duckhts                   clinvar_count_all                  count_all
 #> 2   duckhts             clinvar_core_projection            core_projection
 #> 3   duckhts             clinvar_info_projection            info_projection
-#> 4   duckhts           clinvar_copy_core_parquet          copy_core_parquet
-#> 5   duckhts           clinvar_copy_info_parquet          copy_info_parquet
-#> 6   duckhts                    bam_region_count           bam_region_count
-#> 7   duckhts          bam_region_core_projection bam_region_core_projection
-#> 8  bcftools                  bcftools_count_all                  count_all
-#> 9  bcftools            bcftools_core_projection            core_projection
-#> 10 bcftools            bcftools_info_projection            info_projection
-#> 11 samtools           samtools_bam_region_count           bam_region_count
-#> 12 samtools samtools_bam_region_core_projection bam_region_core_projection
+#> 4   duckhts                       vep_count_all                  count_all
+#> 5   duckhts           vep_annotation_projection      annotation_projection
+#> 6   duckhts           clinvar_copy_core_parquet          copy_core_parquet
+#> 7   duckhts           clinvar_copy_info_parquet          copy_info_parquet
+#> 8   duckhts                    bam_region_count           bam_region_count
+#> 9   duckhts          bam_region_core_projection bam_region_core_projection
+#> 10 bcftools                  bcftools_count_all                  count_all
+#> 11 bcftools            bcftools_core_projection            core_projection
+#> 12 bcftools            bcftools_info_projection            info_projection
+#> 13 samtools           samtools_bam_region_count           bam_region_count
+#> 14 samtools samtools_bam_region_core_projection bam_region_core_projection
 #>      workload median_sec compressed_mb_per_sec rows_per_sec parquet_mb_per_sec
-#> 1   full_scan      1.248             144.45053    3487924.7                 NA
-#> 2  projection      0.259                    NA     772200.8                 NA
-#> 3  projection      0.303                    NA     660066.0                 NA
-#> 4  conversion      5.280                    NA     824418.6           2.139657
-#> 5  conversion      6.267                    NA     694579.5           4.516646
-#> 6      region      0.046                    NA    5218869.6                 NA
-#> 7      region      0.061                    NA    3278688.5                 NA
-#> 8   full_scan      4.846              37.20063     898252.2                 NA
-#> 9  projection      2.836                    NA    1534883.6                 NA
-#> 10 projection      5.439                    NA     800318.1                 NA
-#> 11     region      0.225                    NA    1066968.9                 NA
-#> 12     region      0.312                    NA     769448.7                 NA
+#> 1   full_scan      1.234             146.08935   3527495.95                 NA
+#> 2  projection      0.257                    NA    778210.12                 NA
+#> 3  projection      0.294                    NA    680272.11                 NA
+#> 4   full_scan     29.910              44.82330     13911.17                 NA
+#> 5  projection     19.410                    NA     10303.97                 NA
+#> 6  conversion      5.130                    NA    848524.37           2.202220
+#> 7  conversion      6.281                    NA    693031.36           4.506579
+#> 8      region      0.046                    NA   5218869.57                 NA
+#> 9      region      0.061                    NA   3278688.52                 NA
+#> 10  full_scan      4.878              36.95659    892359.57                 NA
+#> 11 projection      2.839                    NA   1533261.71                 NA
+#> 12 projection      5.385                    NA    808343.55                 NA
+#> 13     region      0.222                    NA   1081387.39                 NA
+#> 14     region      0.308                    NA    779441.56                 NA
 ```
 
 # Optional External Comparison
@@ -1044,71 +1073,81 @@ across tools.
 out <- comparison_results
 write.csv(out, "benchmark_results.csv", row.names = FALSE)
 out
-#>                                   case iterations min_sec median_sec mean_sec
-#> 1                    clinvar_count_all          5   1.243      1.248 1.249600
-#> 2              clinvar_core_projection          5   0.257      0.259 0.260200
-#> 3              clinvar_info_projection          5   0.297      0.303 0.302000
-#> 4            clinvar_copy_core_parquet          3   5.251      5.280 5.278333
-#> 5            clinvar_copy_info_parquet          3   6.195      6.267 6.254333
-#> 6                     bam_region_count          5   0.046      0.046 0.046400
-#> 7           bam_region_core_projection          5   0.061      0.061 0.061800
-#> 8                   bcftools_count_all          5   4.839      4.846 4.860800
-#> 9             bcftools_core_projection          5   2.797      2.836 2.834800
-#> 10            bcftools_info_projection          5   5.397      5.439 5.450600
-#> 11           samtools_bam_region_count          5   0.220      0.225 0.223600
-#> 12 samtools_bam_region_core_projection          5   0.307      0.312 0.313000
+#>                                   case iterations min_sec median_sec  mean_sec
+#> 1                    clinvar_count_all          5   1.222      1.234  1.233200
+#> 2              clinvar_core_projection          5   0.255      0.257  0.257800
+#> 3              clinvar_info_projection          5   0.292      0.294  0.296800
+#> 4                        vep_count_all          5  29.373     29.910 29.829600
+#> 5            vep_annotation_projection          5  19.254     19.410 19.400000
+#> 6            clinvar_copy_core_parquet          3   5.114      5.130  5.196000
+#> 7            clinvar_copy_info_parquet          3   6.192      6.281  6.256667
+#> 8                     bam_region_count          5   0.044      0.046  0.045600
+#> 9           bam_region_core_projection          5   0.060      0.061  0.061200
+#> 10                  bcftools_count_all          5   4.834      4.878  4.868400
+#> 11            bcftools_core_projection          5   2.806      2.839  2.831600
+#> 12            bcftools_info_projection          5   5.353      5.385  5.388000
+#> 13           samtools_bam_region_count          5   0.221      0.222  0.223400
+#> 14 samtools_bam_region_core_projection          5   0.298      0.308  0.307400
 #>    max_sec    rows bytes_read compressed_mb compressed_mb_per_sec rows_hint
-#> 1    1.258       1  189031261      180.2743             144.45053   4352930
-#> 2    0.267  200000  189031261            NA                    NA    200000
+#> 1    1.239       1  189031261      180.2743             146.08935   4352930
+#> 2    0.262  200000  189031261            NA                    NA    200000
 #> 3    0.305  200000  189031261            NA                    NA    200000
-#> 4    5.304 4352930  189031261            NA                    NA   4352930
-#> 5    6.301 4352930  189031261            NA                    NA   4352930
-#> 6    0.047       1  330528619            NA                    NA    240068
-#> 7    0.064  200000  330528619            NA                    NA    200000
-#> 8    4.920 4352930  189031261      180.2743              37.20063   4352930
-#> 9    2.863 4352930  189031261            NA                    NA   4352930
-#> 10   5.492 4352930  189031261            NA                    NA   4352930
-#> 11   0.225  240068         NA            NA                    NA    240068
-#> 12   0.319  240068  330528619            NA                    NA    240068
+#> 4   29.996       1 1405788912     1340.6648              44.82330    416083
+#> 5   19.613  200000 1405788912            NA                    NA    200000
+#> 6    5.344 4352930  189031261            NA                    NA   4352930
+#> 7    6.297 4352930  189031261            NA                    NA   4352930
+#> 8    0.046       1  330528619            NA                    NA    240068
+#> 9    0.063  200000  330528619            NA                    NA    200000
+#> 10   4.882 4352930  189031261      180.2743              36.95659   4352930
+#> 11   2.842 4352930  189031261            NA                    NA   4352930
+#> 12   5.443 4352930  189031261            NA                    NA   4352930
+#> 13   0.227  240068         NA            NA                    NA    240068
+#> 14   0.317  240068  330528619            NA                    NA    240068
 #>    rows_per_sec   engine vs_scan_baseline_mb vs_scan_baseline_rows
-#> 1     3487924.7  duckhts            1.000000             1.0000000
-#> 2      772200.8  duckhts            4.818533             0.2213926
-#> 3      660066.0  duckhts            4.118812             0.1892432
-#> 4      824418.6  duckhts                  NA                    NA
-#> 5      694579.5  duckhts                  NA                    NA
-#> 6     5218869.6  duckhts                  NA                    NA
-#> 7     3278688.5  duckhts                  NA                    NA
-#> 8      898252.2 bcftools                  NA                    NA
-#> 9     1534883.6 bcftools                  NA                    NA
-#> 10     800318.1 bcftools                  NA                    NA
-#> 11    1066968.9 samtools                  NA                    NA
-#> 12     769448.7 samtools                  NA                    NA
+#> 1    3527495.95  duckhts            1.000000             1.0000000
+#> 2     778210.12  duckhts            4.801556             0.2206126
+#> 3     680272.11  duckhts            4.197279             0.1928484
+#> 4      13911.17  duckhts            1.000000             1.0000000
+#> 5      10303.97  duckhts            1.540958             0.7406975
+#> 6     848524.37  duckhts                  NA                    NA
+#> 7     693031.36  duckhts                  NA                    NA
+#> 8    5218869.57  duckhts                  NA                    NA
+#> 9    3278688.52  duckhts                  NA                    NA
+#> 10    892359.57 bcftools                  NA                    NA
+#> 11   1533261.71 bcftools                  NA                    NA
+#> 12    808343.55 bcftools                  NA                    NA
+#> 13   1081387.39 samtools                  NA                    NA
+#> 14    779441.56 samtools                  NA                    NA
 #>                      case_key   workload parquet_bytes parquet_mb
 #> 1                   count_all  full_scan            NA         NA
 #> 2             core_projection projection            NA         NA
 #> 3             info_projection projection            NA         NA
-#> 4           copy_core_parquet conversion      11846170   11.29739
-#> 5           copy_info_parquet conversion      29680804   28.30582
-#> 6            bam_region_count     region            NA         NA
-#> 7  bam_region_core_projection     region            NA         NA
-#> 8                   count_all  full_scan            NA         NA
-#> 9             core_projection projection            NA         NA
-#> 10            info_projection projection            NA         NA
-#> 11           bam_region_count     region            NA         NA
-#> 12 bam_region_core_projection     region            NA         NA
+#> 4                   count_all  full_scan            NA         NA
+#> 5       annotation_projection projection            NA         NA
+#> 6           copy_core_parquet conversion      11846170   11.29739
+#> 7           copy_info_parquet conversion      29680804   28.30582
+#> 8            bam_region_count     region            NA         NA
+#> 9  bam_region_core_projection     region            NA         NA
+#> 10                  count_all  full_scan            NA         NA
+#> 11            core_projection projection            NA         NA
+#> 12            info_projection projection            NA         NA
+#> 13           bam_region_count     region            NA         NA
+#> 14 bam_region_core_projection     region            NA         NA
 #>    parquet_mb_per_sec
 #> 1                  NA
 #> 2                  NA
 #> 3                  NA
-#> 4            2.139657
-#> 5            4.516646
-#> 6                  NA
-#> 7                  NA
+#> 4                  NA
+#> 5                  NA
+#> 6            2.202220
+#> 7            4.506579
 #> 8                  NA
 #> 9                  NA
 #> 10                 NA
 #> 11                 NA
 #> 12                 NA
+#> 13                 NA
+#> 14                 NA
 ```
 
 # Notes For Reproducibility
@@ -1138,9 +1177,11 @@ Quick check that a file has VEP-like annotation fields:
 ``` r
 if (has_vep) {
   q <- sprintf(
-    "SELECT DISTINCT id FROM read_hts_header('%s') WHERE record_type = 'INFO' AND id IN ('CSQ','ANN','BCSQ')",
+    "SELECT DISTINCT id FROM read_hts_header('%s') WHERE record_type = 'INFO' AND lower(id) IN ('csq','ann','bcsq','vep')",
     gsub("'", "''", vep_vcf)
   )
   DBI::dbGetQuery(con, q)
 }
+#>    id
+#> 1 vep
 ```
