@@ -55,9 +55,9 @@ static inline int dna_to_2bit(char c) {
 
 static inline const char *get_string_at(duckdb_vector vector, idx_t row, idx_t *len) {
     duckdb_string_t *data = (duckdb_string_t *)duckdb_vector_get_data(vector);
-    duckdb_string_t val = data[row];
-    *len = duckdb_string_t_length(val);
-    return duckdb_string_t_data(&val);
+    duckdb_string_t *val = &data[row];
+    *len = duckdb_string_t_length(*val);
+    return duckdb_string_t_data(val);
 }
 
 static inline int64_t get_int64_at(duckdb_vector vector, idx_t row) {
