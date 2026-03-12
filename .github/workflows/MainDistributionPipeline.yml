@@ -21,5 +21,5 @@ jobs:
       ci_tools_version: v1.4.4
       extension_name: duckhts
       extra_toolchains: python3
-      exclude_archs: windows_amd64;windows_arm64;windows_amd64_mingw;windows_arm64_mingw;windows_amd64_rtools
+      exclude_archs: windows_amd64;windows_arm64
       reduced_ci_mode: disabled

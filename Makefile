@@ -16,6 +16,21 @@ TARGET_DUCKDB_VERSION=v1.2.0
 # The DuckDB release to fetch headers from
 DUCKDB_HEADER_VERSION=v1.4.3
 
+# For MinGW/Rtools we build vendored htslib ourselves.
+# Do not inherit the generic DuckDB CI vcpkg + Ninja path here.
+ifeq ($(DUCKDB_PLATFORM),windows_amd64_mingw)
+override GEN=
+override VCPKG_TOOLCHAIN_PATH=
+override VCPKG_TARGET_TRIPLET=
+override VCPKG_HOST_TRIPLET=
+endif
+ifeq ($(DUCKDB_PLATFORM),windows_amd64_rtools)
+override GEN=
+override VCPKG_TOOLCHAIN_PATH=
+override VCPKG_TARGET_TRIPLET=
+override VCPKG_HOST_TRIPLET=
+endif
+
 all: configure release
 
 # Include makefiles from DuckDB
