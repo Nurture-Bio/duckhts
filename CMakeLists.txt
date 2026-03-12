@@ -142,6 +142,7 @@ endif()
 # Optional network / crypto
 find_package(CURL QUIET)
 find_package(OpenSSL QUIET)
+find_package(PkgConfig QUIET)
 
 # Threads (portable: resolves to -lpthread on Linux, nothing on macOS)
 find_package(Threads REQUIRED)
@@ -149,6 +150,9 @@ find_package(Threads REQUIRED)
 # MinGW regex (regcomp/regexec are in libgnurx)
 if(WIN32 AND MINGW)
     find_library(GNUREGEX_LIBRARY NAMES gnurx regex)
+endif()
+if(WIN32 AND MINGW AND PKG_CONFIG_FOUND)
+    pkg_check_modules(PC_LIBCURL QUIET libcurl)
 endif()
 
 # ------------------------------------------------------------------
@@ -251,9 +255,9 @@ if(NOT LIBDEFLATE_FOUND)
 endif()
 if(WIN32 AND MINGW)
     # MinGW/Rtools builds should not rely on htslib's checked-in config.mk.
-    # Remote URL support is disabled here until the full Windows curl import
-    # chain is modeled explicitly in the outer extension link.
-    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libcurl --disable-plugins)
+    # Keep plugins off for now, but allow libcurl when the outer link can
+    # provide the full dependency chain.
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-plugins)
 elseif(NOT CURL_FOUND)
     list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libcurl)
 endif()
@@ -304,7 +308,33 @@ if(LIBDEFLATE_FOUND)
     list(APPEND HTSLIB_LINK_LIBS ${LIBDEFLATE_LIBRARY})
 endif()
 if(CURL_FOUND)
-    list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)
+    if(WIN32 AND MINGW)
+        if(PC_LIBCURL_FOUND)
+            string(STRIP "${PC_LIBCURL_LDFLAGS}" PC_LIBCURL_LDFLAGS_STRIPPED)
+            separate_arguments(PC_LIBCURL_LDFLAGS_LIST NATIVE_COMMAND "${PC_LIBCURL_LDFLAGS_STRIPPED}")
+            list(APPEND HTSLIB_LINK_LIBS ${PC_LIBCURL_LDFLAGS_LIST})
+        else()
+            list(APPEND HTSLIB_LINK_LIBS
+                -lcurl
+                -lpsl
+                -lbcrypt
+                -lidn2
+                -lunistring
+                -liconv
+                -lssl
+                -lcrypto
+                -lcrypt32
+                -lwsock32
+                -lwldap32
+                -lssh2
+                -lgcrypt
+                -lgpg-error
+                -lzstd
+            )
+        endif()
+    else()
+        list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)
+    endif()
 endif()
 if(OPENSSL_FOUND)
     list(APPEND HTSLIB_LINK_LIBS OpenSSL::Crypto)
