@@ -1,4 +1,4 @@
-.PHONY: clean clean_all
+.PHONY: clean clean_all function_catalog
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -15,6 +15,21 @@ TARGET_DUCKDB_VERSION=v1.2.0
 
 # The DuckDB release to fetch headers from
 DUCKDB_HEADER_VERSION=v1.4.3
+
+# For MinGW/Rtools we build vendored htslib ourselves.
+# Do not inherit the generic DuckDB CI vcpkg + Ninja path here.
+ifeq ($(DUCKDB_PLATFORM),windows_amd64_mingw)
+override GEN=
+override VCPKG_TOOLCHAIN_PATH=
+override VCPKG_TARGET_TRIPLET=
+override VCPKG_HOST_TRIPLET=
+endif
+ifeq ($(DUCKDB_PLATFORM),windows_amd64_rtools)
+override GEN=
+override VCPKG_TOOLCHAIN_PATH=
+override VCPKG_TARGET_TRIPLET=
+override VCPKG_HOST_TRIPLET=
+endif
 
 all: configure release
 
@@ -40,5 +55,9 @@ clean: clean_build clean_cmake
 clean_all: clean clean_configure
 
 # Render README.md from README.Rmd (GitHub-flavored markdown)
-rdm:
+function_catalog:
+	python3 scripts/render_function_catalog.py
+rdm: function_catalog
 	Rscript -e "rmarkdown::render('README.Rmd', output_format = 'github_document')"
+bench:
+	Rscript -e "rmarkdown::render('Benchmark.Rmd', output_format = 'github_document')"

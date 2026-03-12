@@ -142,6 +142,7 @@ endif()
 # Optional network / crypto
 find_package(CURL QUIET)
 find_package(OpenSSL QUIET)
+find_package(PkgConfig QUIET)
 
 # Threads (portable: resolves to -lpthread on Linux, nothing on macOS)
 find_package(Threads REQUIRED)
@@ -149,6 +150,17 @@ find_package(Threads REQUIRED)
 # MinGW regex (regcomp/regexec are in libgnurx)
 if(WIN32 AND MINGW)
     find_library(GNUREGEX_LIBRARY NAMES gnurx regex)
+    find_library(MINGW_LIBPSL_LIBRARY NAMES psl)
+    find_library(MINGW_LIBIDN2_LIBRARY NAMES idn2)
+    find_library(MINGW_LIBUNISTRING_LIBRARY NAMES unistring)
+    find_library(MINGW_LIBICONV_LIBRARY NAMES iconv)
+    find_library(MINGW_LIBSSH2_LIBRARY NAMES ssh2)
+    find_library(MINGW_LIBGCRYPT_LIBRARY NAMES gcrypt)
+    find_library(MINGW_LIBGPG_ERROR_LIBRARY NAMES gpg-error)
+    find_library(MINGW_LIBZSTD_LIBRARY NAMES zstd)
+endif()
+if(WIN32 AND MINGW AND PKG_CONFIG_FOUND)
+    pkg_check_modules(PC_LIBCURL QUIET libcurl)
 endif()
 
 # ------------------------------------------------------------------
@@ -237,11 +249,41 @@ message(STATUS "htslib make args: ${HTSLIB_MAKE_ARGS}")
 # htslib uses GNU Makefiles (not Ninja), so we must always use `make`
 # even when the outer CMake build uses Ninja.
 find_program(MAKE_COMMAND NAMES gmake make REQUIRED)
+find_program(SH_COMMAND NAMES sh bash REQUIRED)
+
+set(HTSLIB_CONFIGURE_FLAGS "")
+if(NOT BZIP2_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-bz2)
+endif()
+if(NOT LIBLZMA_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-lzma)
+endif()
+if(NOT LIBDEFLATE_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libdeflate)
+endif()
+if(WIN32 AND MINGW)
+    # MinGW/Rtools builds should not rely on htslib's checked-in config.mk.
+    # Keep plugins off for now, but allow libcurl when the outer link can
+    # provide the full dependency chain.
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-plugins)
+elseif(NOT CURL_FOUND)
+    list(APPEND HTSLIB_CONFIGURE_FLAGS --disable-libcurl)
+endif()
+
+set(HTSLIB_CONFIGURE_COMMAND
+    ${CMAKE_COMMAND} -E env
+    "CC=${CMAKE_C_COMPILER}"
+    "CPPFLAGS="
+    "CFLAGS=-O2 -fPIC ${HTSLIB_EXTRA_CFLAGS}"
+    "LDFLAGS=${HTSLIB_EXTRA_LDFLAGS}"
+    "LIBS=${HTSLIB_EXTRA_LIBS_STR}"
+    ${SH_COMMAND} ./configure ${HTSLIB_CONFIGURE_FLAGS}
+)
 
 ExternalProject_Add(htslib_build
     SOURCE_DIR        "${HTSLIB_SRC_DIR}"
     BUILD_IN_SOURCE   TRUE
-    CONFIGURE_COMMAND ""
+    CONFIGURE_COMMAND ${HTSLIB_CONFIGURE_COMMAND}
     BUILD_COMMAND     ${MAKE_COMMAND} -j lib-static ${HTSLIB_MAKE_ARGS}
     BUILD_ALWAYS      TRUE
     INSTALL_COMMAND   ""   # no install step; we link libhts.a directly
@@ -274,13 +316,58 @@ if(LIBDEFLATE_FOUND)
     list(APPEND HTSLIB_LINK_LIBS ${LIBDEFLATE_LIBRARY})
 endif()
 if(CURL_FOUND)
-    list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)
+    if(WIN32 AND MINGW)
+        if(PC_LIBCURL_FOUND)
+            string(STRIP "${PC_LIBCURL_LDFLAGS}" PC_LIBCURL_LDFLAGS_STRIPPED)
+            separate_arguments(PC_LIBCURL_LDFLAGS_LIST NATIVE_COMMAND "${PC_LIBCURL_LDFLAGS_STRIPPED}")
+            list(APPEND HTSLIB_LINK_LIBS ${PC_LIBCURL_LDFLAGS_LIST})
+        else()
+            list(APPEND HTSLIB_LINK_LIBS
+                -lcurl
+                -lbcrypt
+                -lssl
+                -lcrypto
+                -lcrypt32
+                -lwsock32
+                -lwldap32
+            )
+            if(MINGW_LIBPSL_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBPSL_LIBRARY})
+            endif()
+            if(MINGW_LIBIDN2_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBIDN2_LIBRARY})
+            endif()
+            if(MINGW_LIBUNISTRING_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBUNISTRING_LIBRARY})
+            endif()
+            if(MINGW_LIBICONV_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBICONV_LIBRARY})
+            endif()
+            if(MINGW_LIBSSH2_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBSSH2_LIBRARY})
+            endif()
+            if(MINGW_LIBGCRYPT_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBGCRYPT_LIBRARY})
+            endif()
+            if(MINGW_LIBGPG_ERROR_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBGPG_ERROR_LIBRARY})
+            endif()
+            if(MINGW_LIBZSTD_LIBRARY)
+                list(APPEND HTSLIB_LINK_LIBS ${MINGW_LIBZSTD_LIBRARY})
+            endif()
+        endif()
+    else()
+        list(APPEND HTSLIB_LINK_LIBS CURL::libcurl)
+    endif()
 endif()
 if(OPENSSL_FOUND)
     list(APPEND HTSLIB_LINK_LIBS OpenSSL::Crypto)
 endif()
 if(WIN32 AND MINGW AND GNUREGEX_LIBRARY)
     list(APPEND HTSLIB_LINK_LIBS ${GNUREGEX_LIBRARY})
+endif()
+if(WIN32 AND MINGW)
+    list(APPEND HTSLIB_LINK_LIBS ws2_32)
 endif()
 
 # Threads::Threads is portable (pthread on Linux, nothing on macOS)
