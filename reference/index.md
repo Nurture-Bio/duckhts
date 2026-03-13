@@ -20,12 +20,24 @@
   : Normalize R Data Types to DuckDB Types for Tabix
 - [`rduckhts_bam()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bam.md)
   : Create SAM/BAM/CRAM Table
+- [`rduckhts_bam_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bam_index.md)
+  : Build BAM or CRAM Index
 - [`rduckhts_bcf()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bcf.md)
   : Create VCF/BCF Table
+- [`rduckhts_bcf_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bcf_index.md)
+  : Build VCF or BCF Index
+- [`rduckhts_bed()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bed.md)
+  : Create BED Table
+- [`rduckhts_bgunzip()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bgunzip.md)
+  : BGZF Decompress a File
+- [`rduckhts_bgzip()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bgzip.md)
+  : BGZF Compress a File
 - [`rduckhts_fasta()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta.md)
   : Create FASTA Table
 - [`rduckhts_fasta_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta_index.md)
   : Build FASTA Index
+- [`rduckhts_fasta_nuc()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta_nuc.md)
+  : Compute FASTA Interval Nucleotide Composition
 - [`rduckhts_fastq()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fastq.md)
   : Create FASTQ Table
 - [`rduckhts_functions()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_functions.md)
@@ -46,5 +58,7 @@
   : Load DuckHTS Extension
 - [`rduckhts_tabix()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_tabix.md)
   : Create Tabix-Indexed File Table
+- [`rduckhts_tabix_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_tabix_index.md)
+  : Build Tabix Index
 - [`setup_hts_env()`](https://rgenomicsetl.github.io/duckhts/reference/setup_hts_env.md)
   : Setup HTSlib Environment

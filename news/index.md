@@ -1,5 +1,41 @@
 # Changelog
 
+## Rduckhts 0.1.3-0.0.2.9001
+
+- Bundle the `duckhts` `0.1.3.9001` extension update.
+- Add `read_bed(...)` and `fasta_nuc(...)` to the bundled extension
+  surface, plus
+  [`rduckhts_bed()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bed.md)
+  and
+  [`rduckhts_fasta_nuc()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta_nuc.md)
+  wrappers.
+- Add
+  [`rduckhts_bgzip()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bgzip.md),
+  [`rduckhts_bgunzip()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bgunzip.md),
+  [`rduckhts_bam_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bam_index.md),
+  [`rduckhts_bcf_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bcf_index.md),
+  and
+  [`rduckhts_tabix_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_tabix_index.md)
+  wrappers for the new extension compression and indexing functions.
+- Expose the newer bundled extension surface in the package catalog,
+  including HTS metadata readers, additional sequence helpers,
+  `sam_flag_bits()`/`sam_flag_has()`, the new `CIGAR utils` helpers, and
+  the expanded SAM/tag and tabix reader capabilities.
+- Rename the ambiguous SAM flag helper names in the bundled
+  extension/catalog to the clearer forms `is_paired()`,
+  `is_proper_pair()`, `is_next_segment_unmapped()`, and
+  `is_next_segment_reverse_complemented()`.
+- Add `is_forward_aligned()` for mapped-strand checks in pure SQL
+  workflows such as strand-split bin counting.
+- Bootstrap the new extension sources into the package build and update
+  `configure`/`configure.win` so the bundled extension compiles them on
+  Unix and Windows.
+- Regenerate the package-bundled function catalog and roxygen
+  documentation for the new wrappers.
+- Add installed-package tinytest coverage for BED reading, FASTA
+  nucleotide composition, BGZF round-trips, tabix indexing, and BAM/BCF
+  index creation.
+
 ## Rduckhts 0.1.3-0.0.2.9000
 
 ## Rduckhts 0.1.3-0.0.2
