@@ -10,9 +10,11 @@ test_interval_readers <- function() {
 
   fasta_path <- system.file("extdata", "ce.fa", package = "Rduckhts")
   bed_path <- system.file("extdata", "targets.bed", package = "Rduckhts")
+  fasta_index_path <- tempfile("duckhts_ce_", fileext = ".fai")
 
   expect_true(file.exists(fasta_path))
   expect_true(file.exists(bed_path))
+  expect_true(rduckhts_fasta_index(con, fasta_path, index_path = fasta_index_path)$success[1])
 
   expect_silent(rduckhts_bed(con, "targets", bed_path, overwrite = TRUE))
   expect_equal(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM targets")$n[1], 4)
@@ -33,7 +35,7 @@ test_interval_readers <- function() {
   expect_equal(typed_row$thick_start[1], 0)
   expect_equal(typed_row$block_count[1], 2)
 
-  nuc <- rduckhts_fasta_nuc(con, fasta_path, bed_path = bed_path)
+  nuc <- rduckhts_fasta_nuc(con, fasta_path, bed_path = bed_path, index_path = fasta_index_path)
   first_nuc <- nuc[nuc$chrom == "CHROMOSOME_I" & nuc$start == 0, , drop = FALSE]
   expect_equal(nrow(first_nuc), 1)
   expect_equal(first_nuc$pct_at[1], 0.4)
@@ -44,11 +46,23 @@ test_interval_readers <- function() {
   expect_equal(first_nuc$num_t[1], 2)
   expect_equal(first_nuc$seq_len[1], 10)
 
-  bins <- rduckhts_fasta_nuc(con, fasta_path, bin_width = 10, region = "CHROMOSOME_I:1-20")
+  bins <- rduckhts_fasta_nuc(
+    con,
+    fasta_path,
+    bin_width = 10,
+    region = "CHROMOSOME_I:1-20",
+    index_path = fasta_index_path
+  )
   expect_equal(nrow(bins), 2)
   expect_equal(sum(bins$seq_len), 20)
 
-  seq_nuc <- rduckhts_fasta_nuc(con, fasta_path, bed_path = bed_path, include_seq = TRUE)
+  seq_nuc <- rduckhts_fasta_nuc(
+    con,
+    fasta_path,
+    bed_path = bed_path,
+    index_path = fasta_index_path,
+    include_seq = TRUE
+  )
   first_seq <- seq_nuc[seq_nuc$chrom == "CHROMOSOME_I" & seq_nuc$start == 0, "seq", drop = TRUE]
   expect_equal(first_seq[1], "GCCTAAGCCT")
 
