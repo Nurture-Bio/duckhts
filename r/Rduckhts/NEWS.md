@@ -2,6 +2,10 @@
 # Rduckhts 0.1.3-0.0.2.9001
 
 - Bundle the `duckhts` `0.1.3.9001` extension update.
+- Add `quality_representation` to `rduckhts_bam()` and `rduckhts_fastq()` so qualities can be returned as raw `UTINYINT[]` Phred values.
+- Add `input_quality_encoding` to `rduckhts_fastq()`, defaulting to modern `phred33` while allowing explicit legacy FASTQ decoding; expose `rduckhts_detect_quality_encoding()` for heuristic FASTQ encoding inspection.
+- Add `sequence_encoding` parameter to `rduckhts_bam()`, `rduckhts_fasta()`, and `rduckhts_fastq()` wrappers, forwarding `sequence_encoding := 'nt16'` to the extension readers for raw nt16-encoded sequence output as `UTINYINT[]`.
+- **Breaking**: `seq_encode_4bit()` no longer returns NULL for unknown characters — they now map to N (code 15), matching htslib `seq_nt16_table` behavior; UDF and reader nt16 paths use shared code.
 - Remove the unsupported `attributes_map` argument from `rduckhts_tabix()` so the wrapper matches the generic `read_tabix(...)` surface; attribute maps remain available via `rduckhts_gff()` and `rduckhts_gtf()`.
 - Expose the bundled `read_bcf(...)` CSQ/ANN/BCSQ typing cleanup, including centralized builtin rules and the `additional_csq_column_types := ...` override parameter.
 - Add `read_bed(...)` and `fasta_nuc(...)` to the bundled extension surface, plus `rduckhts_bed()` and `rduckhts_fasta_nuc()` wrappers.

@@ -1,0 +1,64 @@
+# name: test/sql/quality_encoding.test
+# description: Test duckhts quality encoding surfaces
+# group: [duckhts]
+
+require duckhts
+
+# --- read_bam: QUAL can be exposed as raw Phred integers ---
+query T
+SELECT typeof(QUAL)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', quality_representation := 'phred')
+LIMIT 1;
+----
+UTINYINT[]
+
+# --- read_fastq: QUALITY can be exposed as raw Phred integers ---
+query T
+SELECT typeof(QUALITY)
+FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq', quality_representation := 'phred')
+LIMIT 1;
+----
+UTINYINT[]
+
+# --- detector reports legacy Phred+64 fixture ---
+query TIITT
+SELECT
+  guessed_encoding,
+  observed_ascii_min,
+  observed_ascii_max,
+  CAST(is_ambiguous AS VARCHAR),
+  compatible_encodings
+FROM detect_quality_encoding('__WORKING_DIRECTORY__/test/data/legacy_phred64.fq');
+----
+phred64	104	104	true	phred33,phred64,solexa64
+
+# --- default FASTQ decoding assumes modern Phred+33 input ---
+query T
+SELECT QUALITY
+FROM read_fastq('__WORKING_DIRECTORY__/test/data/legacy_phred64.fq')
+LIMIT 1;
+----
+hhhh
+
+# --- explicit auto-decoding legacy FASTQ returns canonical Phred+33 text ---
+query T
+SELECT QUALITY
+FROM read_fastq(
+  '__WORKING_DIRECTORY__/test/data/legacy_phred64.fq',
+  input_quality_encoding := 'auto'
+)
+LIMIT 1;
+----
+IIII
+
+# --- explicit legacy Phred+64 decoding returns numeric Phred scores ---
+query T
+SELECT QUALITY::VARCHAR
+FROM read_fastq(
+  '__WORKING_DIRECTORY__/test/data/legacy_phred64.fq',
+  input_quality_encoding := 'phred64',
+  quality_representation := 'phred'
+)
+LIMIT 1;
+----
+[40, 40, 40, 40]

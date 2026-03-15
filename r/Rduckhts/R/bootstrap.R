@@ -47,6 +47,8 @@ duckhts_bootstrap <- function(repo_root = NULL) {
     "seq_reader.c",
     "tabix_reader.c",
     "hts_meta_reader.c",
+    "quality_encoding.c",
+    "quality_encoding_reader.c",
     "vep_parser.c"
   )
   file.copy(file.path(src_dir, c_files), dest)
@@ -221,6 +223,8 @@ duckhts_build <- function(build_dir = NULL, make = NULL, force = FALSE, verbose 
       "seq_reader.c",
       "tabix_reader.c",
       "hts_meta_reader.c",
+      "quality_encoding.c",
+      "quality_encoding_reader.c",
       "vep_parser.c"
     )
   )

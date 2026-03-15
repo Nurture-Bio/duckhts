@@ -573,6 +573,12 @@ rduckhts_bcf <- function(
 #' @param reference Optional reference file path for CRAM files
 #' @param standard_tags Logical. If TRUE, include typed standard SAMtags columns
 #' @param auxiliary_tags Logical. If TRUE, include AUXILIARY_TAGS map of non-standard tags
+#' @param sequence_encoding Character. Sequence encoding for the SEQ column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
+#' @param quality_representation Character. Quality representation for the QUAL column:
+#'   \code{"string"} (default) returns canonical Phred+33 text;
+#'   \code{"phred"} returns raw Phred values as \code{UTINYINT[]}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -598,6 +604,8 @@ rduckhts_bam <- function(
   reference = NULL,
   standard_tags = NULL,
   auxiliary_tags = NULL,
+  sequence_encoding = NULL,
+  quality_representation = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -628,6 +636,12 @@ rduckhts_bam <- function(
   }
   if (!is.null(auxiliary_tags)) {
     params$auxiliary_tags <- if (isTRUE(auxiliary_tags)) "true" else "false"
+  }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
+  }
+  if (!is.null(quality_representation)) {
+    params$quality_representation <- sprintf("'%s'", quality_representation)
   }
 
   param_str <- build_param_str(params)
@@ -720,6 +734,9 @@ normalize_tabix_types <- function(types) {
 #' @param path Path to the FASTA file
 #' @param region Optional genomic region (e.g., "chr1:1000-2000" or "chr1:1-10,chr2:5-20")
 #' @param index_path Optional explicit path to FASTA index file (.fai)
+#' @param sequence_encoding Character. Sequence encoding for the SEQUENCE column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -731,6 +748,7 @@ rduckhts_fasta <- function(
   path,
   region = NULL,
   index_path = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -752,6 +770,9 @@ rduckhts_fasta <- function(
   }
   if (!is.null(index_path)) {
     params$index_path <- sprintf("'%s'", index_path)
+  }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
   }
   param_str <- build_param_str(params)
 
@@ -1075,6 +1096,15 @@ rduckhts_tabix_index <- function(
 #' @param path Path to the FASTQ file
 #' @param mate_path Optional path to mate file for paired reads
 #' @param interleaved Logical indicating if file is interleaved paired reads
+#' @param sequence_encoding Character. Sequence encoding for the SEQUENCE column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
+#' @param quality_representation Character. Quality representation for the QUALITY column:
+#'   \code{"string"} (default) returns canonical Phred+33 text;
+#'   \code{"phred"} returns raw Phred values as \code{UTINYINT[]}.
+#' @param input_quality_encoding Character. Input FASTQ quality encoding:
+#'   \code{"phred33"} (default FASTQ convention), \code{"auto"}, \code{"phred64"},
+#'   or \code{"solexa64"}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -1086,6 +1116,9 @@ rduckhts_fastq <- function(
   path,
   mate_path = NULL,
   interleaved = FALSE,
+  sequence_encoding = NULL,
+  quality_representation = NULL,
+  input_quality_encoding = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -1108,6 +1141,15 @@ rduckhts_fastq <- function(
   if (interleaved) {
     params$interleaved <- "true"
   }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
+  }
+  if (!is.null(quality_representation)) {
+    params$quality_representation <- sprintf("'%s'", quality_representation)
+  }
+  if (!is.null(input_quality_encoding)) {
+    params$input_quality_encoding <- sprintf("'%s'", input_quality_encoding)
+  }
 
   param_str <- build_param_str(params)
 
@@ -1128,6 +1170,29 @@ rduckhts_fastq <- function(
 
   DBI::dbExecute(con, create_query)
   invisible(TRUE)
+}
+
+#' Detect FASTQ Quality Encoding
+#'
+#' Inspects a FASTQ file's observed quality ASCII range and reports compatible
+#' legacy encodings with a heuristic guessed encoding.
+#'
+#' @param con A DuckDB connection with DuckHTS loaded
+#' @param path Path to the FASTQ file
+#' @param max_records Maximum number of records to inspect
+#'
+#' @return A data frame with the detected quality encoding summary
+#'
+#' @export
+rduckhts_detect_quality_encoding <- function(con, path, max_records = 10000) {
+  params <- list(max_records = max_records)
+  param_str <- build_param_str(params)
+  query <- sprintf(
+    "SELECT * FROM detect_quality_encoding('%s'%s)",
+    path,
+    param_str
+  )
+  DBI::dbGetQuery(con, query)
 }
 
 #' Create GFF3 Table

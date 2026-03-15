@@ -64,6 +64,10 @@ dbGetQuery(con, "
 ")
 
 dbGetQuery(con, "
+  SELECT * FROM fasta_index('test/data/ce.fa')
+")
+
+dbGetQuery(con, "
   SELECT NAME, length(SEQUENCE) AS seq_length
   FROM read_fasta('test/data/ce.fa', region := 'CHROMOSOME_I:1-25')
 ")
@@ -95,9 +99,6 @@ dbGetQuery(con, "
   FROM fasta_nuc('test/data/ce.fa', bin_width := 10, region := 'CHROMOSOME_I:1-20')
 ")
 
-dbGetQuery(con, "
-  SELECT * FROM fasta_index('test/data/ce.fa')
-")
 ```
 
 ### Sequence utilities
@@ -122,6 +123,51 @@ dbGetQuery(con, "
     seq_decode_4bit(seq_encode_4bit(substr(SEQUENCE, 1, 12))) AS roundtrip
   FROM read_fastq('test/data/interleaved.fq', interleaved := true)
   LIMIT 2
+")
+```
+
+### FASTQ quality decoding and per-position histograms
+
+`read_fastq()` separates input interpretation from output representation:
+
+- `input_quality_encoding` tells DuckHTS how to decode FASTQ ASCII into numeric qualities. The default is modern `phred33`. Use `phred64`, `solexa64`, or `auto` only for legacy files.
+- `quality_representation := 'phred'` returns canonical numeric qualities as `UTINYINT[]`.
+- `quality_representation := 'string'` returns canonical Phred+33 text. For legacy inputs this means decode first, then re-encode as modern FASTQ text.
+
+This makes the flow explicit:
+
+1. FASTQ text input is decoded according to `input_quality_encoding`.
+2. DuckHTS normalizes to numeric Phred values internally.
+3. Output is either raw numeric quality arrays (`phred`) or canonical Phred+33 text (`string`).
+
+For BAM/CRAM, qualities are already stored as numeric values, so there is no FASTQ text-encoding ambiguity on input.
+
+```{r eval=TRUE}
+dbGetQuery(con, "
+  SELECT *
+  FROM detect_quality_encoding('test/data/legacy_phred64.fq')
+")
+
+dbGetQuery(con, "
+  WITH q AS (
+    SELECT NAME, QUALITY
+    FROM read_fastq(
+      'test/data/r1.fq',
+      quality_representation := 'phred'
+    )
+  ),
+  expanded AS (
+    SELECT
+      NAME,
+      generate_subscripts(QUALITY, 1) AS pos,
+      unnest(QUALITY) AS q
+    FROM q
+  )
+  SELECT pos, q AS phred, count(*) AS n_reads
+  FROM expanded
+  GROUP BY pos, phred
+  ORDER BY pos, phred
+  LIMIT 12
 ")
 ```
 

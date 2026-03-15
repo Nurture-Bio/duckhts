@@ -44,6 +44,10 @@ echo "  ce.fa + .fai"
 cp "$SRC/fastq/r1.fq" "$DST/r1.fq"
 echo "  r1.fq"
 
+# ---- Legacy FASTQ quality fixture (Illumina Phred+64 text) ----
+printf '@legacy1\nACGT\n+\nhhhh\n' > "$DST/legacy_phred64.fq"
+echo "  legacy_phred64.fq"
+
 # ---- GFF → bgzipped + tabix ----
 bgzip -c "$SRC/tabix/gff_file.gff" > "$DST/gff_file.gff.gz"
 tabix -p gff "$DST/gff_file.gff.gz"

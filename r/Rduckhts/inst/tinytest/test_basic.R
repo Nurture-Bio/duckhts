@@ -15,6 +15,7 @@ expect_true(exists("rduckhts_bgunzip"))
 expect_true(exists("rduckhts_fasta"))
 expect_true(exists("rduckhts_fasta_index"))
 expect_true(exists("rduckhts_fastq"))
+expect_true(exists("rduckhts_detect_quality_encoding"))
 expect_true(exists("rduckhts_gff"))
 expect_true(exists("rduckhts_gtf"))
 expect_true(exists("rduckhts_tabix"))
@@ -38,7 +39,8 @@ expect_identical(
 expect_identical(
   names(formals(rduckhts_bam)),
   c("con", "table_name", "path", "region", "index_path", "reference",
-    "standard_tags", "auxiliary_tags", "overwrite")
+    "standard_tags", "auxiliary_tags", "sequence_encoding",
+    "quality_representation", "overwrite")
 )
 expect_identical(
   names(formals(rduckhts_bam_index)),
@@ -58,7 +60,8 @@ expect_identical(
 )
 expect_identical(
   names(formals(rduckhts_fasta)),
-  c("con", "table_name", "path", "region", "index_path", "overwrite")
+  c("con", "table_name", "path", "region", "index_path",
+    "sequence_encoding", "overwrite")
 )
 expect_identical(
   names(formals(rduckhts_fasta_index)),
@@ -66,7 +69,13 @@ expect_identical(
 )
 expect_identical(
   names(formals(rduckhts_fastq)),
-  c("con", "table_name", "path", "mate_path", "interleaved", "overwrite")
+  c("con", "table_name", "path", "mate_path", "interleaved",
+    "sequence_encoding", "quality_representation", "input_quality_encoding",
+    "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_detect_quality_encoding)),
+  c("con", "path", "max_records")
 )
 expect_identical(
   names(formals(rduckhts_gff)),
@@ -159,6 +168,7 @@ expect_true(any(grepl("\\[", names(mappings$duckdb_to_r)))) # Array types
 # Test example files are bundled
 expect_true(file.exists(system.file("extdata", "ce.fa", package = "Rduckhts")))
 expect_true(file.exists(system.file("extdata", "r1.fq", package = "Rduckhts")))
+expect_true(file.exists(system.file("extdata", "legacy_phred64.fq", package = "Rduckhts")))
 expect_true(file.exists(system.file(
   "extdata",
   "vcf_file.bcf",
@@ -182,6 +192,7 @@ expect_true("sam_flag_bits" %in% catalog$name)
 expect_true("read_bcf" %in% catalog$name)
 expect_true("bgzip" %in% catalog$name)
 expect_true("bam_index" %in% catalog$name)
+expect_true("detect_quality_encoding" %in% catalog$name)
 expect_equal(unique(rduckhts_functions(kind = "scalar")$kind), "scalar")
 expect_equal(unique(rduckhts_functions(category = "Readers")$category), "Readers")
 expect_equal(unique(rduckhts_functions(category = "CIGAR Utils")$category), "CIGAR Utils")
@@ -196,6 +207,7 @@ expect_error(rduckhts_bgunzip(NULL, "nonexistent.txt.gz"))
 expect_error(rduckhts_fasta(NULL, "test", "nonexistent.fa"))
 expect_error(rduckhts_fasta_index(NULL, "nonexistent.fa"))
 expect_error(rduckhts_fastq(NULL, "test", "nonexistent.fq"))
+expect_error(rduckhts_detect_quality_encoding(NULL, "nonexistent.fq"))
 expect_error(rduckhts_gff(NULL, "test", "nonexistent.gff"))
 expect_error(rduckhts_gtf(NULL, "test", "nonexistent.gtf"))
 expect_error(rduckhts_tabix(NULL, "test", "nonexistent.bed.gz"))

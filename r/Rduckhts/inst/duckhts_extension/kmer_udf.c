@@ -5,6 +5,8 @@ DUCKDB_EXTENSION_EXTERN
 #include <stdint.h>
 #include <string.h>
 
+#include "include/seq_encoding.h"
+
 #define SAM_FLAG_PAIRED 0x1
 #define SAM_FLAG_PROPER_PAIR 0x2
 #define SAM_FLAG_UNMAPPED 0x4
@@ -106,47 +108,8 @@ static inline int dna_to_2bit(char c) {
     }
 }
 
-static inline int iupac_to_4bit(char c) {
-    switch ((unsigned char)toupper((unsigned char)c)) {
-    case 'A': return 0x1;
-    case 'C': return 0x2;
-    case 'G': return 0x4;
-    case 'T': return 0x8;
-    case 'M': return 0x3;
-    case 'R': return 0x5;
-    case 'S': return 0x6;
-    case 'V': return 0x7;
-    case 'W': return 0x9;
-    case 'Y': return 0xa;
-    case 'H': return 0xb;
-    case 'K': return 0xc;
-    case 'D': return 0xd;
-    case 'B': return 0xe;
-    case 'N': return 0xf;
-    default:  return -1;
-    }
-}
-
-static inline char bit4_to_iupac(uint8_t code) {
-    switch (code) {
-    case 0x1: return 'A';
-    case 0x2: return 'C';
-    case 0x4: return 'G';
-    case 0x8: return 'T';
-    case 0x3: return 'M';
-    case 0x5: return 'R';
-    case 0x6: return 'S';
-    case 0x7: return 'V';
-    case 0x9: return 'W';
-    case 0xa: return 'Y';
-    case 0xb: return 'H';
-    case 0xc: return 'K';
-    case 0xd: return 'D';
-    case 0xe: return 'B';
-    case 0xf: return 'N';
-    default:  return '\0';
-    }
-}
+/* iupac_to_4bit and bit4_to_iupac removed — use seq_text_to_nt16() and
+   seq_nt16_to_text() from seq_encoding.h instead. */
 
 static inline const char *get_string_at(duckdb_vector vector, idx_t row, idx_t *len) {
     duckdb_string_t *data = (duckdb_string_t *)duckdb_vector_get_data(vector);
@@ -455,24 +418,9 @@ static void seq_encode_4bit_scalar(duckdb_function_info info, duckdb_data_chunk 
         }
 
         uint8_t *child_data = (uint8_t *)duckdb_vector_get_data(child_vec);
-        int valid = 1;
-        for (idx_t i = 0; i < len; i++) {
-            int code = iupac_to_4bit(seq[i]);
-            if (code < 0) {
-                valid = 0;
-                break;
-            }
-            child_data[child_offset + i] = (uint8_t)code;
-        }
-
-        if (!valid) {
-            set_null_at(output, row);
-            if (duckdb_list_vector_set_size(output, child_offset) != DuckDBSuccess) {
-                duckdb_scalar_function_set_error(info, "seq_encode_4bit: failed to roll back list storage");
-                return;
-            }
-            continue;
-        }
+        /* Permissive encoding via shared helper — unknown chars → N (15),
+           matching htslib seq_nt16_table behavior exactly. */
+        seq_text_to_nt16(seq, child_data + child_offset, len);
 
         list_data[row].length = len;
         child_offset += len;
@@ -500,28 +448,23 @@ static void seq_decode_4bit_scalar(duckdb_function_info info, duckdb_data_chunk 
             return;
         }
 
-        int valid = 1;
+        /* Check for NULL child elements, then decode via shared helper.
+           seq_nt16_to_text returns -1 if any code > 15. */
+        int has_null_child = 0;
         for (idx_t i = 0; i < entry.length; i++) {
-            idx_t child_index = entry.offset + i;
-            if (!row_is_valid(child_vec, child_index)) {
-                valid = 0;
+            if (!row_is_valid(child_vec, entry.offset + i)) {
+                has_null_child = 1;
                 break;
             }
-            char base = bit4_to_iupac(child_data[child_index]);
-            if (!base) {
-                valid = 0;
-                break;
-            }
-            decoded[i] = base;
         }
 
-        if (!valid) {
+        if (has_null_child ||
+            seq_nt16_to_text(child_data + entry.offset, decoded, entry.length) < 0) {
             set_null_at(output, row);
             duckdb_free(decoded);
             continue;
         }
 
-        decoded[entry.length] = '\0';
         duckdb_vector_assign_string_element_len(output, row, decoded, entry.length);
         duckdb_free(decoded);
     }

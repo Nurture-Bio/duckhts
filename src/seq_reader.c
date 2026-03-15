@@ -31,6 +31,9 @@ DUCKDB_EXTENSION_EXTERN
 #include <htslib/hts.h>
 #include <htslib/faidx.h>
 
+#include "include/seq_encoding.h"
+#include "include/quality_encoding.h"
+
 /* ================================================================
  * Column indices
  * ================================================================ */
@@ -59,6 +62,9 @@ typedef struct {
     int is_fastq;
     int interleaved;
     int paired;
+    int seq_nt16;       /* 1 if sequence_encoding := 'nt16'; SEQUENCE → LIST(UTINYINT) */
+    duckhts_quality_representation qual_repr;
+    duckhts_quality_encoding input_quality_encoding;
 } seq_bind_data_t;
 
 /* ================================================================
@@ -94,6 +100,9 @@ typedef struct {
     size_t qual_buf_cap;
     char *pair_buf;
     size_t pair_buf_cap;
+    int seq_nt16;       /* 1 if sequence_encoding := 'nt16' */
+    duckhts_quality_representation qual_repr;
+    duckhts_quality_encoding input_quality_encoding;
 } seq_init_data_t;
 
 /* ================================================================
@@ -154,17 +163,13 @@ static void ensure_buf(char **buf, size_t *cap, int need) {
     }
 }
 
-/* Decode packed sequence via seq_nt16_str[] and bam_seqi() from htslib */
-static void decode_seq(const uint8_t *seq_data, int len, char *buf) {
-    for (int i = 0; i < len; i++)
-        buf[i] = seq_nt16_str[bam_seqi(seq_data, i)];
-    buf[len] = '\0';
-}
+/* Decode packed sequence via seq_decode_to_string() from include/seq_encoding.h */
 
-/* Decode quality to Phred+33 ASCII */
-static void decode_qual(const uint8_t *qual, int len, char *buf) {
+/* Decode quality to canonical Phred+33 ASCII */
+static void decode_qual(const uint8_t *qual, int len, char *buf,
+                        duckhts_quality_encoding input_quality_encoding) {
     for (int i = 0; i < len; i++)
-        buf[i] = (char)(qual[i] + 33);
+        buf[i] = (char)(duckhts_normalize_fastq_quality(qual[i], input_quality_encoding) + 33);
     buf[len] = '\0';
 }
 
@@ -269,6 +274,8 @@ static void seq_read_bind(duckdb_bind_info info, int is_fastq) {
     memset(bind, 0, sizeof(seq_bind_data_t));
     bind->file_path = file_path;
     bind->is_fastq = is_fastq;
+    bind->qual_repr = DUCKHTS_QUALITY_REPR_STRING;
+    bind->input_quality_encoding = DUCKHTS_QUALITY_ENCODING_PHRED33;
 
     if (is_fastq) {
         duckdb_value mate_val = duckdb_bind_get_named_parameter(info, "mate_path");
@@ -304,15 +311,110 @@ static void seq_read_bind(duckdb_bind_info info, int is_fastq) {
         if (index_val) duckdb_destroy_value(&index_val);
     }
 
+    /* sequence_encoding — shared by both FASTA and FASTQ */
+    duckdb_value enc_val = duckdb_bind_get_named_parameter(info, "sequence_encoding");
+    if (enc_val && !duckdb_is_null_value(enc_val)) {
+        char *enc = duckdb_get_varchar(enc_val);
+        if (enc) {
+            if (strcmp(enc, "nt16") == 0) {
+                bind->seq_nt16 = 1;
+            } else if (strcmp(enc, "string") != 0) {
+                duckdb_bind_set_error(info,
+                    is_fastq
+                        ? "read_fastq: sequence_encoding must be 'string' or 'nt16'"
+                        : "read_fasta: sequence_encoding must be 'string' or 'nt16'");
+            }
+            duckdb_free(enc);
+        }
+    }
+    if (enc_val) duckdb_destroy_value(&enc_val);
+
+    if (is_fastq) {
+        duckdb_value qrepr_val = duckdb_bind_get_named_parameter(info, "quality_representation");
+        if (qrepr_val && !duckdb_is_null_value(qrepr_val)) {
+            char *repr = duckdb_get_varchar(qrepr_val);
+            if (repr) {
+                if (duckhts_parse_quality_representation(repr, &bind->qual_repr) != 0) {
+                    duckdb_bind_set_error(info,
+                        "read_fastq: quality_representation must be 'string' or 'phred'");
+                    duckdb_free(repr);
+                    if (qrepr_val) duckdb_destroy_value(&qrepr_val);
+                    destroy_seq_bind(bind);
+                    return;
+                }
+                duckdb_free(repr);
+            }
+        }
+        if (qrepr_val) duckdb_destroy_value(&qrepr_val);
+
+        duckdb_value qenc_val = duckdb_bind_get_named_parameter(info, "input_quality_encoding");
+        if (qenc_val && !duckdb_is_null_value(qenc_val)) {
+            char *enc = duckdb_get_varchar(qenc_val);
+            if (enc) {
+                if (duckhts_parse_quality_encoding(enc, 1, &bind->input_quality_encoding) != 0) {
+                    duckdb_bind_set_error(info,
+                        "read_fastq: input_quality_encoding must be 'auto', 'phred33', 'phred64', or 'solexa64'");
+                    duckdb_free(enc);
+                    if (qenc_val) duckdb_destroy_value(&qenc_val);
+                    destroy_seq_bind(bind);
+                    return;
+                }
+                duckdb_free(enc);
+            }
+        }
+        if (qenc_val) duckdb_destroy_value(&qenc_val);
+
+        if (bind->input_quality_encoding == DUCKHTS_QUALITY_ENCODING_AUTO) {
+            duckhts_quality_detect_result detect;
+            char err[512];
+            if (duckhts_detect_fastq_quality_encoding(bind->file_path, 10000, &detect, err, sizeof(err)) != 0) {
+                duckdb_bind_set_error(info, err);
+                destroy_seq_bind(bind);
+                return;
+            }
+            bind->input_quality_encoding = detect.guessed_encoding;
+            if (bind->paired) {
+                duckhts_quality_detect_result mate_detect;
+                if (duckhts_detect_fastq_quality_encoding(bind->mate_path, 10000, &mate_detect, err, sizeof(err)) != 0) {
+                    duckdb_bind_set_error(info, err);
+                    destroy_seq_bind(bind);
+                    return;
+                }
+                if (mate_detect.guessed_encoding != bind->input_quality_encoding) {
+                    duckdb_bind_set_error(info,
+                        "read_fastq: auto-detected mate FASTQ quality encoding does not match path");
+                    destroy_seq_bind(bind);
+                    return;
+                }
+            }
+        }
+    }
+
     /* Define schema */
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_logical_type usmallint_type = duckdb_create_logical_type(DUCKDB_TYPE_USMALLINT);
 
     duckdb_bind_add_result_column(info, "NAME", varchar_type);
     duckdb_bind_add_result_column(info, "DESCRIPTION", varchar_type);
-    duckdb_bind_add_result_column(info, "SEQUENCE", varchar_type);
+    if (bind->seq_nt16) {
+        duckdb_logical_type utinyint_type = duckdb_create_logical_type(DUCKDB_TYPE_UTINYINT);
+        duckdb_logical_type list_type = duckdb_create_list_type(utinyint_type);
+        duckdb_bind_add_result_column(info, "SEQUENCE", list_type);
+        duckdb_destroy_logical_type(&utinyint_type);
+        duckdb_destroy_logical_type(&list_type);
+    } else {
+        duckdb_bind_add_result_column(info, "SEQUENCE", varchar_type);
+    }
     if (is_fastq) {
-        duckdb_bind_add_result_column(info, "QUALITY", varchar_type);
+        if (bind->qual_repr == DUCKHTS_QUALITY_REPR_PHRED) {
+            duckdb_logical_type utinyint_type = duckdb_create_logical_type(DUCKDB_TYPE_UTINYINT);
+            duckdb_logical_type list_type = duckdb_create_list_type(utinyint_type);
+            duckdb_bind_add_result_column(info, "QUALITY", list_type);
+            duckdb_destroy_logical_type(&utinyint_type);
+            duckdb_destroy_logical_type(&list_type);
+        } else {
+            duckdb_bind_add_result_column(info, "QUALITY", varchar_type);
+        }
         if (bind->paired || bind->interleaved) {
             duckdb_bind_add_result_column(info, "MATE", usmallint_type);
             duckdb_bind_add_result_column(info, "PAIR_ID", varchar_type);
@@ -358,6 +460,9 @@ static void seq_read_init(duckdb_init_info info) {
     init->is_fastq = bind->is_fastq;
     init->paired = bind->paired;
     init->interleaved = bind->interleaved;
+    init->seq_nt16 = bind->seq_nt16;
+    init->qual_repr = bind->qual_repr;
+    init->input_quality_encoding = bind->input_quality_encoding;
     init->pending_mate = 0;
     init->interleaved_mate = 1;
     init->n_regions = bind->n_regions;
@@ -463,7 +568,28 @@ static void seq_read_function(duckdb_function_info info, duckdb_data_chunk outpu
                 } else if (col_id == SEQ_COL_DESCRIPTION) {
                     set_null(vec, row_count);
                 } else if (col_id == SEQ_COL_SEQUENCE) {
-                    duckdb_vector_assign_string_element_len(vec, row_count, seq, len);
+                    if (init->seq_nt16) {
+                        /* Encode text sequence to nt16 LIST(UTINYINT)
+                           using shared helper (permissive: unknown → N). */
+                        duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
+                        duckdb_list_entry *list_data =
+                            (duckdb_list_entry *)duckdb_vector_get_data(vec);
+                        idx_t child_offset = duckdb_list_vector_get_size(vec);
+                        if (len > 0) {
+                            duckdb_list_vector_reserve(vec, child_offset + len);
+                            duckdb_list_vector_set_size(vec, child_offset + len);
+                            uint8_t *child_data =
+                                (uint8_t *)duckdb_vector_get_data(child_vec);
+                            seq_text_to_nt16(seq, child_data + child_offset, (idx_t)len);
+                            list_data[row_count].offset = child_offset;
+                            list_data[row_count].length = (idx_t)len;
+                        } else {
+                            list_data[row_count].offset = child_offset;
+                            list_data[row_count].length = 0;
+                        }
+                    } else {
+                        duckdb_vector_assign_string_element_len(vec, row_count, seq, len);
+                    }
                 }
             }
             free(seq);
@@ -564,35 +690,76 @@ static void seq_read_function(duckdb_function_info info, duckdb_data_chunk outpu
             }
 
             case SEQ_COL_SEQUENCE: {
-                if (seq_len > 0) {
-                    ensure_buf(&init->seq_buf, &init->seq_buf_cap, seq_len);
-                    if (!init->seq_buf) {
-                        duckdb_function_set_error(info, "read_seq: out of memory allocating sequence buffer");
-                        init->done = 1;
-                        duckdb_data_chunk_set_size(output, 0);
-                        return;
+                if (init->seq_nt16) {
+                    /* Emit packed nt16 codes as LIST(UTINYINT) */
+                    duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
+                    duckdb_list_entry *list_data =
+                        (duckdb_list_entry *)duckdb_vector_get_data(vec);
+                    idx_t child_offset = duckdb_list_vector_get_size(vec);
+                    if (seq_len > 0) {
+                        duckdb_list_vector_reserve(vec, child_offset + seq_len);
+                        duckdb_list_vector_set_size(vec, child_offset + seq_len);
+                        uint8_t *child_data =
+                            (uint8_t *)duckdb_vector_get_data(child_vec);
+                        const uint8_t *raw_seq = bam_get_seq(b);
+                        for (int k = 0; k < seq_len; k++)
+                            child_data[child_offset + k] =
+                                (uint8_t)bam_seqi(raw_seq, k);
+                        list_data[row_count].offset = child_offset;
+                        list_data[row_count].length = (idx_t)seq_len;
+                    } else {
+                        list_data[row_count].offset = child_offset;
+                        list_data[row_count].length = 0;
                     }
-                    decode_seq(bam_get_seq(b), seq_len, init->seq_buf);
-                    duckdb_vector_assign_string_element(vec, row_count,
-                                                         init->seq_buf);
                 } else {
-                    duckdb_vector_assign_string_element(vec, row_count, "");
+                    if (seq_len > 0) {
+                        ensure_buf(&init->seq_buf, &init->seq_buf_cap, seq_len);
+                        if (!init->seq_buf) {
+                            duckdb_function_set_error(info, "read_seq: out of memory allocating sequence buffer");
+                            init->done = 1;
+                            duckdb_data_chunk_set_size(output, 0);
+                            return;
+                        }
+                        seq_decode_to_string(bam_get_seq(b), seq_len, init->seq_buf);
+                        duckdb_vector_assign_string_element(vec, row_count,
+                                                             init->seq_buf);
+                    } else {
+                        duckdb_vector_assign_string_element(vec, row_count, "");
+                    }
                 }
                 break;
             }
 
             case SEQ_COL_QUALITY: {
                 if (seq_len > 0 && bam_get_qual(b)[0] != 255) {
-                    ensure_buf(&init->qual_buf, &init->qual_buf_cap, seq_len);
-                    if (!init->qual_buf) {
-                        duckdb_function_set_error(info, "read_seq: out of memory allocating quality buffer");
-                        init->done = 1;
-                        duckdb_data_chunk_set_size(output, 0);
-                        return;
+                    if (init->qual_repr == DUCKHTS_QUALITY_REPR_PHRED) {
+                        duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
+                        duckdb_list_entry *list_data =
+                            (duckdb_list_entry *)duckdb_vector_get_data(vec);
+                        idx_t child_offset = duckdb_list_vector_get_size(vec);
+                        const uint8_t *raw_qual = bam_get_qual(b);
+                        duckdb_list_vector_reserve(vec, child_offset + seq_len);
+                        duckdb_list_vector_set_size(vec, child_offset + seq_len);
+                        uint8_t *child_data = (uint8_t *)duckdb_vector_get_data(child_vec);
+                        for (int k = 0; k < seq_len; k++) {
+                            child_data[child_offset + k] =
+                                duckhts_normalize_fastq_quality(raw_qual[k], init->input_quality_encoding);
+                        }
+                        list_data[row_count].offset = child_offset;
+                        list_data[row_count].length = (idx_t)seq_len;
+                    } else {
+                        ensure_buf(&init->qual_buf, &init->qual_buf_cap, seq_len);
+                        if (!init->qual_buf) {
+                            duckdb_function_set_error(info, "read_seq: out of memory allocating quality buffer");
+                            init->done = 1;
+                            duckdb_data_chunk_set_size(output, 0);
+                            return;
+                        }
+                        decode_qual(bam_get_qual(b), seq_len, init->qual_buf,
+                                    init->input_quality_encoding);
+                        duckdb_vector_assign_string_element(vec, row_count,
+                                                             init->qual_buf);
                     }
-                    decode_qual(bam_get_qual(b), seq_len, init->qual_buf);
-                    duckdb_vector_assign_string_element(vec, row_count,
-                                                         init->qual_buf);
                 } else {
                     set_null(vec, row_count);
                 }
@@ -650,6 +817,7 @@ void register_read_fasta_function(duckdb_connection connection) {
     duckdb_table_function_add_parameter(tf, varchar_type);
     duckdb_table_function_add_named_parameter(tf, "region", varchar_type);
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "sequence_encoding", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_table_function_set_bind(tf, fasta_read_bind);
@@ -756,6 +924,9 @@ void register_read_fastq_function(duckdb_connection connection) {
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, varchar_type);
     duckdb_table_function_add_named_parameter(tf, "mate_path", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "sequence_encoding", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "quality_representation", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "input_quality_encoding", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);

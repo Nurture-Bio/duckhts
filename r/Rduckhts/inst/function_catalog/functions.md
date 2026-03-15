@@ -7,15 +7,25 @@ This section is generated from `functions.yaml`.
 | Function | Kind | Returns | R helper | Description |
 | --- | --- | --- | --- | --- |
 | `read_bcf` | table | table | `rduckhts_bcf` | Read VCF and BCF variant data with typed INFO, FORMAT, typed CSQ/ANN/BCSQ subfields, optional tidy sample output, and optional bcftools-style CSQ type overrides. |
-| `read_bam` | table | table | `rduckhts_bam` | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps. |
-| `read_fasta` | table | table | `rduckhts_fasta` | Read FASTA records or indexed FASTA regions as sequence rows. |
+| `read_bam` | table | table | `rduckhts_bam` | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps. Use sequence_encoding := 'nt16' to return SEQ as UTINYINT[] and quality_representation := 'phred' to return QUAL as UTINYINT[] instead of VARCHAR. |
+| `read_fasta` | table | table | `rduckhts_fasta` | Read FASTA records or indexed FASTA regions as sequence rows. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] (htslib nt16 4-bit codes) instead of VARCHAR. |
 | `read_bed` | table | table | `rduckhts_bed` | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering. |
 | `fasta_nuc` | table | table | `rduckhts_fasta_nuc` | Compute bedtools nuc-style nucleotide composition for supplied BED intervals or generated fixed-width bins over a FASTA reference. |
-| `read_fastq` | table | table | `rduckhts_fastq` | Read single-end, paired-end, or interleaved FASTQ files. |
+| `read_fastq` | table | table | `rduckhts_fastq` | Read single-end, paired-end, or interleaved FASTQ files with optional legacy quality decoding. By default, FASTQ qualities are interpreted as modern Phred+33 input. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] and quality_representation := 'phred' to return QUALITY as UTINYINT[] instead of VARCHAR. input_quality_encoding accepts 'phred33', 'auto', 'phred64', or 'solexa64'. |
 | `read_gff` | table | table | `rduckhts_gff` | Read GFF annotations with optional parsed attribute maps and indexed region filtering. |
 | `read_gtf` | table | table | `rduckhts_gtf` | Read GTF annotations with optional parsed attribute maps and indexed region filtering. |
 | `read_tabix` | table | table | `rduckhts_tabix` | Read generic tabix-indexed text data with optional header handling and type inference. |
 | `fasta_index` | table | table | `rduckhts_fasta_index` | Build a FASTA index and return the index path used by the operation. |
+
+### Metadata
+
+| Function | Kind | Returns | R helper | Description |
+| --- | --- | --- | --- | --- |
+| `detect_quality_encoding` | table | table | `rduckhts_detect_quality_encoding` | Inspect a FASTQ file's observed quality ASCII range and report compatible legacy encodings with a heuristic guessed encoding. |
+| `read_hts_header` | table | table | `rduckhts_hts_header` | Inspect HTS headers in parsed, raw, or combined form across supported formats. |
+| `read_hts_index` | table | table | `rduckhts_hts_index` | Inspect high-level HTS index metadata such as sequence names and mapped counts. |
+| `read_hts_index_spans` | table_macro | table | `rduckhts_hts_index_spans` | Expand index metadata into span and chunk rows suitable for low-level index inspection. |
+| `read_hts_index_raw` | table_macro | table | `rduckhts_hts_index_raw` | Return the raw on-disk HTS index blob together with basic identifying metadata. |
 
 ### Compression
 
@@ -31,15 +41,6 @@ This section is generated from `functions.yaml`.
 | `bam_index` | table | table | `rduckhts_bam_index` | Build a BAM or CRAM index and report the written index path and format. |
 | `bcf_index` | table | table | `rduckhts_bcf_index` | Build a TBI or CSI index for a VCF or BCF file and report the written index path and format. |
 | `tabix_index` | table | table | `rduckhts_tabix_index` | Build a tabix index for a BGZF-compressed text file using a preset or explicit coordinate columns. |
-
-### Metadata
-
-| Function | Kind | Returns | R helper | Description |
-| --- | --- | --- | --- | --- |
-| `read_hts_header` | table | table | `rduckhts_hts_header` | Inspect HTS headers in parsed, raw, or combined form across supported formats. |
-| `read_hts_index` | table | table | `rduckhts_hts_index` | Inspect high-level HTS index metadata such as sequence names and mapped counts. |
-| `read_hts_index_spans` | table_macro | table | `rduckhts_hts_index_spans` | Expand index metadata into span and chunk rows suitable for low-level index inspection. |
-| `read_hts_index_raw` | table_macro | table | `rduckhts_hts_index_raw` | Return the raw on-disk HTS index blob together with basic identifying metadata. |
 
 ### Sequence UDFs
 
