@@ -10,6 +10,8 @@
 #define VEP_PARSER_H
 
 #include <htslib/vcf.h>
+#include <regex.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,16 +66,18 @@ typedef struct {
 typedef struct {
     const char* tag;
     const char* columns;
+    const char* additional_csq_column_types;
     int transcript_mode;
 } vep_options_t;
 
 void vep_options_init(vep_options_t* opts);
-vep_schema_t* vep_schema_parse(const bcf_hdr_t* hdr, const char* tag);
+vep_schema_t* vep_schema_parse(const bcf_hdr_t* hdr, const char* tag, const char* additional_csq_column_types);
 void vep_schema_destroy(vep_schema_t* schema);
 int vep_schema_get_field_index(const vep_schema_t* schema, const char* name);
 const vep_field_t* vep_schema_get_field(const vep_schema_t* schema, int index);
-vep_field_type_t vep_infer_type(const char* field_name);
+vep_field_type_t vep_infer_type(const char* tag_name, const char* field_name, const char* additional_csq_column_types);
 const char* vep_type_name(vep_field_type_t type);
+int vep_validate_column_type_rules(const char* rules_text, char* errbuf, size_t errbuf_size);
 vep_record_t* vep_record_parse(const vep_schema_t* schema, const char* csq_value);
 vep_record_t* vep_record_parse_bcf(const vep_schema_t* schema, const bcf_hdr_t* hdr, bcf1_t* rec);
 void vep_record_destroy(vep_record_t* record);

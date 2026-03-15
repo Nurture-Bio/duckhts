@@ -93,6 +93,7 @@ typedef struct {
     char* file_path;
     char* index_path;          // Optional explicit index path
     char* region;              // Optional region filter
+    char* additional_csq_column_types;  // Optional bcftools-style override rules
     char** regions;            // Parsed comma-separated regions
     unsigned int n_regions;
     int include_info;          // Include INFO fields
@@ -204,6 +205,7 @@ static void destroy_bind_data(void* data) {
     if (bind->file_path) duckdb_free(bind->file_path);
     if (bind->index_path) duckdb_free(bind->index_path);
     if (bind->region) duckdb_free(bind->region);
+    if (bind->additional_csq_column_types) duckdb_free(bind->additional_csq_column_types);
     if (bind->regions) {
         for (unsigned int i = 0; i < bind->n_regions; i++) {
             if (bind->regions[i]) duckdb_free(bind->regions[i]);
@@ -486,6 +488,25 @@ static void bcf_read_bind(duckdb_bind_info info) {
         tidy_format = duckdb_get_bool(tidy_val);
     }
     if (tidy_val) duckdb_destroy_value(&tidy_val);
+
+    // Optional bcftools-style CSQ/ANN/BCSQ type overrides
+    char* additional_csq_column_types = NULL;
+    duckdb_value csq_types_val = duckdb_bind_get_named_parameter(info, "additional_csq_column_types");
+    if (csq_types_val && !duckdb_is_null_value(csq_types_val)) {
+        additional_csq_column_types = duckdb_get_varchar(csq_types_val);
+    }
+    if (csq_types_val) duckdb_destroy_value(&csq_types_val);
+    if (additional_csq_column_types) {
+        char err[256];
+        if (!vep_validate_column_type_rules(additional_csq_column_types, err, sizeof(err))) {
+            duckdb_bind_set_error(info, err);
+            duckdb_free(file_path);
+            if (index_path) duckdb_free(index_path);
+            if (region) duckdb_free(region);
+            duckdb_free(additional_csq_column_types);
+            return;
+        }
+    }
     
     // Open the file to read header
     htsFile* fp = hts_open(file_path, "r");
@@ -496,6 +517,7 @@ static void bcf_read_bind(duckdb_bind_info info) {
         duckdb_free(file_path);
         if (index_path) duckdb_free(index_path);
         if (region) duckdb_free(region);
+        if (additional_csq_column_types) duckdb_free(additional_csq_column_types);
         return;
     }
     
@@ -506,6 +528,7 @@ static void bcf_read_bind(duckdb_bind_info info) {
         duckdb_free(file_path);
         if (index_path) duckdb_free(index_path);
         if (region) duckdb_free(region);
+        if (additional_csq_column_types) duckdb_free(additional_csq_column_types);
         return;
     }
     
@@ -515,6 +538,7 @@ static void bcf_read_bind(duckdb_bind_info info) {
     bind->file_path = file_path;
     bind->index_path = index_path;
     bind->region = region;
+    bind->additional_csq_column_types = additional_csq_column_types;
     parse_regions_duckdb(region, &bind->regions, &bind->n_regions);
     bind->include_info = 1;
     bind->include_format = 1;
@@ -579,7 +603,7 @@ static void bcf_read_bind(duckdb_bind_info info) {
     // -------------------------------------------------------------------------
     // VEP/CSQ/BCSQ/ANN fields (auto-detected)
     // -------------------------------------------------------------------------
-    bind->vep_schema = vep_schema_parse(hdr, NULL);
+    bind->vep_schema = vep_schema_parse(hdr, NULL, bind->additional_csq_column_types);
     if (bind->vep_schema) {
         bind->n_vep_fields = bind->vep_schema->n_fields;
         bind->vep_col_start = col_idx;
@@ -2063,6 +2087,7 @@ void register_read_bcf_function(duckdb_connection connection) {
     duckdb_table_function_add_named_parameter(tf, "region", varchar_type);  // optional region
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);  // optional explicit index path
     duckdb_table_function_add_named_parameter(tf, "tidy_format", bool_type);  // optional tidy format
+    duckdb_table_function_add_named_parameter(tf, "additional_csq_column_types", varchar_type);  // optional bcftools-style CSQ/ANN/BCSQ type overrides
     duckdb_destroy_logical_type(&varchar_type);
     duckdb_destroy_logical_type(&bool_type);
     

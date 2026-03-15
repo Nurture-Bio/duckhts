@@ -7,10 +7,50 @@
 
 #include "include/vep_parser.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+#include <regex.h>
+
+typedef struct {
+    const char* pattern;
+    vep_field_type_t type;
+} vep_column_type_rule_t;
+
+typedef struct {
+    regex_t regex;
+    vep_field_type_t type;
+    int compiled;
+} vep_compiled_rule_t;
+
+static void vep_destroy_custom_type_rules(vep_compiled_rule_t* rules, int count);
+
+static const vep_column_type_rule_t VEP_CSQ_BUILTIN_TYPE_RULES[] = {
+    {"DISTANCE",                  VEP_TYPE_INTEGER},
+    {"STRAND",                    VEP_TYPE_INTEGER},
+    {"TSL",                       VEP_TYPE_INTEGER},
+    {"GENE_PHENO",                VEP_TYPE_INTEGER},
+    {"HGVS_OFFSET",               VEP_TYPE_INTEGER},
+    {".*_POPS",                   VEP_TYPE_STRING},
+    {"AF",                        VEP_TYPE_FLOAT},
+    {".*_AF",                     VEP_TYPE_FLOAT},
+    {"MAX_AF_.*",                 VEP_TYPE_FLOAT},
+    {"MOTIF_POS",                 VEP_TYPE_INTEGER},
+    {"MOTIF_SCORE_CHANGE",        VEP_TYPE_FLOAT},
+    {"existing_InFrame_oORFs",    VEP_TYPE_INTEGER},
+    {"existing_OutOfFrame_oORFs", VEP_TYPE_INTEGER},
+    {"existing_uORFs",            VEP_TYPE_INTEGER},
+    {"SpliceAI_pred_DP_.*",       VEP_TYPE_INTEGER},
+    {"SpliceAI_pred_DS_.*",       VEP_TYPE_FLOAT},
+    {NULL,                        VEP_TYPE_STRING}
+};
+
+static const vep_column_type_rule_t VEP_ANN_BUILTIN_TYPE_RULES[] = {
+    {"Distance", VEP_TYPE_INTEGER},
+    {NULL,       VEP_TYPE_STRING}
+};
 
 static void* vep_malloc(size_t size) { return malloc(size); }
 static void vep_free(void* ptr) { free(ptr); }
@@ -27,6 +67,7 @@ void vep_options_init(vep_options_t* opts) {
     if (!opts) return;
     opts->tag = NULL;
     opts->columns = NULL;
+    opts->additional_csq_column_types = NULL;
     opts->transcript_mode = 1; // first
 }
 
@@ -67,25 +108,173 @@ static char** split_format_fields(const char* format, int n_fields) {
     return fields;
 }
 
-vep_field_type_t vep_infer_type(const char* field_name) {
-    if (!field_name) return VEP_TYPE_STRING;
-    if (strcmp(field_name, "DISTANCE") == 0 || strcmp(field_name, "STRAND") == 0 ||
-        strcmp(field_name, "TSL") == 0 || strcmp(field_name, "GENE_PHENO") == 0 ||
-        strcmp(field_name, "HGVS_OFFSET") == 0 || strstr(field_name, "MOTIF_POS") == field_name) {
-        return VEP_TYPE_INTEGER;
-    }
-    if (strcmp(field_name, "Consequence") == 0 || strcmp(field_name, "FLAGS") == 0 ||
-        strcmp(field_name, "CLIN_SIG") == 0) {
+static int vep_compile_rule(regex_t* regex, const char* pattern) {
+    size_t pattern_len = strlen(pattern);
+    char* anchored = (char*)vep_malloc(pattern_len + 3);
+    if (!anchored) return -1;
+    anchored[0] = '^';
+    memcpy(anchored + 1, pattern, pattern_len);
+    anchored[pattern_len + 1] = '$';
+    anchored[pattern_len + 2] = '\0';
+    int ret = regcomp(regex, anchored, REG_NOSUB | REG_EXTENDED);
+    vep_free(anchored);
+    return ret;
+}
+
+static const vep_column_type_rule_t* vep_builtin_type_rules(const char* tag_name) {
+    if (tag_name && strcmp(tag_name, VEP_TAG_ANN) == 0) return VEP_ANN_BUILTIN_TYPE_RULES;
+    return VEP_CSQ_BUILTIN_TYPE_RULES;
+}
+
+static vep_field_type_t vep_parse_type_name(const char* type_name, int len, int* ok) {
+    *ok = 1;
+    if ((len == 3 && strncmp(type_name, "Str", 3) == 0) ||
+        (len == 6 && strncmp(type_name, "String", 6) == 0)) {
         return VEP_TYPE_STRING;
     }
-    if (strstr(field_name, "_AF") != NULL || strstr(field_name, "AF_") != NULL ||
-        strstr(field_name, "AFR_AF") != NULL || strstr(field_name, "AMR_AF") != NULL ||
-        strstr(field_name, "EAS_AF") != NULL || strstr(field_name, "EUR_AF") != NULL ||
-        strstr(field_name, "SAS_AF") != NULL || strstr(field_name, "MAX_AF") != NULL ||
-        strstr(field_name, "MOTIF_SCORE_CHANGE") != NULL ||
-        strstr(field_name, "SpliceAI_pred_DS_") == field_name) {
+    if ((len == 3 && strncmp(type_name, "Int", 3) == 0) ||
+        (len == 7 && strncmp(type_name, "Integer", 7) == 0)) {
+        return VEP_TYPE_INTEGER;
+    }
+    if ((len == 4 && strncmp(type_name, "Real", 4) == 0) ||
+        (len == 5 && strncmp(type_name, "Float", 5) == 0)) {
         return VEP_TYPE_FLOAT;
     }
+    if (len == 4 && strncmp(type_name, "Flag", 4) == 0) {
+        return VEP_TYPE_FLAG;
+    }
+    *ok = 0;
+    return VEP_TYPE_STRING;
+}
+
+static int vep_parse_custom_type_rules(const char* rules_text,
+                                       vep_compiled_rule_t** out_rules,
+                                       int* out_count) {
+    *out_rules = NULL;
+    *out_count = 0;
+    if (!rules_text || !*rules_text) return 0;
+
+    char* copy = vep_strdup(rules_text);
+    if (!copy) return -1;
+
+    char* cursor = copy;
+    while (*cursor) {
+        while (*cursor == '\n' || *cursor == '\r' || *cursor == ';') cursor++;
+        if (!*cursor) break;
+
+        char* line_end = cursor;
+        while (*line_end && *line_end != '\n' && *line_end != '\r' && *line_end != ';') line_end++;
+        char saved = *line_end;
+        *line_end = '\0';
+
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        if (*cursor && *cursor != '#') {
+            char* pattern = cursor;
+            char* type_start = pattern;
+            while (*type_start && !isspace((unsigned char)*type_start)) type_start++;
+            if (!*type_start) {
+                vep_destroy_custom_type_rules(*out_rules, *out_count);
+                *out_rules = NULL;
+                *out_count = 0;
+                vep_free(copy);
+                return -1;
+            }
+            *type_start++ = '\0';
+            while (*type_start && isspace((unsigned char)*type_start)) type_start++;
+            if (!*type_start) {
+                vep_destroy_custom_type_rules(*out_rules, *out_count);
+                *out_rules = NULL;
+                *out_count = 0;
+                vep_free(copy);
+                return -1;
+            }
+            char* type_end = type_start;
+            while (*type_end && !isspace((unsigned char)*type_end)) type_end++;
+            int ok = 0;
+            vep_field_type_t type = vep_parse_type_name(type_start, (int)(type_end - type_start), &ok);
+            if (!ok) {
+                vep_destroy_custom_type_rules(*out_rules, *out_count);
+                *out_rules = NULL;
+                *out_count = 0;
+                vep_free(copy);
+                return -1;
+            }
+
+            vep_compiled_rule_t* rules = (vep_compiled_rule_t*)realloc(*out_rules, ((*out_count) + 1) * sizeof(**out_rules));
+            if (!rules) {
+                vep_destroy_custom_type_rules(*out_rules, *out_count);
+                *out_rules = NULL;
+                *out_count = 0;
+                vep_free(copy);
+                return -1;
+            }
+            *out_rules = rules;
+            (*out_rules)[*out_count].type = type;
+            (*out_rules)[*out_count].compiled = 0;
+            if (vep_compile_rule(&(*out_rules)[*out_count].regex, pattern) != 0) {
+                vep_destroy_custom_type_rules(*out_rules, *out_count);
+                *out_rules = NULL;
+                *out_count = 0;
+                vep_free(copy);
+                return -1;
+            }
+            (*out_rules)[*out_count].compiled = 1;
+            (*out_count)++;
+        }
+
+        *line_end = saved;
+        cursor = line_end;
+    }
+
+    vep_free(copy);
+    return 0;
+}
+
+static void vep_destroy_custom_type_rules(vep_compiled_rule_t* rules, int count) {
+    if (!rules) return;
+    for (int i = 0; i < count; i++) {
+        if (rules[i].compiled) regfree(&rules[i].regex);
+    }
+    free(rules);
+}
+
+int vep_validate_column_type_rules(const char* rules_text, char* errbuf, size_t errbuf_size) {
+    vep_compiled_rule_t* rules = NULL;
+    int rule_count = 0;
+    int ok = vep_parse_custom_type_rules(rules_text, &rules, &rule_count) == 0;
+    vep_destroy_custom_type_rules(rules, rule_count);
+    if (!ok && errbuf && errbuf_size > 0) {
+        snprintf(errbuf, errbuf_size,
+                 "additional_csq_column_types must use bcftools-style 'PATTERN TYPE' entries separated by newlines or ';'");
+    }
+    return ok ? 1 : 0;
+}
+
+vep_field_type_t vep_infer_type(const char* tag_name, const char* field_name, const char* additional_csq_column_types) {
+    if (!field_name) return VEP_TYPE_STRING;
+
+    vep_compiled_rule_t* custom_rules = NULL;
+    int n_custom_rules = 0;
+    if (vep_parse_custom_type_rules(additional_csq_column_types, &custom_rules, &n_custom_rules) == 0) {
+        for (int i = 0; i < n_custom_rules; i++) {
+            if (regexec(&custom_rules[i].regex, field_name, 0, NULL, 0) == 0) {
+                vep_field_type_t type = custom_rules[i].type;
+                vep_destroy_custom_type_rules(custom_rules, n_custom_rules);
+                return type;
+            }
+        }
+    }
+    vep_destroy_custom_type_rules(custom_rules, n_custom_rules);
+
+    const vep_column_type_rule_t* rules = vep_builtin_type_rules(tag_name);
+    for (int i = 0; rules[i].pattern != NULL; i++) {
+        regex_t regex;
+        if (vep_compile_rule(&regex, rules[i].pattern) != 0) continue;
+        int matched = regexec(&regex, field_name, 0, NULL, 0) == 0;
+        regfree(&regex);
+        if (matched) return rules[i].type;
+    }
+
     return VEP_TYPE_STRING;
 }
 
@@ -122,7 +311,7 @@ int vep_has_annotation(const bcf_hdr_t* hdr) {
     return vep_detect_tag(hdr) != NULL;
 }
 
-vep_schema_t* vep_schema_parse(const bcf_hdr_t* hdr, const char* tag) {
+vep_schema_t* vep_schema_parse(const bcf_hdr_t* hdr, const char* tag, const char* additional_csq_column_types) {
     if (!hdr) return NULL;
     const char* detected_tag = tag ? tag : vep_detect_tag(hdr);
     if (!detected_tag) return NULL;
@@ -171,9 +360,10 @@ vep_schema_t* vep_schema_parse(const bcf_hdr_t* hdr, const char* tag) {
     
     for (int i = 0; i < n_fields; i++) {
         schema->fields[i].name = field_names[i];
-        schema->fields[i].type = vep_infer_type(field_names[i]);
+        schema->fields[i].type = vep_infer_type(detected_tag, field_names[i], additional_csq_column_types);
         schema->fields[i].index = i;
         schema->fields[i].is_list = (strcmp(field_names[i], "Consequence") == 0 ||
+                                     strcmp(field_names[i], "Annotation") == 0 ||
                                      strcmp(field_names[i], "FLAGS") == 0 ||
                                      strcmp(field_names[i], "CLIN_SIG") == 0);
     }

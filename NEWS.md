@@ -2,6 +2,7 @@
 
 ## duckhts 0.1.3.9001 (2026-03-13)
 
+- centralize CSQ/ANN/BCSQ subfield typing for `read_bcf(...)` with builtin rules derived from `bcftools +split-vep`, conservative ANN defaults, and an `additional_csq_column_types := ...` override parameter using bcftools-style `PATTERN TYPE` entries
 - add BGZF compression and decompression table functions: `bgzip(...)` and `bgunzip(...)`, both defaulting to preserving the source file unless `keep := FALSE` is requested
 - add HTS index builders: `bam_index(...)`, `bcf_index(...)`, and `tabix_index(...)`
 - add HTS metadata readers: `read_hts_header(...)`, `read_hts_index(...)`, `read_hts_index_spans(...)`, and `read_hts_index_raw(...)`
