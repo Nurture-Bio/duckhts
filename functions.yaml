@@ -3,14 +3,14 @@
   "community_extension": {
     "extension": {
       "name": "duckhts",
-      "description": "Read High Throughput Sequencing file formats in DuckDB via htslib",
+      "description": "DuckDB extension for reading HTS file formats via htslib",
       "language": "C",
       "build": "cmake",
       "license": "MIT",
       "requires_toolchains": "python3",
       "excluded_platforms": "windows_amd64;windows_arm64",
       "maintainers": [
-        "Sounkou Mahamane Toure <sounkoutoure@gmail.com>"
+        "sounkou-bioinfo"
       ]
     },
     "repo": {
