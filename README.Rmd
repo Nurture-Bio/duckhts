@@ -125,6 +125,51 @@ dbGetQuery(con, "
 ")
 ```
 
+### FASTQ quality decoding and per-position histograms
+
+`read_fastq()` separates input interpretation from output representation:
+
+- `input_quality_encoding` tells DuckHTS how to decode FASTQ ASCII into numeric qualities. The default is modern `phred33`. Use `phred64`, `solexa64`, or `auto` only for legacy files.
+- `quality_representation := 'phred'` returns canonical numeric qualities as `UTINYINT[]`.
+- `quality_representation := 'string'` returns canonical Phred+33 text. For legacy inputs this means decode first, then re-encode as modern FASTQ text.
+
+This makes the flow explicit:
+
+1. FASTQ text input is decoded according to `input_quality_encoding`.
+2. DuckHTS normalizes to numeric Phred values internally.
+3. Output is either raw numeric quality arrays (`phred`) or canonical Phred+33 text (`string`).
+
+For BAM/CRAM, qualities are already stored as numeric values, so there is no FASTQ text-encoding ambiguity on input.
+
+```{r eval=TRUE}
+dbGetQuery(con, "
+  SELECT *
+  FROM detect_quality_encoding('test/data/legacy_phred64.fq')
+")
+
+dbGetQuery(con, "
+  WITH q AS (
+    SELECT NAME, QUALITY
+    FROM read_fastq(
+      'test/data/r1.fq',
+      quality_representation := 'phred'
+    )
+  ),
+  expanded AS (
+    SELECT
+      NAME,
+      generate_subscripts(QUALITY, 1) AS pos,
+      unnest(QUALITY) AS q
+    FROM q
+  )
+  SELECT pos, q AS phred, count(*) AS n_reads
+  FROM expanded
+  GROUP BY pos, phred
+  ORDER BY pos, phred
+  LIMIT 12
+")
+```
+
 ### Metadata + export/index helpers
 
 ```{r eval=TRUE}

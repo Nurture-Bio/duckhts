@@ -111,10 +111,10 @@
       "name": "read_fastq",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_fastq(path, interleaved := FALSE, mate_path := NULL, sequence_encoding := 'string', quality_representation := 'string', input_quality_encoding := 'auto')",
+      "signature": "read_fastq(path, interleaved := FALSE, mate_path := NULL, sequence_encoding := 'string', quality_representation := 'string', input_quality_encoding := 'phred33')",
       "returns": "table",
       "r_wrapper": "rduckhts_fastq",
-      "description": "Read single-end, paired-end, or interleaved FASTQ files with optional legacy quality decoding. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] and quality_representation := 'phred' to return QUALITY as UTINYINT[] instead of VARCHAR. input_quality_encoding accepts 'auto', 'phred33', 'phred64', or 'solexa64'.",
+      "description": "Read single-end, paired-end, or interleaved FASTQ files with optional legacy quality decoding. By default, FASTQ qualities are interpreted as modern Phred+33 input. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] and quality_representation := 'phred' to return QUALITY as UTINYINT[] instead of VARCHAR. input_quality_encoding accepts 'phred33', 'auto', 'phred64', or 'solexa64'.",
       "examples": [
         "SELECT NAME, MATE FROM read_fastq('r1.fq', mate_path := 'r2.fq') LIMIT 5;"
       ]

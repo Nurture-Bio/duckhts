@@ -1,0 +1,112 @@
+# name: test/sql/index_build.test
+# description: Test duckhts extension – bgzip/bgunzip and HTS index builders
+# group: [duckhts]
+
+require duckhts
+
+statement ok
+COPY (
+  SELECT *
+  FROM (
+    VALUES
+      ('chr1', 0, 10, 'a'),
+      ('chr1', 10, 20, 'b'),
+      ('chr2', 0, 5, 'c')
+  ) AS t(chrom, start, "end", name)
+  ORDER BY chrom, start
+) TO '__WORKING_DIRECTORY__/test_bgzip_input.bed' (FORMAT CSV, DELIMITER '\t', HEADER FALSE);
+
+query III
+SELECT CASE WHEN success THEN 1 ELSE 0 END, CASE WHEN bytes_in > 0 THEN 1 ELSE 0 END, CASE WHEN bytes_out > 0 THEN 1 ELSE 0 END
+FROM bgzip(
+  '__WORKING_DIRECTORY__/test_bgzip_input.bed',
+  output_path := '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz',
+  keep := TRUE,
+  overwrite := TRUE
+);
+----
+1	1	1
+
+query IT
+SELECT CASE WHEN success THEN 1 ELSE 0 END, index_format
+FROM tabix_index(
+  '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz',
+  preset := 'bed',
+  index_path := '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz.tbi',
+  threads := 1
+);
+----
+1	TBI
+
+query I
+SELECT count(*)
+FROM read_tabix(
+  '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz',
+  header_names := ['chrom', 'start', 'end', 'name'],
+  column_types := ['VARCHAR', 'BIGINT', 'BIGINT', 'VARCHAR'],
+  index_path := '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz.tbi',
+  region := 'chr1'
+);
+----
+2
+
+query III
+SELECT CASE WHEN success THEN 1 ELSE 0 END, CASE WHEN bytes_in > 0 THEN 1 ELSE 0 END, CASE WHEN bytes_out > 0 THEN 1 ELSE 0 END
+FROM bgunzip(
+  '__WORKING_DIRECTORY__/test_bgzip_input.bed.gz',
+  output_path := '__WORKING_DIRECTORY__/test_bgzip_roundtrip.bed',
+  keep := TRUE,
+  overwrite := TRUE
+);
+----
+1	1	1
+
+query I
+SELECT count(*)
+FROM read_csv_auto(
+  '__WORKING_DIRECTORY__/test_bgzip_roundtrip.bed',
+  delim := '\t',
+  header := FALSE
+);
+----
+3
+
+query IT
+SELECT CASE WHEN success THEN 1 ELSE 0 END, index_format
+FROM bam_index(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  index_path := '__WORKING_DIRECTORY__/test_range.bam.bai',
+  threads := 1
+);
+----
+1	BAI
+
+query I
+SELECT count(*)
+FROM read_bam(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  region := 'CHROMOSOME_I:1-1000',
+  index_path := '__WORKING_DIRECTORY__/test_range.bam.bai'
+);
+----
+2
+
+query IT
+SELECT CASE WHEN success THEN 1 ELSE 0 END, index_format
+FROM bcf_index(
+  '__WORKING_DIRECTORY__/test/data/formatcols.vcf.gz',
+  index_path := '__WORKING_DIRECTORY__/test_formatcols.vcf.gz.tbi',
+  threads := 1
+);
+----
+1	TBI
+
+query I
+SELECT count(*)
+FROM read_bcf(
+  '__WORKING_DIRECTORY__/test/data/formatcols.vcf.gz',
+  region := '1:100-100',
+  index_path := '__WORKING_DIRECTORY__/test_formatcols.vcf.gz.tbi'
+);
+----
+1

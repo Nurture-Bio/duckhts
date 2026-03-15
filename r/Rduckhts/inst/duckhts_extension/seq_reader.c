@@ -275,7 +275,7 @@ static void seq_read_bind(duckdb_bind_info info, int is_fastq) {
     bind->file_path = file_path;
     bind->is_fastq = is_fastq;
     bind->qual_repr = DUCKHTS_QUALITY_REPR_STRING;
-    bind->input_quality_encoding = DUCKHTS_QUALITY_ENCODING_AUTO;
+    bind->input_quality_encoding = DUCKHTS_QUALITY_ENCODING_PHRED33;
 
     if (is_fastq) {
         duckdb_value mate_val = duckdb_bind_get_named_parameter(info, "mate_path");

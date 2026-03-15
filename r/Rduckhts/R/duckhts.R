@@ -1103,7 +1103,8 @@ rduckhts_tabix_index <- function(
 #'   \code{"string"} (default) returns canonical Phred+33 text;
 #'   \code{"phred"} returns raw Phred values as \code{UTINYINT[]}.
 #' @param input_quality_encoding Character. Input FASTQ quality encoding:
-#'   \code{"auto"} (default), \code{"phred33"}, \code{"phred64"}, or \code{"solexa64"}.
+#'   \code{"phred33"} (default FASTQ convention), \code{"auto"}, \code{"phred64"},
+#'   or \code{"solexa64"}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success

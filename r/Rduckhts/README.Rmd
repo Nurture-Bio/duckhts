@@ -247,6 +247,51 @@ pairs <- dbGetQuery(con, "SELECT * FROM paired_reads WHERE MATE = 1 LIMIT 5")
 pairs
 ```
 
+### FASTQ quality decoding and per-position histograms
+
+FASTQ quality handling has two separate knobs:
+
+- `input_quality_encoding` controls how incoming FASTQ ASCII is decoded. The default is modern `phred33`; use `phred64`, `solexa64`, or `auto` only for legacy data.
+- `quality_representation` controls how qualities are returned to DuckDB: canonical Phred+33 text (`"string"`) or numeric Phred arrays (`"phred"`).
+
+The flow is:
+
+1. Decode FASTQ ASCII using `input_quality_encoding`.
+2. Normalize to numeric Phred qualities.
+3. Return either numeric arrays or canonical Phred+33 text.
+
+`BAM`/`CRAM` reads skip the text-decoding step because qualities are already stored numerically.
+
+```{r}
+legacy_fastq <- system.file("extdata", "legacy_phred64.fq", package = "Rduckhts")
+
+rduckhts_detect_quality_encoding(con, legacy_fastq)
+
+quality_hist <- dbGetQuery(
+  con,
+  sprintf(
+    "WITH q AS (
+       SELECT NAME, QUALITY
+       FROM read_fastq('%s', quality_representation := 'phred')
+     ),
+     expanded AS (
+       SELECT
+         NAME,
+         generate_subscripts(QUALITY, 1) AS pos,
+         unnest(QUALITY) AS q
+       FROM q
+     )
+     SELECT pos, q AS phred, count(*) AS n_reads
+     FROM expanded
+     GROUP BY pos, phred
+     ORDER BY pos, phred
+     LIMIT 12",
+    fastq_r1
+  )
+)
+quality_hist
+```
+
 ### GFF files
 
 These can be open with or with attributes maps
