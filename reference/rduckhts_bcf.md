@@ -14,6 +14,7 @@ rduckhts_bcf(
   region = NULL,
   index_path = NULL,
   tidy_format = FALSE,
+  additional_csq_column_types = NULL,
   overwrite = FALSE
 )
 ```
@@ -43,6 +44,11 @@ rduckhts_bcf(
 - tidy_format:
 
   Logical. If TRUE, FORMAT columns are returned in tidy format
+
+- additional_csq_column_types:
+
+  Optional bcftools-style \`PATTERN TYPE\` overrides for CSQ/ANN/BCSQ
+  subfield typing, separated by newlines or \`;\`
 
 - overwrite:
 

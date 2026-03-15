@@ -10,6 +10,11 @@ rduckhts_gtf(
   table_name,
   path,
   region = NULL,
+  index_path = NULL,
+  header = NULL,
+  header_names = NULL,
+  auto_detect = NULL,
+  column_types = NULL,
   attributes_map = FALSE,
   overwrite = FALSE
 )
@@ -32,6 +37,26 @@ rduckhts_gtf(
 - region:
 
   Optional genomic region (e.g., "chr1:1000-2000")
+
+- index_path:
+
+  Optional explicit path to index file (.tbi/.csi)
+
+- header:
+
+  Logical. If TRUE, use first non-meta line as column names
+
+- header_names:
+
+  Character vector to override column names
+
+- auto_detect:
+
+  Logical. If TRUE, infer basic numeric column types
+
+- column_types:
+
+  Character vector of column types (e.g. "BIGINT", "VARCHAR")
 
 - attributes_map:
 

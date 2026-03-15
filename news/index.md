@@ -3,6 +3,16 @@
 ## Rduckhts 0.1.3-0.0.2.9001
 
 - Bundle the `duckhts` `0.1.3.9001` extension update.
+- Remove the unsupported `attributes_map` argument from
+  [`rduckhts_tabix()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_tabix.md)
+  so the wrapper matches the generic `read_tabix(...)` surface;
+  attribute maps remain available via
+  [`rduckhts_gff()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_gff.md)
+  and
+  [`rduckhts_gtf()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_gtf.md).
+- Expose the bundled `read_bcf(...)` CSQ/ANN/BCSQ typing cleanup,
+  including centralized builtin rules and the
+  `additional_csq_column_types := ...` override parameter.
 - Add `read_bed(...)` and `fasta_nuc(...)` to the bundled extension
   surface, plus
   [`rduckhts_bed()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bed.md)

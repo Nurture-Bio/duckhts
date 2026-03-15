@@ -49,6 +49,7 @@ This follows the RBCFTools pattern of creating a table that can be queried.</p>
 <span>  region <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  index_path <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  tidy_format <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  additional_csq_column_types <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  overwrite <span class="op">=</span> <span class="cn">FALSE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -79,6 +80,11 @@ This follows the RBCFTools pattern of creating a table that can be queried.</p>
 
 <dt id="arg-tidy-format">tidy_format<a class="anchor" aria-label="anchor" href="#arg-tidy-format"></a></dt>
 <dd><p>Logical. If TRUE, FORMAT columns are returned in tidy format</p></dd>
+
+
+<dt id="arg-additional-csq-column-types">additional_csq_column_types<a class="anchor" aria-label="anchor" href="#arg-additional-csq-column-types"></a></dt>
+<dd><p>Optional bcftools-style `PATTERN TYPE`
+overrides for CSQ/ANN/BCSQ subfield typing, separated by newlines or `;`</p></dd>
 
 
 <dt id="arg-overwrite">overwrite<a class="anchor" aria-label="anchor" href="#arg-overwrite"></a></dt>
