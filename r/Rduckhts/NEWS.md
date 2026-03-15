@@ -2,6 +2,7 @@
 # Rduckhts 0.1.3-0.0.2.9001
 
 - Bundle the `duckhts` `0.1.3.9001` extension update.
+- Remove the unsupported `attributes_map` argument from `rduckhts_tabix()` so the wrapper matches the generic `read_tabix(...)` surface; attribute maps remain available via `rduckhts_gff()` and `rduckhts_gtf()`.
 - Expose the bundled `read_bcf(...)` CSQ/ANN/BCSQ typing cleanup, including centralized builtin rules and the `additional_csq_column_types := ...` override parameter.
 - Add `read_bed(...)` and `fasta_nuc(...)` to the bundled extension surface, plus `rduckhts_bed()` and `rduckhts_fasta_nuc()` wrappers.
 - Add `rduckhts_bgzip()`, `rduckhts_bgunzip()`, `rduckhts_bam_index()`, `rduckhts_bcf_index()`, and `rduckhts_tabix_index()` wrappers for the new extension compression and indexing functions.

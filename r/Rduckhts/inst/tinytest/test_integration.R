@@ -97,6 +97,14 @@ test_table_creation <- function() {
     attributes_map = TRUE,
     overwrite = TRUE
   ))
+  expect_silent(rduckhts_gff(
+    con,
+    "annotations_idx",
+    gff_path,
+    region = "X:2934816-2935190",
+    index_path = gff_index_path,
+    overwrite = TRUE
+  ))
   expect_silent(rduckhts_tabix(con, "tabix_data", tabix_path, overwrite = TRUE))
   expect_silent(rduckhts_tabix(
     con,
@@ -113,6 +121,8 @@ test_table_creation <- function() {
   expect_true(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM reads_idx")$n[1] == 2)
   expect_true(DBI::dbExistsTable(con, "tabix_idx"))
   expect_true(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM tabix_idx")$n[1] == 4)
+  expect_true(DBI::dbExistsTable(con, "annotations_idx"))
+  expect_true(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM annotations_idx")$n[1] == 4)
   expect_true(DBI::dbExistsTable(con, "sequences_region"))
   expect_true(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM sequences_region")$n[1] == 1)
   expect_true(DBI::dbGetQuery(con, "SELECT length(SEQUENCE) AS n FROM sequences_region")$n[1] == 10)

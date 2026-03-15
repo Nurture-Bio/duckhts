@@ -99,18 +99,18 @@ This section is generated from `functions.yaml`.
 
 ### Readers
 
-| Function      | Kind  | Returns | R helper               | Description                                                                                                                        |
-|---------------|-------|---------|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
-| `read_bcf`    | table | table   | `rduckhts_bcf`         | Read VCF and BCF variant data with typed INFO, FORMAT, and optional tidy sample output.                                            |
-| `read_bam`    | table | table   | `rduckhts_bam`         | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps.                                             |
-| `read_fasta`  | table | table   | `rduckhts_fasta`       | Read FASTA records or indexed FASTA regions as sequence rows.                                                                      |
-| `read_bed`    | table | table   | `rduckhts_bed`         | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering.                            |
-| `fasta_nuc`   | table | table   | `rduckhts_fasta_nuc`   | Compute bedtools nuc-style nucleotide composition for supplied BED intervals or generated fixed-width bins over a FASTA reference. |
-| `read_fastq`  | table | table   | `rduckhts_fastq`       | Read single-end, paired-end, or interleaved FASTQ files.                                                                           |
-| `read_gff`    | table | table   | `rduckhts_gff`         | Read GFF annotations with optional parsed attribute maps and indexed region filtering.                                             |
-| `read_gtf`    | table | table   | `rduckhts_gtf`         | Read GTF annotations with optional parsed attribute maps and indexed region filtering.                                             |
-| `read_tabix`  | table | table   | `rduckhts_tabix`       | Read generic tabix-indexed text data with optional header handling and type inference.                                             |
-| `fasta_index` | table | table   | `rduckhts_fasta_index` | Build a FASTA index and return the index path used by the operation.                                                               |
+| Function      | Kind  | Returns | R helper               | Description                                                                                                                                                       |
+|---------------|-------|---------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `read_bcf`    | table | table   | `rduckhts_bcf`         | Read VCF and BCF variant data with typed INFO, FORMAT, typed CSQ/ANN/BCSQ subfields, optional tidy sample output, and optional bcftools-style CSQ type overrides. |
+| `read_bam`    | table | table   | `rduckhts_bam`         | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps.                                                                            |
+| `read_fasta`  | table | table   | `rduckhts_fasta`       | Read FASTA records or indexed FASTA regions as sequence rows.                                                                                                     |
+| `read_bed`    | table | table   | `rduckhts_bed`         | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering.                                                           |
+| `fasta_nuc`   | table | table   | `rduckhts_fasta_nuc`   | Compute bedtools nuc-style nucleotide composition for supplied BED intervals or generated fixed-width bins over a FASTA reference.                                |
+| `read_fastq`  | table | table   | `rduckhts_fastq`       | Read single-end, paired-end, or interleaved FASTQ files.                                                                                                          |
+| `read_gff`    | table | table   | `rduckhts_gff`         | Read GFF annotations with optional parsed attribute maps and indexed region filtering.                                                                            |
+| `read_gtf`    | table | table   | `rduckhts_gtf`         | Read GTF annotations with optional parsed attribute maps and indexed region filtering.                                                                            |
+| `read_tabix`  | table | table   | `rduckhts_tabix`       | Read generic tabix-indexed text data with optional header handling and type inference.                                                                            |
+| `fasta_index` | table | table   | `rduckhts_fasta_index` | Build a FASTA index and return the index path used by the operation.                                                                                              |
 
 ### Compression
 
@@ -221,7 +221,7 @@ bed_path <- system.file("extdata", "targets.bed", package = "Rduckhts")
 fai_path <- tempfile("duckhts_readme_", fileext = ".fai")
 rduckhts_fasta_index(con, fasta_path, index_path = fai_path)
 #>   success                                       index_path
-#> 1    TRUE /tmp/Rtmp6SSmNU/duckhts_readme_3e9f5bf176fbb.fai
+#> 1    TRUE /tmp/RtmpBFgMex/duckhts_readme_1adfb603ef541.fai
 
 rduckhts_bed(con, "targets", bed_path, overwrite = TRUE)
 dbGetQuery(con, "SELECT chrom, start, \"end\", name, block_count FROM targets")
@@ -261,15 +261,13 @@ tmp_tbi <- paste0(tmp_bgz, ".tbi")
 writeLines(c("chr1\t0\t10\ta", "chr1\t10\t20\tb"), tmp_bed)
 
 rduckhts_bgzip(con, tmp_bed, output_path = tmp_bgz, keep = TRUE, overwrite = TRUE)
-#>   success                                           output_path bytes_in
-#> 1    TRUE /tmp/Rtmp6SSmNU/duckhts_targets_3e9f5b6ea4bffc.bed.gz       25
+#>   success                                          output_path bytes_in
+#> 1    TRUE /tmp/RtmpBFgMex/duckhts_targets_1adfb2ab1a4c6.bed.gz       25
 #>   bytes_out
 #> 1        84
 rduckhts_tabix_index(con, tmp_bgz, preset = "bed", index_path = tmp_tbi, threads = 1)
-#>   success                                                index_path
-#> 1    TRUE /tmp/Rtmp6SSmNU/duckhts_targets_3e9f5b6ea4bffc.bed.gz.tbi
-#>   index_format
-#> 1          TBI
+#>   success                                               index_path index_format
+#> 1    TRUE /tmp/RtmpBFgMex/duckhts_targets_1adfb2ab1a4c6.bed.gz.tbi          TBI
 rduckhts_bed(con, "targets_idx", tmp_bgz, region = "chr1:1-20", index_path = tmp_tbi, overwrite = TRUE)
 dbGetQuery(con, "SELECT * FROM targets_idx")
 #>   chrom start end name score strand thick_start thick_end item_rgb block_count
@@ -334,7 +332,7 @@ fai_path <- tempfile("duckhts_readme_", fileext = ".fai")
 fai_info <- rduckhts_fasta_index(con, fasta_path, index_path = fai_path)
 fai_info
 #>   success                                       index_path
-#> 1    TRUE /tmp/Rtmp6SSmNU/duckhts_readme_3e9f5b3b1617d.fai
+#> 1    TRUE /tmp/RtmpBFgMex/duckhts_readme_1adfb57daeeb8.fai
 
 rduckhts_fasta(
   con, "fasta_region", fasta_path,

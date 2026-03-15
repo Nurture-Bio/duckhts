@@ -1036,7 +1036,8 @@ static void tabix_scan(duckdb_function_info info, duckdb_data_chunk output) {
  * ================================================================ */
 
 static duckdb_table_function create_tabix_tf(const char *name,
-                                              void (*bind_fn)(duckdb_bind_info)) {
+                                              void (*bind_fn)(duckdb_bind_info),
+                                              int include_attributes_map) {
     duckdb_table_function tf = duckdb_create_table_function();
     duckdb_table_function_set_name(tf, name);
 
@@ -1046,9 +1047,11 @@ static duckdb_table_function create_tabix_tf(const char *name,
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
-    duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
-    duckdb_table_function_add_named_parameter(tf, "attributes_map", bool_type);
-    duckdb_destroy_logical_type(&bool_type);
+    if (include_attributes_map) {
+        duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
+        duckdb_table_function_add_named_parameter(tf, "attributes_map", bool_type);
+        duckdb_destroy_logical_type(&bool_type);
+    }
 
     duckdb_logical_type header_bool = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_table_function_add_named_parameter(tf, "header", header_bool);
@@ -1079,19 +1082,19 @@ static duckdb_table_function create_tabix_tf(const char *name,
 }
 
 void register_read_tabix_function(duckdb_connection connection) {
-    duckdb_table_function tf = create_tabix_tf("read_tabix", read_tabix_bind);
+    duckdb_table_function tf = create_tabix_tf("read_tabix", read_tabix_bind, 0);
     duckdb_register_table_function(connection, tf);
     duckdb_destroy_table_function(&tf);
 }
 
 void register_read_gtf_function(duckdb_connection connection) {
-    duckdb_table_function tf = create_tabix_tf("read_gtf", read_gtf_bind);
+    duckdb_table_function tf = create_tabix_tf("read_gtf", read_gtf_bind, 1);
     duckdb_register_table_function(connection, tf);
     duckdb_destroy_table_function(&tf);
 }
 
 void register_read_gff_function(duckdb_connection connection) {
-    duckdb_table_function tf = create_tabix_tf("read_gff", read_gff_bind);
+    duckdb_table_function tf = create_tabix_tf("read_gff", read_gff_bind, 1);
     duckdb_register_table_function(connection, tf);
     duckdb_destroy_table_function(&tf);
 }

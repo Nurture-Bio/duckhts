@@ -39,7 +39,7 @@
       "feature_notes": [
         "Paired FASTQ is supported via `mate_path` or `interleaved := true`.",
         "CRAM reads are supported with an explicit reference file.",
-        "GTF/GFF attributes can be returned as a parsed `MAP` with `attributes_map := true`.",
+        "GTF/GFF attributes can be returned as a parsed `MAP` with `attributes_map := true` via `read_gff` or `read_gtf`.",
         "Optional SAM tag columns and an auxiliary tag map are available through `standard_tags` and `auxiliary_tags`.",
         "Tabix readers support `header`, `header_names`, type inference with `auto_detect`, and explicit `column_types`.",
         "MSVC builds (`windows_amd64`/`windows_arm64`) are not supported; use MinGW/RTools on Windows."
@@ -147,7 +147,7 @@
       "name": "read_tabix",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_tabix(path, header_names := NULL, header := FALSE, column_types := NULL, auto_detect := FALSE, attributes_map := FALSE, region := NULL, index_path := NULL)",
+      "signature": "read_tabix(path, header_names := NULL, header := FALSE, column_types := NULL, auto_detect := FALSE, region := NULL, index_path := NULL)",
       "returns": "table",
       "r_wrapper": "rduckhts_tabix",
       "description": "Read generic tabix-indexed text data with optional header handling and type inference.",

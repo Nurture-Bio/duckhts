@@ -26,25 +26,88 @@ expect_true(exists("rduckhts_hts_index_spans"))
 expect_true(exists("rduckhts_hts_index_raw"))
 
 # Test function signatures
-expect_equal(length(formals(rduckhts_load)), 2)
-expect_equal(length(formals(rduckhts_bcf)), 8)
-expect_equal(length(formals(rduckhts_bam)), 9)
-expect_equal(length(formals(rduckhts_bam_index)), 5)
-expect_equal(length(formals(rduckhts_bcf_index)), 5)
-expect_equal(length(formals(rduckhts_bgzip)), 7)
-expect_equal(length(formals(rduckhts_bgunzip)), 6)
-expect_equal(length(formals(rduckhts_fasta)), 6)
-expect_equal(length(formals(rduckhts_fasta_index)), 3)
-expect_equal(length(formals(rduckhts_fastq)), 6)
-expect_equal(length(formals(rduckhts_gff)), 6)
-expect_equal(length(formals(rduckhts_gtf)), 6)
-expect_equal(length(formals(rduckhts_tabix)), 10)
-expect_equal(length(formals(rduckhts_tabix_index)), 11)
-expect_equal(length(formals(rduckhts_functions)), 2)
-expect_equal(length(formals(rduckhts_hts_header)), 4)
-expect_equal(length(formals(rduckhts_hts_index)), 4)
-expect_equal(length(formals(rduckhts_hts_index_spans)), 4)
-expect_equal(length(formals(rduckhts_hts_index_raw)), 4)
+expect_identical(
+  names(formals(rduckhts_load)),
+  c("con", "extension_path")
+)
+expect_identical(
+  names(formals(rduckhts_bcf)),
+  c("con", "table_name", "path", "region", "index_path", "tidy_format",
+    "additional_csq_column_types", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_bam)),
+  c("con", "table_name", "path", "region", "index_path", "reference",
+    "standard_tags", "auxiliary_tags", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_bam_index)),
+  c("con", "path", "index_path", "min_shift", "threads")
+)
+expect_identical(
+  names(formals(rduckhts_bcf_index)),
+  c("con", "path", "index_path", "min_shift", "threads")
+)
+expect_identical(
+  names(formals(rduckhts_bgzip)),
+  c("con", "path", "output_path", "threads", "level", "keep", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_bgunzip)),
+  c("con", "path", "output_path", "threads", "keep", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_fasta)),
+  c("con", "table_name", "path", "region", "index_path", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_fasta_index)),
+  c("con", "path", "index_path")
+)
+expect_identical(
+  names(formals(rduckhts_fastq)),
+  c("con", "table_name", "path", "mate_path", "interleaved", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_gff)),
+  c("con", "table_name", "path", "region", "index_path", "header",
+    "header_names", "auto_detect", "column_types", "attributes_map", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_gtf)),
+  c("con", "table_name", "path", "region", "index_path", "header",
+    "header_names", "auto_detect", "column_types", "attributes_map", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_tabix)),
+  c("con", "table_name", "path", "region", "index_path", "header",
+    "header_names", "auto_detect", "column_types", "overwrite")
+)
+expect_identical(
+  names(formals(rduckhts_tabix_index)),
+  c("con", "path", "preset", "index_path", "min_shift", "threads",
+    "seq_col", "start_col", "end_col", "comment_char", "skip_lines")
+)
+expect_identical(
+  names(formals(rduckhts_functions)),
+  c("category", "kind")
+)
+expect_identical(
+  names(formals(rduckhts_hts_header)),
+  c("con", "path", "format", "mode")
+)
+expect_identical(
+  names(formals(rduckhts_hts_index)),
+  c("con", "path", "format", "index_path")
+)
+expect_identical(
+  names(formals(rduckhts_hts_index_spans)),
+  c("con", "path", "format", "index_path")
+)
+expect_identical(
+  names(formals(rduckhts_hts_index_raw)),
+  c("con", "path", "format", "index_path")
+)
 
 # Test that DBI is available
 expect_true(requireNamespace("DBI", quietly = TRUE))
