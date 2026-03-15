@@ -171,6 +171,12 @@ dbGetQuery(con, "
 #> 1 2
 
 dbGetQuery(con, "
+  SELECT * FROM fasta_index('test/data/ce.fa')
+")
+#>   success index_path
+#> 1    TRUE
+
+dbGetQuery(con, "
   SELECT NAME, length(SEQUENCE) AS seq_length
   FROM read_fasta('test/data/ce.fa', region := 'CHROMOSOME_I:1-25')
 ")
@@ -220,12 +226,6 @@ dbGetQuery(con, "
 #>          chrom start end seq_len pct_gc
 #> 1 CHROMOSOME_I     0  10      10    0.6
 #> 2 CHROMOSOME_I    10  20      10    0.5
-
-dbGetQuery(con, "
-  SELECT * FROM fasta_index('test/data/ce.fa')
-")
-#>   success index_path
-#> 1    TRUE
 ```
 
 ### Sequence utilities
