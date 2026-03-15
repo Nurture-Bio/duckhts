@@ -38,7 +38,7 @@ expect_identical(
 expect_identical(
   names(formals(rduckhts_bam)),
   c("con", "table_name", "path", "region", "index_path", "reference",
-    "standard_tags", "auxiliary_tags", "overwrite")
+    "standard_tags", "auxiliary_tags", "sequence_encoding", "overwrite")
 )
 expect_identical(
   names(formals(rduckhts_bam_index)),
@@ -58,7 +58,8 @@ expect_identical(
 )
 expect_identical(
   names(formals(rduckhts_fasta)),
-  c("con", "table_name", "path", "region", "index_path", "overwrite")
+  c("con", "table_name", "path", "region", "index_path",
+    "sequence_encoding", "overwrite")
 )
 expect_identical(
   names(formals(rduckhts_fasta_index)),
@@ -66,7 +67,8 @@ expect_identical(
 )
 expect_identical(
   names(formals(rduckhts_fastq)),
-  c("con", "table_name", "path", "mate_path", "interleaved", "overwrite")
+  c("con", "table_name", "path", "mate_path", "interleaved",
+    "sequence_encoding", "overwrite")
 )
 expect_identical(
   names(formals(rduckhts_gff)),

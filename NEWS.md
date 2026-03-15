@@ -2,6 +2,8 @@
 
 ## duckhts 0.1.3.9001 (2026-03-13)
 
+- add `sequence_encoding := 'nt16'` parameter to `read_bam(...)`, `read_fasta(...)`, and `read_fastq(...)` to return sequence data as `UTINYINT[]` using htslib nt16 4-bit codes (`=ACMGRSVTWYHKDBN` → 0-15) instead of decoded `VARCHAR` strings; defaults to `'string'` for backward compatibility
+- refactor `seq_encode_4bit(...)` / `seq_decode_4bit(...)` to use htslib's `seq_nt16_table[]` and `seq_nt16_str[]` directly instead of custom switch tables; `U` (RNA) now encodes as `T` (code 8) and code 0 (`=`) is accepted; **breaking**: unknown characters (e.g. `!`) now map to `N` (code 15) instead of returning NULL, matching htslib behavior — all encoding paths (UDF + reader `sequence_encoding := 'nt16'`) are now unified on the same shared code
 - stop advertising unsupported `attributes_map := TRUE` on generic `read_tabix(...)`; parsed attribute maps remain available on `read_gff(...)` and `read_gtf(...)`
 - centralize CSQ/ANN/BCSQ subfield typing for `read_bcf(...)` with builtin rules derived from `bcftools +split-vep`, conservative ANN defaults, and an `additional_csq_column_types := ...` override parameter using bcftools-style `PATTERN TYPE` entries
 - add BGZF compression and decompression table functions: `bgzip(...)` and `bgunzip(...)`, both defaulting to preserving the source file unless `keep := FALSE` is requested

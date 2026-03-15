@@ -573,6 +573,9 @@ rduckhts_bcf <- function(
 #' @param reference Optional reference file path for CRAM files
 #' @param standard_tags Logical. If TRUE, include typed standard SAMtags columns
 #' @param auxiliary_tags Logical. If TRUE, include AUXILIARY_TAGS map of non-standard tags
+#' @param sequence_encoding Character. Sequence encoding for the SEQ column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -598,6 +601,7 @@ rduckhts_bam <- function(
   reference = NULL,
   standard_tags = NULL,
   auxiliary_tags = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -628,6 +632,9 @@ rduckhts_bam <- function(
   }
   if (!is.null(auxiliary_tags)) {
     params$auxiliary_tags <- if (isTRUE(auxiliary_tags)) "true" else "false"
+  }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
   }
 
   param_str <- build_param_str(params)
@@ -720,6 +727,9 @@ normalize_tabix_types <- function(types) {
 #' @param path Path to the FASTA file
 #' @param region Optional genomic region (e.g., "chr1:1000-2000" or "chr1:1-10,chr2:5-20")
 #' @param index_path Optional explicit path to FASTA index file (.fai)
+#' @param sequence_encoding Character. Sequence encoding for the SEQUENCE column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -731,6 +741,7 @@ rduckhts_fasta <- function(
   path,
   region = NULL,
   index_path = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -752,6 +763,9 @@ rduckhts_fasta <- function(
   }
   if (!is.null(index_path)) {
     params$index_path <- sprintf("'%s'", index_path)
+  }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
   }
   param_str <- build_param_str(params)
 
@@ -1075,6 +1089,9 @@ rduckhts_tabix_index <- function(
 #' @param path Path to the FASTQ file
 #' @param mate_path Optional path to mate file for paired reads
 #' @param interleaved Logical indicating if file is interleaved paired reads
+#' @param sequence_encoding Character. Sequence encoding for the SEQUENCE column:
+#'   \code{"string"} (default) returns decoded bases as \code{VARCHAR};
+#'   \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -1086,6 +1103,7 @@ rduckhts_fastq <- function(
   path,
   mate_path = NULL,
   interleaved = FALSE,
+  sequence_encoding = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -1107,6 +1125,9 @@ rduckhts_fastq <- function(
   }
   if (interleaved) {
     params$interleaved <- "true"
+  }
+  if (!is.null(sequence_encoding)) {
+    params$sequence_encoding <- sprintf("'%s'", sequence_encoding)
   }
 
   param_str <- build_param_str(params)

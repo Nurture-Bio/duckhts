@@ -44,6 +44,20 @@ static const vep_column_type_rule_t VEP_CSQ_BUILTIN_TYPE_RULES[] = {
     {"existing_uORFs",            VEP_TYPE_INTEGER},
     {"SpliceAI_pred_DP_.*",       VEP_TYPE_INTEGER},
     {"SpliceAI_pred_DS_.*",       VEP_TYPE_FLOAT},
+    {"SpliceAI_pred_SYMBOL",      VEP_TYPE_STRING},
+    {"SpliceAI_pred",             VEP_TYPE_STRING},
+    {"SpliceAI_cutoff",           VEP_TYPE_STRING},
+    {"CADD_PHRED",                VEP_TYPE_FLOAT},
+    {"CADD_RAW",                  VEP_TYPE_FLOAT},
+    {"REVEL",                     VEP_TYPE_FLOAT},
+    {"am_pathogenicity",          VEP_TYPE_FLOAT},
+    {"am_class",                  VEP_TYPE_STRING},
+    {"am_protein_variant",        VEP_TYPE_STRING},
+    {"am_uniprot_id",             VEP_TYPE_STRING},
+    {"am_transcript_id",          VEP_TYPE_STRING},
+    {"SIFT",                      VEP_TYPE_STRING},
+    {"PolyPhen",                  VEP_TYPE_STRING},
+    {"PolyPhen_2",                VEP_TYPE_STRING},
     {NULL,                        VEP_TYPE_STRING}
 };
 

@@ -250,12 +250,20 @@ test_table_creation <- function() {
     con,
     paste(
       "SELECT seq_decode_4bit(seq_encode_4bit('ACGTRYSWKMBDHVN')) AS seq,",
-      "       seq_encode_4bit('ACGU') IS NULL AS invalid_encode,",
-      "       seq_decode_4bit([1::UTINYINT, 0::UTINYINT]) IS NULL AS invalid_decode"
+      "       seq_encode_4bit('ACGU')::VARCHAR AS u_encode,",
+      "       seq_decode_4bit([1::UTINYINT, 0::UTINYINT]) AS eq_decode,",
+      "       seq_encode_4bit('ACG!')::VARCHAR AS unknown_encode,",
+      "       seq_decode_4bit([1::UTINYINT, 16::UTINYINT]) IS NULL AS invalid_decode"
     )
   )
   expect_equal(encoded_roundtrip$seq[1], "ACGTRYSWKMBDHVN")
-  expect_true(encoded_roundtrip$invalid_encode[1])
+  # U (RNA) normalizes to T (code 8)
+  expect_equal(encoded_roundtrip$u_encode[1], "[1, 2, 4, 8]")
+  # code 0 ('=') is valid nt16
+  expect_equal(encoded_roundtrip$eq_decode[1], "A=")
+  # unknown chars map to N (15) — permissive like htslib
+  expect_equal(encoded_roundtrip$unknown_encode[1], "[1, 2, 4, 15]")
+  # out-of-range code (>15) yields NULL
   expect_true(encoded_roundtrip$invalid_decode[1])
 
   # Test overwrite parameter validation

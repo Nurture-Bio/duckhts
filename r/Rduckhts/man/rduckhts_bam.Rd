@@ -13,6 +13,7 @@ rduckhts_bam(
   reference = NULL,
   standard_tags = NULL,
   auxiliary_tags = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 )
 }
@@ -32,6 +33,10 @@ rduckhts_bam(
 \item{standard_tags}{Logical. If TRUE, include typed standard SAMtags columns}
 
 \item{auxiliary_tags}{Logical. If TRUE, include AUXILIARY_TAGS map of non-standard tags}
+
+\item{sequence_encoding}{Character. Sequence encoding for the SEQ column:
+\code{"string"} (default) returns decoded bases as \code{VARCHAR};
+\code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }

@@ -10,6 +10,7 @@ rduckhts_fastq(
   path,
   mate_path = NULL,
   interleaved = FALSE,
+  sequence_encoding = NULL,
   overwrite = FALSE
 )
 }
@@ -23,6 +24,10 @@ rduckhts_fastq(
 \item{mate_path}{Optional path to mate file for paired reads}
 
 \item{interleaved}{Logical indicating if file is interleaved paired reads}
+
+\item{sequence_encoding}{Character. Sequence encoding for the SEQUENCE column:
+\code{"string"} (default) returns decoded bases as \code{VARCHAR};
+\code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }

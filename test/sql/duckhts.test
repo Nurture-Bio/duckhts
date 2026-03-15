@@ -685,15 +685,27 @@ SELECT seq_decode_4bit(seq_encode_4bit('ACGTRYSWKMBDHVN'));
 ----
 ACGTRYSWKMBDHVN
 
-# --- invalid bases yield NULL in 4-bit encoding ---
-query I
-SELECT seq_encode_4bit('ACGU') IS NULL;
+# --- U (RNA) normalizes to T (code 8) in nt16 encoding ---
+query T
+SELECT seq_encode_4bit('ACGU')::VARCHAR;
 ----
-1
+[1, 2, 4, 8]
 
-# --- invalid 4-bit code yields NULL on decode ---
+# --- code 0 ('=') is valid nt16; decodes to '=' ---
+query T
+SELECT seq_decode_4bit([1::UTINYINT, 0::UTINYINT]);
+----
+A=
+
+# --- unknown chars map to N (15) in 4-bit encoding (htslib-compatible) ---
+query T
+SELECT seq_encode_4bit('ACG!')::VARCHAR;
+----
+[1, 2, 4, 15]
+
+# --- out-of-range 4-bit code (>15) yields NULL on decode ---
 query I
-SELECT seq_decode_4bit([1::UTINYINT, 0::UTINYINT]) IS NULL;
+SELECT seq_decode_4bit([1::UTINYINT, 16::UTINYINT]) IS NULL;
 ----
 1
 
@@ -807,3 +819,111 @@ FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam')
 LIMIT 1;
 ----
 true	true	false
+
+# =============================================================================
+# sequence_encoding parameter tests
+# =============================================================================
+
+# --- read_bam: nt16 returns UTINYINT list ---
+query T
+SELECT typeof(SEQ)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', sequence_encoding := 'nt16')
+LIMIT 1;
+----
+UTINYINT[]
+
+# --- read_bam: nt16 values match expected codes ---
+query T
+SELECT SEQ[1:5]::VARCHAR
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', sequence_encoding := 'nt16')
+LIMIT 1;
+----
+[1, 4, 2, 8, 1]
+
+# --- read_bam: nt16 round-trips back to string ---
+query I
+SELECT seq_decode_4bit(e.SEQ) = s.SEQ
+FROM (SELECT SEQ FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', sequence_encoding := 'nt16') LIMIT 1) e,
+     (SELECT SEQ FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam') LIMIT 1) s;
+----
+1
+
+# --- read_bam: default encoding is 'string' (VARCHAR) ---
+query T
+SELECT typeof(SEQ)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam')
+LIMIT 1;
+----
+VARCHAR
+
+# --- read_bam: explicit 'string' encoding matches default ---
+query T
+SELECT typeof(SEQ)
+FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', sequence_encoding := 'string')
+LIMIT 1;
+----
+VARCHAR
+
+# --- read_bam: invalid encoding value raises error ---
+statement error
+SELECT * FROM read_bam('__WORKING_DIRECTORY__/test/data/range.bam', sequence_encoding := 'invalid') LIMIT 1;
+----
+sequence_encoding must be 'string' or 'nt16'
+
+# --- read_fasta: nt16 returns UTINYINT list ---
+query T
+SELECT typeof(SEQUENCE)
+FROM read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', region := 'CHROMOSOME_I:1-10', sequence_encoding := 'nt16');
+----
+UTINYINT[]
+
+# --- read_fasta: nt16 values match expected codes (GCCTA → 4,2,2,8,1) ---
+query T
+SELECT SEQUENCE[1:5]::VARCHAR
+FROM read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', region := 'CHROMOSOME_I:1-10', sequence_encoding := 'nt16');
+----
+[4, 2, 2, 8, 1]
+
+# --- read_fasta: nt16 round-trips back to string ---
+query I
+SELECT seq_decode_4bit(e.SEQUENCE) = s.SEQUENCE
+FROM read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', region := 'CHROMOSOME_I:1-100', sequence_encoding := 'nt16') e,
+     read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', region := 'CHROMOSOME_I:1-100') s;
+----
+1
+
+# --- read_fasta: invalid encoding raises error ---
+statement error
+SELECT * FROM read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', sequence_encoding := 'bad');
+----
+sequence_encoding must be 'string' or 'nt16'
+
+# --- read_fastq: nt16 returns UTINYINT list ---
+query T
+SELECT typeof(SEQUENCE)
+FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq', sequence_encoding := 'nt16')
+LIMIT 1;
+----
+UTINYINT[]
+
+# --- read_fastq: nt16 values match expected codes (CCGTT → 2,2,4,8,8) ---
+query T
+SELECT SEQUENCE[1:5]::VARCHAR
+FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq', sequence_encoding := 'nt16')
+LIMIT 1;
+----
+[2, 2, 4, 8, 8]
+
+# --- read_fastq: nt16 round-trips back to string ---
+query I
+SELECT seq_decode_4bit(e.SEQUENCE) = s.SEQUENCE
+FROM (SELECT SEQUENCE FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq', sequence_encoding := 'nt16') LIMIT 1) e,
+     (SELECT SEQUENCE FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq') LIMIT 1) s;
+----
+1
+
+# --- read_fastq: invalid encoding raises error ---
+statement error
+SELECT * FROM read_fastq('__WORKING_DIRECTORY__/test/data/r1.fq', sequence_encoding := 'xyz');
+----
+sequence_encoding must be 'string' or 'nt16'

@@ -63,10 +63,10 @@
       "name": "read_bam",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_bam(path, standard_tags := FALSE, auxiliary_tags := FALSE, region := NULL, index_path := NULL, reference := NULL)",
+      "signature": "read_bam(path, standard_tags := FALSE, auxiliary_tags := FALSE, region := NULL, index_path := NULL, reference := NULL, sequence_encoding := 'string')",
       "returns": "table",
       "r_wrapper": "rduckhts_bam",
-      "description": "Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps.",
+      "description": "Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps. Use sequence_encoding := 'nt16' to return SEQ as UTINYINT[] (htslib nt16 4-bit codes) instead of VARCHAR.",
       "examples": [
         "SELECT QNAME, FLAG, RNAME, POS FROM read_bam('range.bam') LIMIT 5;"
       ]
@@ -75,10 +75,10 @@
       "name": "read_fasta",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_fasta(path, region := NULL, index_path := NULL)",
+      "signature": "read_fasta(path, region := NULL, index_path := NULL, sequence_encoding := 'string')",
       "returns": "table",
       "r_wrapper": "rduckhts_fasta",
-      "description": "Read FASTA records or indexed FASTA regions as sequence rows.",
+      "description": "Read FASTA records or indexed FASTA regions as sequence rows. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] (htslib nt16 4-bit codes) instead of VARCHAR.",
       "examples": [
         "SELECT NAME, length(SEQUENCE) FROM read_fasta('ce.fa');"
       ]
@@ -111,10 +111,10 @@
       "name": "read_fastq",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_fastq(path, interleaved := FALSE, mate_path := NULL)",
+      "signature": "read_fastq(path, interleaved := FALSE, mate_path := NULL, sequence_encoding := 'string')",
       "returns": "table",
       "r_wrapper": "rduckhts_fastq",
-      "description": "Read single-end, paired-end, or interleaved FASTQ files.",
+      "description": "Read single-end, paired-end, or interleaved FASTQ files. Use sequence_encoding := 'nt16' to return SEQUENCE as UTINYINT[] (htslib nt16 4-bit codes) instead of VARCHAR.",
       "examples": [
         "SELECT NAME, MATE FROM read_fastq('r1.fq', mate_path := 'r2.fq') LIMIT 5;"
       ]

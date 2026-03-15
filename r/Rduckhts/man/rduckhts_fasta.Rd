@@ -10,6 +10,7 @@ rduckhts_fasta(
   path,
   region = NULL,
   index_path = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 )
 }
@@ -23,6 +24,10 @@ rduckhts_fasta(
 \item{region}{Optional genomic region (e.g., "chr1:1000-2000" or "chr1:1-10,chr2:5-20")}
 
 \item{index_path}{Optional explicit path to FASTA index file (.fai)}
+
+\item{sequence_encoding}{Character. Sequence encoding for the SEQUENCE column:
+\code{"string"} (default) returns decoded bases as \code{VARCHAR};
+\code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }

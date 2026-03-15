@@ -31,6 +31,8 @@ DUCKDB_EXTENSION_EXTERN
 #include <htslib/hts.h>
 #include <htslib/kstring.h>
 
+#include "include/seq_encoding.h"
+
 /* ================================================================
  * Helpers
  * ================================================================ */
@@ -222,6 +224,7 @@ typedef struct {
     int n_contigs;      /* sam_hdr_nref(); used for parallel partitioning */
     int standard_tags;
     int auxiliary_tags;
+    int seq_nt16;       /* 1 if sequence_encoding := 'nt16'; SEQ → LIST(UTINYINT) */
     int std_col_start;
     int std_col_count;
     int aux_col_idx;
@@ -384,14 +387,8 @@ static int cigar_to_kstring(const uint32_t *cigar, int n_cigar, kstring_t *ks) {
 
 /* ================================================================
  * SEQ → string
- * Uses seq_nt16_str[] and bam_seqi() from htslib (sam.h)
+ * Uses seq_decode_to_string() from include/seq_encoding.h
  * ================================================================ */
-
-static void seq_to_string(const uint8_t *seq_data, int len, char *buf) {
-    for (int i = 0; i < len; i++)
-        buf[i] = seq_nt16_str[bam_seqi(seq_data, i)];
-    buf[len] = '\0';
-}
 
 /* ================================================================
  * QUAL → string (Phred+33, matching SAM text output)
@@ -495,6 +492,21 @@ static void bam_read_bind(duckdb_bind_info info) {
     }
     if (aux_val) duckdb_destroy_value(&aux_val);
 
+    duckdb_value enc_val = duckdb_bind_get_named_parameter(info, "sequence_encoding");
+    if (enc_val && !duckdb_is_null_value(enc_val)) {
+        char *enc = duckdb_get_varchar(enc_val);
+        if (enc) {
+            if (strcmp(enc, "nt16") == 0) {
+                bind->seq_nt16 = 1;
+            } else if (strcmp(enc, "string") != 0) {
+                duckdb_bind_set_error(info,
+                    "read_bam: sequence_encoding must be 'string' or 'nt16'");
+            }
+            duckdb_free(enc);
+        }
+    }
+    if (enc_val) duckdb_destroy_value(&enc_val);
+
     /* Check for index availability */
     hts_idx_t *idx = sam_index_load3(fp, file_path, index_path, HTS_IDX_SILENT_FAIL);
     if (idx) {
@@ -520,7 +532,15 @@ static void bam_read_bind(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "RNEXT", varchar_type);
     duckdb_bind_add_result_column(info, "PNEXT", bigint_type);
     duckdb_bind_add_result_column(info, "TLEN",  bigint_type);
-    duckdb_bind_add_result_column(info, "SEQ",   varchar_type);
+    if (bind->seq_nt16) {
+        duckdb_logical_type utinyint_type2 = duckdb_create_logical_type(DUCKDB_TYPE_UTINYINT);
+        duckdb_logical_type list_type = duckdb_create_list_type(utinyint_type2);
+        duckdb_bind_add_result_column(info, "SEQ", list_type);
+        duckdb_destroy_logical_type(&utinyint_type2);
+        duckdb_destroy_logical_type(&list_type);
+    } else {
+        duckdb_bind_add_result_column(info, "SEQ", varchar_type);
+    }
     duckdb_bind_add_result_column(info, "QUAL",  varchar_type);
     duckdb_bind_add_result_column(info, "READ_GROUP_ID", varchar_type);
     duckdb_bind_add_result_column(info, "SAMPLE_ID", varchar_type);
@@ -855,12 +875,36 @@ static void bam_read_function(duckdb_function_info info, duckdb_data_chunk outpu
             }
 
             case BAM_COL_SEQ: {
-                if (seq_len > 0) {
-                    seq_to_string(bam_get_seq(b), seq_len, local->seq_buf);
-                    duckdb_vector_assign_string_element(vec, row_count,
-                                                         local->seq_buf);
+                if (bind->seq_nt16) {
+                    /* Emit packed nt16 codes as LIST(UTINYINT) */
+                    duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
+                    duckdb_list_entry *list_data =
+                        (duckdb_list_entry *)duckdb_vector_get_data(vec);
+                    idx_t child_offset = duckdb_list_vector_get_size(vec);
+                    if (seq_len > 0) {
+                        duckdb_list_vector_reserve(vec, child_offset + seq_len);
+                        duckdb_list_vector_set_size(vec, child_offset + seq_len);
+                        uint8_t *child_data =
+                            (uint8_t *)duckdb_vector_get_data(child_vec);
+                        const uint8_t *raw_seq = bam_get_seq(b);
+                        for (int k = 0; k < seq_len; k++)
+                            child_data[child_offset + k] =
+                                (uint8_t)bam_seqi(raw_seq, k);
+                        list_data[row_count].offset = child_offset;
+                        list_data[row_count].length = (idx_t)seq_len;
+                    } else {
+                        list_data[row_count].offset = child_offset;
+                        list_data[row_count].length = 0;
+                    }
                 } else {
-                    duckdb_vector_assign_string_element(vec, row_count, "*");
+                    if (seq_len > 0) {
+                        seq_decode_to_string(bam_get_seq(b), seq_len,
+                                             local->seq_buf);
+                        duckdb_vector_assign_string_element(vec, row_count,
+                                                             local->seq_buf);
+                    } else {
+                        duckdb_vector_assign_string_element(vec, row_count, "*");
+                    }
                 }
                 break;
             }
@@ -1050,6 +1094,7 @@ void register_read_bam_function(duckdb_connection connection) {
     duckdb_table_function_add_named_parameter(tf, "region", varchar_type);
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);
     duckdb_table_function_add_named_parameter(tf, "reference", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "sequence_encoding", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
