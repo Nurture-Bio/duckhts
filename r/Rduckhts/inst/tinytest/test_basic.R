@@ -27,7 +27,7 @@ expect_true(exists("rduckhts_hts_index_raw"))
 
 # Test function signatures
 expect_equal(length(formals(rduckhts_load)), 2)
-expect_equal(length(formals(rduckhts_bcf)), 7)
+expect_equal(length(formals(rduckhts_bcf)), 8)
 expect_equal(length(formals(rduckhts_bam)), 9)
 expect_equal(length(formals(rduckhts_bam_index)), 5)
 expect_equal(length(formals(rduckhts_bcf_index)), 5)
