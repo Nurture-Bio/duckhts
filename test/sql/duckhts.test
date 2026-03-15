@@ -120,6 +120,33 @@ LIMIT 1;
 ----
 T	WASH7P
 
+# --- builtin CSQ typing follows centralized defaults ---
+query T
+SELECT typeof(VEP_DISTANCE)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/test_vep.vcf')
+LIMIT 1;
+----
+INTEGER[]
+
+# --- custom CSQ type overrides replace builtin mappings ---
+query T
+SELECT typeof(VEP_DISTANCE)
+FROM read_bcf(
+  '__WORKING_DIRECTORY__/test/data/test_vep.vcf',
+  additional_csq_column_types := 'DISTANCE String'
+)
+LIMIT 1;
+----
+VARCHAR[]
+
+# --- packed prediction fields remain strings ---
+query T
+SELECT typeof(VEP_SIFT)
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/test_vep.vcf')
+LIMIT 1;
+----
+VARCHAR[]
+
 # ==============================================================
 # read_bam – SAM/BAM/CRAM reader
 # ==============================================================

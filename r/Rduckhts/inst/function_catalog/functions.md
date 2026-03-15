@@ -6,7 +6,7 @@ This section is generated from `functions.yaml`.
 
 | Function | Kind | Returns | R helper | Description |
 | --- | --- | --- | --- | --- |
-| `read_bcf` | table | table | `rduckhts_bcf` | Read VCF and BCF variant data with typed INFO, FORMAT, and optional tidy sample output. |
+| `read_bcf` | table | table | `rduckhts_bcf` | Read VCF and BCF variant data with typed INFO, FORMAT, typed CSQ/ANN/BCSQ subfields, optional tidy sample output, and optional bcftools-style CSQ type overrides. |
 | `read_bam` | table | table | `rduckhts_bam` | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps. |
 | `read_fasta` | table | table | `rduckhts_fasta` | Read FASTA records or indexed FASTA regions as sequence rows. |
 | `read_bed` | table | table | `rduckhts_bed` | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering. |

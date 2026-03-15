@@ -484,6 +484,8 @@ duckhts_extension_dir <- function() {
 #' @param region Optional genomic region (e.g., "chr1:1000-2000")
 #' @param index_path Optional explicit path to index file (.csi/.tbi)
 #' @param tidy_format Logical. If TRUE, FORMAT columns are returned in tidy format
+#' @param additional_csq_column_types Optional bcftools-style `PATTERN TYPE`
+#'   overrides for CSQ/ANN/BCSQ subfield typing, separated by newlines or `;`
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -507,6 +509,7 @@ rduckhts_bcf <- function(
   region = NULL,
   index_path = NULL,
   tidy_format = FALSE,
+  additional_csq_column_types = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -532,6 +535,9 @@ rduckhts_bcf <- function(
   }
   if (tidy_format) {
     params$tidy_format <- "true"
+  }
+  if (!is.null(additional_csq_column_types)) {
+    params$additional_csq_column_types <- sprintf("'%s'", additional_csq_column_types)
   }
 
   param_str <- build_param_str(params)
@@ -1132,6 +1138,11 @@ rduckhts_fastq <- function(
 #' @param table_name Name for the created table
 #' @param path Path to the GFF3 file
 #' @param region Optional genomic region (e.g., "chr1:1000-2000")
+#' @param index_path Optional explicit path to index file (.tbi/.csi)
+#' @param header Logical. If TRUE, use first non-meta line as column names
+#' @param header_names Character vector to override column names
+#' @param auto_detect Logical. If TRUE, infer basic numeric column types
+#' @param column_types Character vector of column types (e.g. "BIGINT", "VARCHAR")
 #' @param attributes_map Logical. If TRUE, returns attributes as a MAP column
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
@@ -1143,6 +1154,11 @@ rduckhts_gff <- function(
   table_name,
   path,
   region = NULL,
+  index_path = NULL,
+  header = NULL,
+  header_names = NULL,
+  auto_detect = NULL,
+  column_types = NULL,
   attributes_map = FALSE,
   overwrite = FALSE
 ) {
@@ -1162,6 +1178,34 @@ rduckhts_gff <- function(
   params <- list()
   if (!is.null(region)) {
     params$region <- sprintf("'%s'", region)
+  }
+  if (!is.null(index_path)) {
+    params$index_path <- sprintf("'%s'", index_path)
+  }
+  if (!is.null(header)) {
+    params$header <- if (isTRUE(header)) "true" else "false"
+  }
+  if (!is.null(auto_detect)) {
+    params$auto_detect <- if (isTRUE(auto_detect)) "true" else "false"
+  }
+  if (!is.null(header_names)) {
+    if (!is.character(header_names)) {
+      stop("header_names must be a character vector")
+    }
+    params$header_names <- sprintf(
+      "[%s]",
+      paste(sprintf("'%s'", header_names), collapse = ", ")
+    )
+  }
+  if (!is.null(column_types)) {
+    if (!is.character(column_types)) {
+      stop("column_types must be a character vector")
+    }
+    normalized_types <- normalize_tabix_types(column_types)
+    params$column_types <- sprintf(
+      "[%s]",
+      paste(sprintf("'%s'", normalized_types), collapse = ", ")
+    )
   }
   if (attributes_map) {
     params$attributes_map <- "true"
@@ -1196,6 +1240,11 @@ rduckhts_gff <- function(
 #' @param table_name Name for the created table
 #' @param path Path to the GTF file
 #' @param region Optional genomic region (e.g., "chr1:1000-2000")
+#' @param index_path Optional explicit path to index file (.tbi/.csi)
+#' @param header Logical. If TRUE, use first non-meta line as column names
+#' @param header_names Character vector to override column names
+#' @param auto_detect Logical. If TRUE, infer basic numeric column types
+#' @param column_types Character vector of column types (e.g. "BIGINT", "VARCHAR")
 #' @param attributes_map Logical. If TRUE, returns attributes as a MAP column
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
@@ -1207,6 +1256,11 @@ rduckhts_gtf <- function(
   table_name,
   path,
   region = NULL,
+  index_path = NULL,
+  header = NULL,
+  header_names = NULL,
+  auto_detect = NULL,
+  column_types = NULL,
   attributes_map = FALSE,
   overwrite = FALSE
 ) {
@@ -1226,6 +1280,34 @@ rduckhts_gtf <- function(
   params <- list()
   if (!is.null(region)) {
     params$region <- sprintf("'%s'", region)
+  }
+  if (!is.null(index_path)) {
+    params$index_path <- sprintf("'%s'", index_path)
+  }
+  if (!is.null(header)) {
+    params$header <- if (isTRUE(header)) "true" else "false"
+  }
+  if (!is.null(auto_detect)) {
+    params$auto_detect <- if (isTRUE(auto_detect)) "true" else "false"
+  }
+  if (!is.null(header_names)) {
+    if (!is.character(header_names)) {
+      stop("header_names must be a character vector")
+    }
+    params$header_names <- sprintf(
+      "[%s]",
+      paste(sprintf("'%s'", header_names), collapse = ", ")
+    )
+  }
+  if (!is.null(column_types)) {
+    if (!is.character(column_types)) {
+      stop("column_types must be a character vector")
+    }
+    normalized_types <- normalize_tabix_types(column_types)
+    params$column_types <- sprintf(
+      "[%s]",
+      paste(sprintf("'%s'", normalized_types), collapse = ", ")
+    )
   }
   if (attributes_map) {
     params$attributes_map <- "true"
@@ -1327,7 +1409,6 @@ rduckhts_tabix <- function(
       paste(sprintf("'%s'", normalized_types), collapse = ", ")
     )
   }
-
   param_str <- build_param_str(params)
 
   if (!is.null(table_name)) {

@@ -36,6 +36,23 @@ Build a DuckDB 1.4+ extension that **reads** HTS file formats using htslib, with
 4. Preserve existing functionality and API compatibility
 5. When mirroring external tool behavior, consult the local upstream mirrors under `.sync/` before relying on secondary summaries
 
+## Compound Field Typing Strategy
+- Treat CSQ/ANN/BCSQ subfield typing as a centralized schema-policy problem, not as ad hoc parser heuristics.
+- The current source of truth for builtin CSQ-style typing is the rule machinery in `src/vep_parser.c`, with public surface in `read_bcf(...)` via `additional_csq_column_types := ...`.
+- Seed builtin CSQ/BCSQ rules from the local `bcftools +split-vep` mirror under `.sync/`; use VEP core docs and curated plugin docs only for explicit, stable field names and types.
+- Keep ANN/SnpEff typing more conservative than VEP/BCSQ unless the local `.sync/SnpEff` sources clearly define stable numeric semantics.
+- Default policy for unresolved CSQ/ANN/BCSQ fields is `String`; prefer a typed allowlist plus string fallback over speculative inference.
+- If extending builtin rules, update both extension-level SQL tests and R wrapper tests to cover exact column types and any override behavior.
+- If a new override or builtin typing knob changes the public reader surface, update `functions.yaml`, regenerate the function catalog, and keep the R wrapper/formals in sync.
+
+## Compound Attribute Mapping WIP
+- There is ongoing design work around reusing attribute/key-value mapping beyond GFF/GTF `attributes_map`, potentially for selected BCF `INFO`/`FORMAT` payloads, CSQ-like annotation blobs, and BAM/CRAM auxiliary tags.
+- Treat this as investigational until the schema contract is explicit. Do not advertise a generic `attributes_map`-style parameter on a reader unless the implementation actually materializes the derived column.
+- Prefer narrow, format-aware mappings first:
+  - GFF/GTF parsed attributes are the current stable contract.
+  - BAM/CRAM auxiliary tags and non-scalar BCF fields should only gain mapping surfaces once the output schema, typing rules, and null/list behavior are defined and tested.
+- If you explore this area, capture the design in `.github/SPEC.md` or `.github/PLAN.md` before widening public APIs.
+
 ## Source Layout Expectations
 - Extension sources live under [src/](src/).
 - Public headers live under [src/include/](src/include/).
