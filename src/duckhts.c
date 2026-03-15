@@ -37,6 +37,8 @@ extern void register_read_gff_function(duckdb_connection connection);
 /* hts_meta_reader.c */
 extern void register_read_hts_header_function(duckdb_connection connection);
 extern void register_read_hts_index_function(duckdb_connection connection);
+/* quality_encoding_reader.c */
+extern void register_detect_quality_encoding_function(duckdb_connection connection);
 
 static void run_sql_no_fail(duckdb_connection connection, const char *sql) {
     duckdb_result result;
@@ -69,6 +71,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
     register_read_gff_function(connection);
     register_read_hts_header_function(connection);
     register_read_hts_index_function(connection);
+    register_detect_quality_encoding_function(connection);
     run_sql_no_fail(connection,
         "CREATE OR REPLACE MACRO read_hts_index_spans(path, format := NULL, index_path := NULL) AS TABLE "
         "SELECT "

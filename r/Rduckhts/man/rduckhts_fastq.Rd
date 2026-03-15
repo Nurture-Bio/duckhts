@@ -11,6 +11,8 @@ rduckhts_fastq(
   mate_path = NULL,
   interleaved = FALSE,
   sequence_encoding = NULL,
+  quality_representation = NULL,
+  input_quality_encoding = NULL,
   overwrite = FALSE
 )
 }
@@ -28,6 +30,13 @@ rduckhts_fastq(
 \item{sequence_encoding}{Character. Sequence encoding for the SEQUENCE column:
 \code{"string"} (default) returns decoded bases as \code{VARCHAR};
 \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.}
+
+\item{quality_representation}{Character. Quality representation for the QUALITY column:
+\code{"string"} (default) returns canonical Phred+33 text;
+\code{"phred"} returns raw Phred values as \code{UTINYINT[]}.}
+
+\item{input_quality_encoding}{Character. Input FASTQ quality encoding:
+\code{"auto"} (default), \code{"phred33"}, \code{"phred64"}, or \code{"solexa64"}.}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }

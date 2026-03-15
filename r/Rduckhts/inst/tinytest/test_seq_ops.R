@@ -10,6 +10,7 @@ test_seq_ops <- function() {
   bam_path <- system.file("extdata", "range.bam", package = "Rduckhts")
   fasta_path <- system.file("extdata", "ce.fa", package = "Rduckhts")
   fastq_r1 <- system.file("extdata", "r1.fq", package = "Rduckhts")
+  legacy_fastq <- system.file("extdata", "legacy_phred64.fq", package = "Rduckhts")
 
   # =========================================================================
   # seq_encode_4bit / seq_decode_4bit UDF tests
@@ -170,6 +171,29 @@ test_seq_ops <- function() {
   # direct SQL: invalid encoding errors
   expect_error(DBI::dbGetQuery(con, sprintf(
     "SELECT * FROM read_fastq('%s', sequence_encoding := 'xyz')", fastq_r1)))
+
+  # quality representation := 'phred'
+  rduckhts_fastq(con, "fq_qphred", fastq_r1,
+    quality_representation = "phred", overwrite = TRUE)
+  fq_qphred_type <- DBI::dbGetQuery(con,
+    "SELECT typeof(QUALITY) AS t FROM fq_qphred LIMIT 1")
+  expect_equal(fq_qphred_type$t[1], "UTINYINT[]")
+
+  # legacy FASTQ auto-detects phred64 and normalizes to canonical text
+  legacy_detect <- rduckhts_detect_quality_encoding(con, legacy_fastq)
+  expect_equal(legacy_detect$guessed_encoding[1], "phred64")
+
+  rduckhts_fastq(con, "legacy_fq", legacy_fastq, overwrite = TRUE)
+  legacy_q <- DBI::dbGetQuery(con, "SELECT QUALITY FROM legacy_fq LIMIT 1")
+  expect_equal(legacy_q$QUALITY[1], "IIII")
+
+  rduckhts_fastq(con, "legacy_fq_phred", legacy_fastq,
+    quality_representation = "phred",
+    input_quality_encoding = "phred64",
+    overwrite = TRUE)
+  legacy_q_phred <- DBI::dbGetQuery(con,
+    "SELECT QUALITY::VARCHAR AS q FROM legacy_fq_phred LIMIT 1")
+  expect_equal(legacy_q_phred$q[1], "[40, 40, 40, 40]")
 
   dbDisconnect(con, shutdown = TRUE)
   message("Sequence operation tests passed!")

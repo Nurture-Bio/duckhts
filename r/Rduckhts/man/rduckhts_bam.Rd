@@ -14,6 +14,7 @@ rduckhts_bam(
   standard_tags = NULL,
   auxiliary_tags = NULL,
   sequence_encoding = NULL,
+  quality_representation = NULL,
   overwrite = FALSE
 )
 }
@@ -37,6 +38,10 @@ rduckhts_bam(
 \item{sequence_encoding}{Character. Sequence encoding for the SEQ column:
 \code{"string"} (default) returns decoded bases as \code{VARCHAR};
 \code{"nt16"} returns raw htslib nt16 4-bit codes as \code{UTINYINT[]}.}
+
+\item{quality_representation}{Character. Quality representation for the QUAL column:
+\code{"string"} (default) returns canonical Phred+33 text;
+\code{"phred"} returns raw Phred values as \code{UTINYINT[]}.}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }

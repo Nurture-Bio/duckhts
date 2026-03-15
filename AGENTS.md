@@ -75,6 +75,11 @@ Build a DuckDB 1.4+ extension that **reads** HTS file formats using htslib, with
 - Assume cmake, make, and standard build tools available on R platforms
 
 ## R Package Specific Rules
+- **Prominent required R package workflow after extension source changes**:
+  1. `cd ~/duckhts/r/Rduckhts/`
+  2. `Rscript bootstrap.R ~/duckhts/`
+  3. `THREADS=4 make test`
+- Treat the sequence above as mandatory whenever upstream extension sources or bundled package sources change.
 - Package should be self-contained as much as possible
 - Use CMAKE and configure/configure.win scripts for cross-platform builds
 - Include cleanup and cleanup.win scripts for proper cleanup
