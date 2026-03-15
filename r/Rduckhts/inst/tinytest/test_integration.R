@@ -18,7 +18,6 @@ test_table_creation <- function() {
   bam_path <- system.file("extdata", "range.bam", package = "Rduckhts")
   bam_index_path <- system.file("extdata", "range.bam.bai", package = "Rduckhts")
   fasta_path <- system.file("extdata", "ce.fa", package = "Rduckhts")
-  fasta_index_path <- system.file("extdata", "ce.fa.fai", package = "Rduckhts")
   fastq_r1 <- system.file("extdata", "r1.fq", package = "Rduckhts")
   fastq_r2 <- system.file("extdata", "r2.fq", package = "Rduckhts")
   gff_path <- system.file("extdata", "gff_file.gff.gz", package = "Rduckhts")
@@ -43,7 +42,6 @@ test_table_creation <- function() {
   expect_true(file.exists(bam_path))
   expect_true(file.exists(bam_index_path))
   expect_true(file.exists(fasta_path))
-  expect_true(file.exists(fasta_index_path))
   expect_true(file.exists(fastq_r1))
   expect_true(file.exists(fastq_r2))
   expect_true(file.exists(gff_path))
@@ -52,6 +50,10 @@ test_table_creation <- function() {
   expect_true(file.exists(header_tabix_path))
   expect_true(file.exists(meta_tabix_path))
   expect_true(file.exists(vep_path))
+
+  fasta_index_path <- tempfile("duckhts_fasta_", fileext = ".fai")
+  expect_silent(rduckhts_fasta_index(con, fasta_path, index_path = fasta_index_path))
+  expect_true(file.exists(fasta_index_path))
 
   expect_silent(rduckhts_bcf(con, "variants", bcf_path, overwrite = TRUE))
   expect_silent(rduckhts_bcf(
@@ -80,9 +82,6 @@ test_table_creation <- function() {
     index_path = fasta_index_path,
     overwrite = TRUE
   ))
-  tmp_fai <- tempfile("duckhts_fasta_", fileext = ".fai")
-  expect_silent(rduckhts_fasta_index(con, fasta_path, index_path = tmp_fai))
-  expect_true(file.exists(tmp_fai))
   expect_silent(rduckhts_fastq(
     con,
     "fastq_reads",

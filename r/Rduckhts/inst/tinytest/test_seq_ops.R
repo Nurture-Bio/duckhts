@@ -10,6 +10,9 @@ test_seq_ops <- function() {
   bam_path <- system.file("extdata", "range.bam", package = "Rduckhts")
   fasta_path <- system.file("extdata", "ce.fa", package = "Rduckhts")
   fastq_r1 <- system.file("extdata", "r1.fq", package = "Rduckhts")
+  fasta_index_path <- tempfile("duckhts_seq_ops_", fileext = ".fai")
+  on.exit(unlink(fasta_index_path), add = TRUE)
+  expect_silent(rduckhts_fasta_index(con, fasta_path, index_path = fasta_index_path))
 
   # =========================================================================
   # seq_encode_4bit / seq_decode_4bit UDF tests
@@ -106,14 +109,19 @@ test_seq_ops <- function() {
 
   # wrapper: default encoding returns VARCHAR
   rduckhts_fasta(con, "fa_str", fasta_path,
-    region = "CHROMOSOME_I:1-100", overwrite = TRUE)
+    region = "CHROMOSOME_I:1-100",
+    index_path = fasta_index_path,
+    overwrite = TRUE)
   fa_str_type <- DBI::dbGetQuery(con,
     "SELECT typeof(SEQUENCE) AS t FROM fa_str LIMIT 1")
   expect_equal(fa_str_type$t[1], "VARCHAR")
 
   # wrapper: nt16 encoding returns UTINYINT[]
   rduckhts_fasta(con, "fa_nt16", fasta_path,
-    region = "CHROMOSOME_I:1-100", sequence_encoding = "nt16", overwrite = TRUE)
+    region = "CHROMOSOME_I:1-100",
+    index_path = fasta_index_path,
+    sequence_encoding = "nt16",
+    overwrite = TRUE)
   fa_nt16_type <- DBI::dbGetQuery(con,
     "SELECT typeof(SEQUENCE) AS t FROM fa_nt16 LIMIT 1")
   expect_equal(fa_nt16_type$t[1], "UTINYINT[]")

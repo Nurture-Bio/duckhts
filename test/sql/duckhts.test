@@ -241,6 +241,12 @@ CHROMOSOME_I	1009800
 CHROMOSOME_II	5000
 CHROMOSOME_III	5000
 
+# --- build FASTA index before region queries ---
+query I
+SELECT success::INT FROM fasta_index('__WORKING_DIRECTORY__/test/data/ce.fa');
+----
+1
+
 # --- region query using FASTA index (.fai) ---
 query II
 SELECT NAME, length(SEQUENCE)
@@ -254,12 +260,6 @@ SELECT count(*)
 FROM read_fasta('__WORKING_DIRECTORY__/test/data/ce.fa', region := 'CHROMOSOME_I:1-10,CHROMOSOME_II:1-5');
 ----
 2
-
-# --- explicit index build helper ---
-query I
-SELECT success::INT FROM fasta_index('__WORKING_DIRECTORY__/test/data/ce.fa');
-----
-1
 
 # ==============================================================
 # read_bed / fasta_nuc

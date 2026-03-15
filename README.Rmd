@@ -64,6 +64,10 @@ dbGetQuery(con, "
 ")
 
 dbGetQuery(con, "
+  SELECT * FROM fasta_index('test/data/ce.fa')
+")
+
+dbGetQuery(con, "
   SELECT NAME, length(SEQUENCE) AS seq_length
   FROM read_fasta('test/data/ce.fa', region := 'CHROMOSOME_I:1-25')
 ")
@@ -95,9 +99,6 @@ dbGetQuery(con, "
   FROM fasta_nuc('test/data/ce.fa', bin_width := 10, region := 'CHROMOSOME_I:1-20')
 ")
 
-dbGetQuery(con, "
-  SELECT * FROM fasta_index('test/data/ce.fa')
-")
 ```
 
 ### Sequence utilities
