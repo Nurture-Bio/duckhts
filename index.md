@@ -111,18 +111,28 @@ This section is generated from `functions.yaml`.
 
 ### Readers
 
-| Function      | Kind  | Returns | R helper               | Description                                                                                                                                                       |
-|---------------|-------|---------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `read_bcf`    | table | table   | `rduckhts_bcf`         | Read VCF and BCF variant data with typed INFO, FORMAT, typed CSQ/ANN/BCSQ subfields, optional tidy sample output, and optional bcftools-style CSQ type overrides. |
-| `read_bam`    | table | table   | `rduckhts_bam`         | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps.                                                                            |
-| `read_fasta`  | table | table   | `rduckhts_fasta`       | Read FASTA records or indexed FASTA regions as sequence rows.                                                                                                     |
-| `read_bed`    | table | table   | `rduckhts_bed`         | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering.                                                           |
-| `fasta_nuc`   | table | table   | `rduckhts_fasta_nuc`   | Compute bedtools nuc-style nucleotide composition for supplied BED intervals or generated fixed-width bins over a FASTA reference.                                |
-| `read_fastq`  | table | table   | `rduckhts_fastq`       | Read single-end, paired-end, or interleaved FASTQ files.                                                                                                          |
-| `read_gff`    | table | table   | `rduckhts_gff`         | Read GFF annotations with optional parsed attribute maps and indexed region filtering.                                                                            |
-| `read_gtf`    | table | table   | `rduckhts_gtf`         | Read GTF annotations with optional parsed attribute maps and indexed region filtering.                                                                            |
-| `read_tabix`  | table | table   | `rduckhts_tabix`       | Read generic tabix-indexed text data with optional header handling and type inference.                                                                            |
-| `fasta_index` | table | table   | `rduckhts_fasta_index` | Build a FASTA index and return the index path used by the operation.                                                                                              |
+| Function      | Kind  | Returns | R helper               | Description                                                                                                                                                                                                                                                                                                                                                                                                     |
+|---------------|-------|---------|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `read_bcf`    | table | table   | `rduckhts_bcf`         | Read VCF and BCF variant data with typed INFO, FORMAT, typed CSQ/ANN/BCSQ subfields, optional tidy sample output, and optional bcftools-style CSQ type overrides.                                                                                                                                                                                                                                               |
+| `read_bam`    | table | table   | `rduckhts_bam`         | Read SAM, BAM, and CRAM alignments with optional typed SAMtags and auxiliary tag maps. Use sequence_encoding := ‘nt16’ to return SEQ as UTINYINT\[\] and quality_representation := ‘phred’ to return QUAL as UTINYINT\[\] instead of VARCHAR.                                                                                                                                                                   |
+| `read_fasta`  | table | table   | `rduckhts_fasta`       | Read FASTA records or indexed FASTA regions as sequence rows. Use sequence_encoding := ‘nt16’ to return SEQUENCE as UTINYINT\[\] (htslib nt16 4-bit codes) instead of VARCHAR.                                                                                                                                                                                                                                  |
+| `read_bed`    | table | table   | `rduckhts_bed`         | Read BED3-BED12 interval files with canonical typed columns and optional tabix-backed region filtering.                                                                                                                                                                                                                                                                                                         |
+| `fasta_nuc`   | table | table   | `rduckhts_fasta_nuc`   | Compute bedtools nuc-style nucleotide composition for supplied BED intervals or generated fixed-width bins over a FASTA reference.                                                                                                                                                                                                                                                                              |
+| `read_fastq`  | table | table   | `rduckhts_fastq`       | Read single-end, paired-end, or interleaved FASTQ files with optional legacy quality decoding. By default, FASTQ qualities are interpreted as modern Phred+33 input. Use sequence_encoding := ‘nt16’ to return SEQUENCE as UTINYINT\[\] and quality_representation := ‘phred’ to return QUALITY as UTINYINT\[\] instead of VARCHAR. input_quality_encoding accepts ‘phred33’, ‘auto’, ‘phred64’, or ‘solexa64’. |
+| `read_gff`    | table | table   | `rduckhts_gff`         | Read GFF annotations with optional parsed attribute maps and indexed region filtering.                                                                                                                                                                                                                                                                                                                          |
+| `read_gtf`    | table | table   | `rduckhts_gtf`         | Read GTF annotations with optional parsed attribute maps and indexed region filtering.                                                                                                                                                                                                                                                                                                                          |
+| `read_tabix`  | table | table   | `rduckhts_tabix`       | Read generic tabix-indexed text data with optional header handling and type inference.                                                                                                                                                                                                                                                                                                                          |
+| `fasta_index` | table | table   | `rduckhts_fasta_index` | Build a FASTA index and return the index path used by the operation.                                                                                                                                                                                                                                                                                                                                            |
+
+### Metadata
+
+| Function                  | Kind        | Returns | R helper                           | Description                                                                                                                   |
+|---------------------------|-------------|---------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `detect_quality_encoding` | table       | table   | `rduckhts_detect_quality_encoding` | Inspect a FASTQ file’s observed quality ASCII range and report compatible legacy encodings with a heuristic guessed encoding. |
+| `read_hts_header`         | table       | table   | `rduckhts_hts_header`              | Inspect HTS headers in parsed, raw, or combined form across supported formats.                                                |
+| `read_hts_index`          | table       | table   | `rduckhts_hts_index`               | Inspect high-level HTS index metadata such as sequence names and mapped counts.                                               |
+| `read_hts_index_spans`    | table_macro | table   | `rduckhts_hts_index_spans`         | Expand index metadata into span and chunk rows suitable for low-level index inspection.                                       |
+| `read_hts_index_raw`      | table_macro | table   | `rduckhts_hts_index_raw`           | Return the raw on-disk HTS index blob together with basic identifying metadata.                                               |
 
 ### Compression
 
@@ -138,15 +148,6 @@ This section is generated from `functions.yaml`.
 | `bam_index`   | table | table   | `rduckhts_bam_index`   | Build a BAM or CRAM index and report the written index path and format.                            |
 | `bcf_index`   | table | table   | `rduckhts_bcf_index`   | Build a TBI or CSI index for a VCF or BCF file and report the written index path and format.       |
 | `tabix_index` | table | table   | `rduckhts_tabix_index` | Build a tabix index for a BGZF-compressed text file using a preset or explicit coordinate columns. |
-
-### Metadata
-
-| Function               | Kind        | Returns | R helper                   | Description                                                                             |
-|------------------------|-------------|---------|----------------------------|-----------------------------------------------------------------------------------------|
-| `read_hts_header`      | table       | table   | `rduckhts_hts_header`      | Inspect HTS headers in parsed, raw, or combined form across supported formats.          |
-| `read_hts_index`       | table       | table   | `rduckhts_hts_index`       | Inspect high-level HTS index metadata such as sequence names and mapped counts.         |
-| `read_hts_index_spans` | table_macro | table   | `rduckhts_hts_index_spans` | Expand index metadata into span and chunk rows suitable for low-level index inspection. |
-| `read_hts_index_raw`   | table_macro | table   | `rduckhts_hts_index_raw`   | Return the raw on-disk HTS index blob together with basic identifying metadata.         |
 
 ### Sequence UDFs
 
@@ -233,7 +234,7 @@ bed_path <- system.file("extdata", "targets.bed", package = "Rduckhts")
 fai_path <- tempfile("duckhts_readme_", fileext = ".fai")
 rduckhts_fasta_index(con, fasta_path, index_path = fai_path)
 #>   success                                       index_path
-#> 1    TRUE /tmp/RtmpBFgMex/duckhts_readme_1adfb603ef541.fai
+#> 1    TRUE /tmp/RtmpV5NgPC/duckhts_readme_3ab0e6488f91b.fai
 
 rduckhts_bed(con, "targets", bed_path, overwrite = TRUE)
 dbGetQuery(con, "SELECT chrom, start, \"end\", name, block_count FROM targets")
@@ -274,12 +275,12 @@ writeLines(c("chr1\t0\t10\ta", "chr1\t10\t20\tb"), tmp_bed)
 
 rduckhts_bgzip(con, tmp_bed, output_path = tmp_bgz, keep = TRUE, overwrite = TRUE)
 #>   success                                          output_path bytes_in
-#> 1    TRUE /tmp/RtmpBFgMex/duckhts_targets_1adfb2ab1a4c6.bed.gz       25
+#> 1    TRUE /tmp/RtmpV5NgPC/duckhts_targets_3ab0e3c09e2f7.bed.gz       25
 #>   bytes_out
 #> 1        84
 rduckhts_tabix_index(con, tmp_bgz, preset = "bed", index_path = tmp_tbi, threads = 1)
 #>   success                                               index_path index_format
-#> 1    TRUE /tmp/RtmpBFgMex/duckhts_targets_1adfb2ab1a4c6.bed.gz.tbi          TBI
+#> 1    TRUE /tmp/RtmpV5NgPC/duckhts_targets_3ab0e3c09e2f7.bed.gz.tbi          TBI
 rduckhts_bed(con, "targets_idx", tmp_bgz, region = "chr1:1-20", index_path = tmp_tbi, overwrite = TRUE)
 dbGetQuery(con, "SELECT * FROM targets_idx")
 #>   chrom start end name score strand thick_start thick_end item_rgb block_count
@@ -344,7 +345,7 @@ fai_path <- tempfile("duckhts_readme_", fileext = ".fai")
 fai_info <- rduckhts_fasta_index(con, fasta_path, index_path = fai_path)
 fai_info
 #>   success                                       index_path
-#> 1    TRUE /tmp/RtmpBFgMex/duckhts_readme_1adfb57daeeb8.fai
+#> 1    TRUE /tmp/RtmpV5NgPC/duckhts_readme_3ab0e5a253a85.fai
 
 rduckhts_fasta(
   con, "fasta_region", fasta_path,
@@ -472,6 +473,73 @@ pairs
 #> 3    1 HS25_09827:2:1201:1564:39627#49
 #> 4    1 HS25_09827:2:1201:1565:91731#49
 #> 5    1 HS25_09827:2:1201:1624:69925#49
+```
+
+### FASTQ quality decoding and per-position histograms
+
+FASTQ quality handling has two separate knobs:
+
+- `input_quality_encoding` controls how incoming FASTQ ASCII is decoded.
+  The default is modern `phred33`; use `phred64`, `solexa64`, or `auto`
+  only for legacy data.
+- `quality_representation` controls how qualities are returned to
+  DuckDB: canonical Phred+33 text (`"string"`) or numeric Phred arrays
+  (`"phred"`).
+
+The flow is:
+
+1.  Decode FASTQ ASCII using `input_quality_encoding`.
+2.  Normalize to numeric Phred qualities.
+3.  Return either numeric arrays or canonical Phred+33 text.
+
+`BAM`/`CRAM` reads skip the text-decoding step because qualities are
+already stored numerically.
+
+``` r
+legacy_fastq <- system.file("extdata", "legacy_phred64.fq", package = "Rduckhts")
+
+rduckhts_detect_quality_encoding(con, legacy_fastq)
+#>   format observed_ascii_min observed_ascii_max records_sampled
+#> 1  fastq                104                104               1
+#>       compatible_encodings guessed_encoding is_ambiguous
+#> 1 phred33,phred64,solexa64          phred64         TRUE
+
+quality_hist <- dbGetQuery(
+  con,
+  sprintf(
+    "WITH q AS (
+       SELECT NAME, QUALITY
+       FROM read_fastq('%s', quality_representation := 'phred')
+     ),
+     expanded AS (
+       SELECT
+         NAME,
+         generate_subscripts(QUALITY, 1) AS pos,
+         unnest(QUALITY) AS q
+       FROM q
+     )
+     SELECT pos, q AS phred, count(*) AS n_reads
+     FROM expanded
+     GROUP BY pos, phred
+     ORDER BY pos, phred
+     LIMIT 12",
+    fastq_r1
+  )
+)
+quality_hist
+#>    pos phred n_reads
+#> 1    1    33       1
+#> 2    1    34       4
+#> 3    2    32       5
+#> 4    3    33       4
+#> 5    3    34       1
+#> 6    4    34       2
+#> 7    4    36       2
+#> 8    4    37       1
+#> 9    5    37       5
+#> 10   6    38       5
+#> 11   7    33       1
+#> 12   7    35       1
 ```
 
 ### GFF files

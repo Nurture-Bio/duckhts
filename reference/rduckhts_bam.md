@@ -15,6 +15,8 @@ rduckhts_bam(
   reference = NULL,
   standard_tags = NULL,
   auxiliary_tags = NULL,
+  sequence_encoding = NULL,
+  quality_representation = NULL,
   overwrite = FALSE
 )
 ```
@@ -52,6 +54,18 @@ rduckhts_bam(
 - auxiliary_tags:
 
   Logical. If TRUE, include AUXILIARY_TAGS map of non-standard tags
+
+- sequence_encoding:
+
+  Character. Sequence encoding for the SEQ column: `"string"` (default)
+  returns decoded bases as `VARCHAR`; `"nt16"` returns raw htslib nt16
+  4-bit codes as `UTINYINT[]`.
+
+- quality_representation:
+
+  Character. Quality representation for the QUAL column: `"string"`
+  (default) returns canonical Phred+33 text; `"phred"` returns raw Phred
+  values as `UTINYINT[]`.
 
 - overwrite:
 

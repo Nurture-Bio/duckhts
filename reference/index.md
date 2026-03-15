@@ -32,6 +32,8 @@
   : BGZF Decompress a File
 - [`rduckhts_bgzip()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bgzip.md)
   : BGZF Compress a File
+- [`rduckhts_detect_quality_encoding()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_detect_quality_encoding.md)
+  : Detect FASTQ Quality Encoding
 - [`rduckhts_fasta()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta.md)
   : Create FASTA Table
 - [`rduckhts_fasta_index()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta_index.md)

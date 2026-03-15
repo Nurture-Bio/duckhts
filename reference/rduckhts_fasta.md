@@ -11,6 +11,7 @@ rduckhts_fasta(
   path,
   region = NULL,
   index_path = NULL,
+  sequence_encoding = NULL,
   overwrite = FALSE
 )
 ```
@@ -37,6 +38,12 @@ rduckhts_fasta(
 - index_path:
 
   Optional explicit path to FASTA index file (.fai)
+
+- sequence_encoding:
+
+  Character. Sequence encoding for the SEQUENCE column: `"string"`
+  (default) returns decoded bases as `VARCHAR`; `"nt16"` returns raw
+  htslib nt16 4-bit codes as `UTINYINT[]`.
 
 - overwrite:
 

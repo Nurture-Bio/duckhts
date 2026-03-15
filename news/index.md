@@ -3,6 +3,27 @@
 ## Rduckhts 0.1.3-0.0.2.9001
 
 - Bundle the `duckhts` `0.1.3.9001` extension update.
+- Add `quality_representation` to
+  [`rduckhts_bam()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bam.md)
+  and
+  [`rduckhts_fastq()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fastq.md)
+  so qualities can be returned as raw `UTINYINT[]` Phred values.
+- Add `input_quality_encoding` to
+  [`rduckhts_fastq()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fastq.md),
+  defaulting to modern `phred33` while allowing explicit legacy FASTQ
+  decoding; expose
+  [`rduckhts_detect_quality_encoding()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_detect_quality_encoding.md)
+  for heuristic FASTQ encoding inspection.
+- Add `sequence_encoding` parameter to
+  [`rduckhts_bam()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_bam.md),
+  [`rduckhts_fasta()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fasta.md),
+  and
+  [`rduckhts_fastq()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_fastq.md)
+  wrappers, forwarding `sequence_encoding := 'nt16'` to the extension
+  readers for raw nt16-encoded sequence output as `UTINYINT[]`.
+- **Breaking**: `seq_encode_4bit()` no longer returns NULL for unknown
+  characters — they now map to N (code 15), matching htslib
+  `seq_nt16_table` behavior; UDF and reader nt16 paths use shared code.
 - Remove the unsupported `attributes_map` argument from
   [`rduckhts_tabix()`](https://rgenomicsetl.github.io/duckhts/reference/rduckhts_tabix.md)
   so the wrapper matches the generic `read_tabix(...)` surface;
