@@ -484,6 +484,8 @@ duckhts_extension_dir <- function() {
 #' @param region Optional genomic region (e.g., "chr1:1000-2000")
 #' @param index_path Optional explicit path to index file (.csi/.tbi)
 #' @param tidy_format Logical. If TRUE, FORMAT columns are returned in tidy format
+#' @param additional_csq_column_types Optional bcftools-style `PATTERN TYPE`
+#'   overrides for CSQ/ANN/BCSQ subfield typing, separated by newlines or `;`
 #' @param overwrite Logical. If TRUE, overwrites existing table
 #'
 #' @return Invisible TRUE on success
@@ -507,6 +509,7 @@ rduckhts_bcf <- function(
   region = NULL,
   index_path = NULL,
   tidy_format = FALSE,
+  additional_csq_column_types = NULL,
   overwrite = FALSE
 ) {
   if (!missing(table_name) && !is.null(table_name)) {
@@ -532,6 +535,9 @@ rduckhts_bcf <- function(
   }
   if (tidy_format) {
     params$tidy_format <- "true"
+  }
+  if (!is.null(additional_csq_column_types)) {
+    params$additional_csq_column_types <- sprintf("'%s'", additional_csq_column_types)
   }
 
   param_str <- build_param_str(params)

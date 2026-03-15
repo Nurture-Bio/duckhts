@@ -11,6 +11,7 @@ rduckhts_bcf(
   region = NULL,
   index_path = NULL,
   tidy_format = FALSE,
+  additional_csq_column_types = NULL,
   overwrite = FALSE
 )
 }
@@ -26,6 +27,9 @@ rduckhts_bcf(
 \item{index_path}{Optional explicit path to index file (.csi/.tbi)}
 
 \item{tidy_format}{Logical. If TRUE, FORMAT columns are returned in tidy format}
+
+\item{additional_csq_column_types}{Optional bcftools-style `PATTERN TYPE`
+overrides for CSQ/ANN/BCSQ subfield typing, separated by newlines or `;`}
 
 \item{overwrite}{Logical. If TRUE, overwrites existing table}
 }
