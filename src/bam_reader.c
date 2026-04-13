@@ -226,6 +226,9 @@ typedef struct {
     int standard_tags;
     int auxiliary_tags;
     int seq_nt16;       /* 1 if sequence_encoding := 'nt16'; SEQ → LIST(UTINYINT) */
+    int cigar_binary;   /* 1 if cigar_representation := 'binary'; CIGAR → LIST(UINTEGER)
+                         * of raw (len<<4)|kind packed u32 ops per SAM §4.2, zero-copy
+                         * from b->data. 0 (default) emits VARCHAR text ("100M50I…"). */
     duckhts_quality_representation qual_repr;
     int std_col_start;
     int std_col_count;
@@ -511,6 +514,21 @@ static void bam_read_bind(duckdb_bind_info info) {
     }
     if (enc_val) duckdb_destroy_value(&enc_val);
 
+    duckdb_value crepr_val = duckdb_bind_get_named_parameter(info, "cigar_representation");
+    if (crepr_val && !duckdb_is_null_value(crepr_val)) {
+        char *repr = duckdb_get_varchar(crepr_val);
+        if (repr) {
+            if (strcmp(repr, "binary") == 0) {
+                bind->cigar_binary = 1;
+            } else if (strcmp(repr, "string") != 0) {
+                duckdb_bind_set_error(info,
+                    "read_bam: cigar_representation must be 'string' or 'binary'");
+            }
+            duckdb_free(repr);
+        }
+    }
+    if (crepr_val) duckdb_destroy_value(&crepr_val);
+
     duckdb_value qrepr_val = duckdb_bind_get_named_parameter(info, "quality_representation");
     if (qrepr_val && !duckdb_is_null_value(qrepr_val)) {
         char *repr = duckdb_get_varchar(qrepr_val);
@@ -545,7 +563,15 @@ static void bam_read_bind(duckdb_bind_info info) {
     duckdb_bind_add_result_column(info, "RNAME", varchar_type);
     duckdb_bind_add_result_column(info, "POS",   bigint_type);
     duckdb_bind_add_result_column(info, "MAPQ",  int32_type);
-    duckdb_bind_add_result_column(info, "CIGAR", varchar_type);
+    if (bind->cigar_binary) {
+        duckdb_logical_type uinteger_type = duckdb_create_logical_type(DUCKDB_TYPE_UINTEGER);
+        duckdb_logical_type cigar_list_type = duckdb_create_list_type(uinteger_type);
+        duckdb_bind_add_result_column(info, "CIGAR", cigar_list_type);
+        duckdb_destroy_logical_type(&uinteger_type);
+        duckdb_destroy_logical_type(&cigar_list_type);
+    } else {
+        duckdb_bind_add_result_column(info, "CIGAR", varchar_type);
+    }
     duckdb_bind_add_result_column(info, "RNEXT", varchar_type);
     duckdb_bind_add_result_column(info, "PNEXT", bigint_type);
     duckdb_bind_add_result_column(info, "TLEN",  bigint_type);
@@ -866,7 +892,30 @@ static void bam_read_function(duckdb_function_info info, duckdb_data_chunk outpu
             }
 
             case BAM_COL_CIGAR: {
-                if (b->core.n_cigar > 0) {
+                if (bind->cigar_binary) {
+                    /* BAM stores CIGAR on disk as packed uint32[], where each
+                     * op is (len << 4) | kind per SAM spec §4.2. htslib's
+                     * bam_get_cigar() returns a pointer directly into b->data
+                     * at that packed form — no decode happens. One memcpy
+                     * into the DuckDB list child is the entire operation;
+                     * no unpack to text, no reparse. Empty list encodes
+                     * SAM's `*` sentinel (CIGAR unavailable). Mirrors the
+                     * QUAL phred branch below. */
+                    duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
+                    duckdb_list_entry *list_data =
+                        (duckdb_list_entry *)duckdb_vector_get_data(vec);
+                    idx_t n = (idx_t)b->core.n_cigar;
+                    idx_t child_offset = duckdb_list_vector_get_size(vec);
+                    if (n > 0) {
+                        duckdb_list_vector_reserve(vec, child_offset + n);
+                        duckdb_list_vector_set_size(vec, child_offset + n);
+                        uint32_t *child_data = (uint32_t *)duckdb_vector_get_data(child_vec);
+                        memcpy(child_data + child_offset, bam_get_cigar(b),
+                               sizeof(uint32_t) * (size_t)n);
+                    }
+                    list_data[row_count].offset = child_offset;
+                    list_data[row_count].length = n;
+                } else if (b->core.n_cigar > 0) {
                     if (cigar_to_kstring(bam_get_cigar(b), (int)b->core.n_cigar,
                                          &local->cigar_tmp) == 0 &&
                         local->cigar_tmp.s) {
@@ -1142,6 +1191,7 @@ void register_read_bam_function(duckdb_connection connection) {
     duckdb_table_function_add_named_parameter(tf, "reference", varchar_type);
     duckdb_table_function_add_named_parameter(tf, "sequence_encoding", varchar_type);
     duckdb_table_function_add_named_parameter(tf, "quality_representation", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "cigar_representation", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
