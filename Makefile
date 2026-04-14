@@ -8,21 +8,13 @@ EXTENSION_NAME=duckhts
 # Set to 1 to enable Unstable API (binaries will only work on TARGET_DUCKDB_VERSION, forwards compatibility will be broken)
 # WARNING: When set to 1, the duckdb_extension.h from the TARGET_DUCKDB_VERSION must be used, using any other version of
 #          the header is unsafe.
-USE_UNSTABLE_C_API=1
+USE_UNSTABLE_C_API=0
 
-# With USE_UNSTABLE_C_API=1, TARGET_DUCKDB_VERSION must match the
-# DUCKDB_HEADER_VERSION — forward compat is deliberately broken so the
-# unstable API surfaces (duckdb_table_function_get_client_context,
-# duckdb_scalar_function_get_client_context, duckdb_client_context_get_
-# connection_id, duckdb_destroy_client_context) become callable. These
-# are required by the read_bam accumulate_max_span accumulator and the
-# bam_last_max_span() scalar companion — see sql/README.md merge plan.
-TARGET_DUCKDB_VERSION=v1.5.0
+# The DuckDB C API version for extension metadata (stable API = v1.2.0)
+TARGET_DUCKDB_VERSION=v1.2.0
 
-# The DuckDB release to fetch headers from. Must match TARGET when
-# USE_UNSTABLE_C_API=1 so the ABI expected at runtime lines up with
-# the struct layout the headers describe.
-DUCKDB_HEADER_VERSION=v1.5.0
+# The DuckDB release to fetch headers from (ABI-compatible via stable C API)
+DUCKDB_HEADER_VERSION=v1.5.1
 
 # For MinGW/Rtools we build vendored htslib ourselves.
 # Do not inherit the generic DuckDB CI vcpkg + Ninja path here.

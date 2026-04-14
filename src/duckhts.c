@@ -16,8 +16,6 @@ extern void register_read_bcf_function(duckdb_connection connection);
 extern void register_read_bam_function(duckdb_connection connection);
 /* bam_pileup.c */
 extern void register_read_pileup_function(duckdb_connection connection);
-/* bam_reader.c — scalar companion for read_bam's max_span accumulator */
-extern void register_bam_last_max_span_function(duckdb_connection connection);
 /* seq_reader.c */
 extern void register_read_fasta_function(duckdb_connection connection);
 extern void register_read_fastq_function(duckdb_connection connection);
@@ -60,7 +58,6 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
     register_read_bcf_function(connection);
     register_read_bam_function(connection);
     register_read_pileup_function(connection);
-    register_bam_last_max_span_function(connection);
     register_read_fasta_function(connection);
     register_read_fastq_function(connection);
     register_fasta_index_function(connection);

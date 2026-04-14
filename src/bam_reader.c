@@ -31,11 +31,8 @@ DUCKDB_EXTENSION_EXTERN
 #include <htslib/hts.h>
 #include <htslib/kstring.h>
 
-#include <stdatomic.h>
-
 #include "include/seq_encoding.h"
 #include "include/quality_encoding.h"
-#include "include/connection_state.h"
 
 /* ================================================================
  * Helpers
@@ -236,20 +233,6 @@ typedef struct {
     int std_col_start;
     int std_col_count;
     int aux_col_idx;
-
-    /* Max-span accumulator opt-in. When true, bam_read_function side-
-     * effects `query_max_span` in the global init state; the final value
-     * is propagated into a per-connection slot at global destroy time
-     * and can be read by the companion scalar `bam_last_max_span()`.
-     *
-     * `conn_id` is captured at bind via duckdb_table_function_get_client_
-     * context + duckdb_client_context_get_connection_id, so the scalar
-     * companion (called from the same connection) can look up the right
-     * slot. The API offers no way to write a DuckDB session variable
-     * directly from an extension, so connection-keyed storage is the
-     * closest approximation to session-scoped state. */
-    int   accumulate_max_span;
-    idx_t conn_id;
 } bam_bind_data_t;
 
 /* ================================================================
@@ -260,15 +243,6 @@ typedef struct {
     int current_contig; /* atomic counter — threads fetch-and-add */
     int n_contigs;
     int has_region;
-
-    /* Max-span accumulation (only meaningful when bind->accumulate_max_span).
-     * Threads merge their local high-water mark into query_max_span via
-     * atomic CAS at chunk finalization. bind-level flag and conn_id are
-     * duplicated here so the global destructor can propagate without
-     * needing to re-reach the bind data. */
-    int              accumulate_max_span;
-    idx_t            conn_id;
-    _Atomic int64_t  query_max_span;
 } bam_global_init_data_t;
 
 /* ================================================================
@@ -303,11 +277,6 @@ typedef struct {
     char *last_rg_id;
     char *last_sample_id;
     kstring_t rg_tmp;
-
-    /* Per-thread high-water mark for max_span accumulation. Updated
-     * inside the record loop; atomically CAS-merged into global at
-     * chunk finalization. */
-    int64_t local_max_span;
 } bam_local_init_data_t;
 
 /* ================================================================
@@ -330,18 +299,7 @@ static void destroy_bam_bind(void *data) {
 }
 
 static void destroy_bam_global(void *data) {
-    if (!data) return;
-    bam_global_init_data_t *g = (bam_global_init_data_t *)data;
-    /* Propagate the accumulated max_span into the per-connection slot.
-     * The companion scalar `bam_last_max_span()` reads this slot via
-     * its own client_context. This is the only point in the table-
-     * function lifecycle where we know the scan is complete and all
-     * threads have flushed their CAS merges. */
-    if (g->accumulate_max_span) {
-        int64_t final_span = atomic_load(&g->query_max_span);
-        duckhts_set_connection_max_span(g->conn_id, final_span);
-    }
-    duckdb_free(data);
+    if (data) duckdb_free(data);
 }
 
 static void destroy_bam_local(void *data) {
@@ -556,30 +514,6 @@ static void bam_read_bind(duckdb_bind_info info) {
     }
     if (enc_val) duckdb_destroy_value(&enc_val);
 
-    duckdb_value ams_val = duckdb_bind_get_named_parameter(info, "accumulate_max_span");
-    if (ams_val && !duckdb_is_null_value(ams_val)) {
-        bind->accumulate_max_span = duckdb_get_bool(ams_val) ? 1 : 0;
-    }
-    if (ams_val) duckdb_destroy_value(&ams_val);
-
-    /* Capture the connection ID so the global destructor can stamp the
-     * accumulated max_span into a per-connection slot readable by the
-     * companion scalar. If the API call fails (e.g. future version
-     * changes), conn_id stays 0 and the slot is unreachable — the
-     * accumulator then silently falls through. */
-    if (bind->accumulate_max_span) {
-        duckdb_client_context ctx = NULL;
-        duckdb_table_function_get_client_context(info, &ctx);
-        if (ctx) {
-            bind->conn_id = duckdb_client_context_get_connection_id(ctx);
-            duckdb_destroy_client_context(&ctx);
-        }
-        /* Wipe the slate clean for this connection now, so a scalar
-         * call before the scan finishes returns 0 rather than a stale
-         * value from a previous query on the same connection. */
-        duckhts_set_connection_max_span(bind->conn_id, 0);
-    }
-
     duckdb_value crepr_val = duckdb_bind_get_named_parameter(info, "cigar_representation");
     if (crepr_val && !duckdb_is_null_value(crepr_val)) {
         char *repr = duckdb_get_varchar(crepr_val);
@@ -706,14 +640,6 @@ static void bam_read_global_init(duckdb_init_info info) {
 
     global->current_contig = 0;
     global->has_region = (bind->n_regions > 0);
-
-    /* Accumulator: mirror the bind flag + conn_id into global so the
-     * destructor can propagate the final value without re-reaching
-     * bind data. atomic_init is required; the memset above zeroes the
-     * storage but does not establish atomic memory ordering. */
-    global->accumulate_max_span = bind->accumulate_max_span;
-    global->conn_id             = bind->conn_id;
-    atomic_init(&global->query_max_span, (int64_t)0);
 
     /*
      * Parallel scan: each thread claims contigs via sam_itr_queryi().
@@ -916,28 +842,6 @@ static void bam_read_function(duckdb_function_info info, duckdb_data_chunk outpu
 
         bam1_t *b = local->rec;
         int seq_len = b->core.l_qseq;
-
-        /* Vector 2: per-record max_span accumulation. Sum ref-consuming
-         * CIGAR op lengths (kinds M=0, D=2, N=3, ==7, X=8) and update
-         * this thread's high-water mark. The CIGAR bytes are the same
-         * bam_get_cigar(b) region the column-writer below walks for
-         * binary emission — already hot in L1. Cost is a few cycles
-         * per op, zero additional memory fetches. */
-        if (bind->accumulate_max_span) {
-            int64_t span = 0;
-            const uint32_t *cigar = bam_get_cigar(b);
-            for (uint32_t ci = 0; ci < b->core.n_cigar; ci++) {
-                uint32_t op = cigar[ci];
-                uint32_t kind = op & 0xf;
-                if (kind == 0 || kind == 2 || kind == 3 ||
-                    kind == 7 || kind == 8) {
-                    span += (int64_t)(op >> 4);
-                }
-            }
-            if (span > local->local_max_span) {
-                local->local_max_span = span;
-            }
-        }
 
         /* Grow SEQ/QUAL conversion buffers if needed */
         if (!ensure_seq_buf(local, seq_len)) {
@@ -1269,22 +1173,6 @@ static void bam_read_function(duckdb_function_info info, duckdb_data_chunk outpu
         row_count++;
     } /* while rows */
 
-    /* Vector 2: chunk-finalization CAS merge of per-thread high-water
-     * mark into global atomic. compare_exchange_weak may spuriously
-     * fail (spec permits it on some architectures); the loop retries
-     * until either we win the CAS or we discover the global already
-     * observed a value >= ours. */
-    if (bind->accumulate_max_span && local->local_max_span > 0) {
-        int64_t expected = atomic_load(&global->query_max_span);
-        while (local->local_max_span > expected) {
-            if (atomic_compare_exchange_weak(&global->query_max_span,
-                                             &expected,
-                                             local->local_max_span)) {
-                break;
-            }
-        }
-    }
-
     duckdb_data_chunk_set_size(output, row_count);
 }
 
@@ -1309,7 +1197,6 @@ void register_read_bam_function(duckdb_connection connection) {
     duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_table_function_add_named_parameter(tf, "standard_tags", bool_type);
     duckdb_table_function_add_named_parameter(tf, "auxiliary_tags", bool_type);
-    duckdb_table_function_add_named_parameter(tf, "accumulate_max_span", bool_type);
     duckdb_destroy_logical_type(&bool_type);
 
     duckdb_table_function_set_bind(tf, bam_read_bind);
@@ -1320,78 +1207,4 @@ void register_read_bam_function(duckdb_connection connection) {
 
     duckdb_register_table_function(connection, tf);
     duckdb_destroy_table_function(&tf);
-}
-
-/* ================================================================
- * Scalar companion — bam_last_max_span()
- *
- * Returns the max ref-consuming CIGAR span accumulated by the most
- * recent `read_bam(..., accumulate_max_span := true)` scan on the
- * same DuckDB connection. If no such scan has completed, returns 0.
- *
- * Exists because DuckDB's C extension API has no set-session-variable
- * primitive. We stash the accumulated value in a per-connection slot
- * keyed by connection_id and read it back here.
- *
- * Client-context access is bind-time only (the unstable API exposes
- * `duckdb_scalar_function_get_client_context` on duckdb_bind_info).
- * We capture the connection_id in a bind callback and propagate it
- * to the execute callback via bind_data.
- * ================================================================ */
-
-typedef struct { idx_t conn_id; } bam_last_max_span_bind_t;
-
-static void destroy_bam_last_max_span_bind(void *p) {
-    if (p) duckdb_free(p);
-}
-
-static void bam_last_max_span_bind(duckdb_bind_info info) {
-    bam_last_max_span_bind_t *bind = (bam_last_max_span_bind_t *)
-        duckdb_malloc(sizeof(bam_last_max_span_bind_t));
-    bind->conn_id = 0;
-
-    duckdb_client_context ctx = NULL;
-    duckdb_scalar_function_get_client_context(info, &ctx);
-    if (ctx) {
-        bind->conn_id = duckdb_client_context_get_connection_id(ctx);
-        duckdb_destroy_client_context(&ctx);
-    }
-
-    duckdb_scalar_function_set_bind_data(info, bind, destroy_bam_last_max_span_bind);
-}
-
-static void bam_last_max_span_func(duckdb_function_info info,
-                                   duckdb_data_chunk input,
-                                   duckdb_vector output) {
-    bam_last_max_span_bind_t *bind = (bam_last_max_span_bind_t *)
-        duckdb_scalar_function_get_bind_data(info);
-    idx_t conn_id = bind ? bind->conn_id : 0;
-
-    int64_t max_span = duckhts_get_connection_max_span(conn_id);
-
-    idx_t count = duckdb_data_chunk_get_size(input);
-    int64_t *out_data = (int64_t *)duckdb_vector_get_data(output);
-    for (idx_t i = 0; i < count; i++) {
-        out_data[i] = max_span;
-    }
-}
-
-void register_bam_last_max_span_function(duckdb_connection connection) {
-    duckdb_scalar_function sf = duckdb_create_scalar_function();
-    duckdb_scalar_function_set_name(sf, "bam_last_max_span");
-
-    duckdb_logical_type bigint_type = duckdb_create_logical_type(DUCKDB_TYPE_BIGINT);
-    /* No arguments — the bind callback reads connection context. */
-    duckdb_scalar_function_set_return_type(sf, bigint_type);
-    duckdb_destroy_logical_type(&bigint_type);
-
-    duckdb_scalar_function_set_bind(sf, bam_last_max_span_bind);
-    duckdb_scalar_function_set_function(sf, bam_last_max_span_func);
-    /* Volatile — value depends on external state (the per-connection
-     * slot), not purely on arguments; DuckDB must re-evaluate each call
-     * instead of constant-folding. */
-    duckdb_scalar_function_set_volatile(sf);
-
-    duckdb_register_scalar_function(connection, sf);
-    duckdb_destroy_scalar_function(&sf);
 }
