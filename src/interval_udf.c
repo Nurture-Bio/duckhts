@@ -626,19 +626,83 @@ static void fasta_nuc_init(duckdb_init_info info) {
     duckdb_init_set_init_data(info, init, destroy_fasta_nuc_init);
 }
 
+/* Per-byte nucleotide classification. ASCII case-fold trick: clearing
+ * bit 5 (`& 0xDF`) upcases letters because uppercase ASCII letters all
+ * have bit 5 clear. For nucleotide A/C/G/T/N specifically, the
+ * pre-image of `byte & 0xDF == 'A'` is exactly {'A', 'a'} (both
+ * letters), so we get correct case-folding without locale-sensitive
+ * `toupper()` and without false matches on non-letters. IUPAC
+ * ambiguity codes (R/Y/S/W/K/M/B/D/H/V) and any other byte fall
+ * through to `other`, matching the original semantics.
+ *
+ * AVX2 path processes 32 bytes per iteration:
+ *   - 1 load + 1 case-fold AND
+ *   - 5 broadcast compares (against A/C/G/T/N)
+ *   - 5 movemask + popcnt to count matches
+ *   - 6 adds (5 base counters + advance)
+ *
+ * `other = len - (A+C+G+T+N)` falls out for free; no separate vector
+ * needed. Scalar fallback handles the tail (< 32 bytes) and non-x86
+ * builds. */
+
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(DUCKDB_WASM_EXTENSION)
+#include <immintrin.h>
+__attribute__((target("avx2,popcnt")))
+static void count_nucleotides_avx2(const char *seq, hts_pos_t len,
+                                   int64_t *a, int64_t *c, int64_t *g, int64_t *t,
+                                   int64_t *n, int64_t *other) {
+    const __m256i case_mask = _mm256_set1_epi8((char)0xDF);
+    const __m256i v_a = _mm256_set1_epi8('A');
+    const __m256i v_c = _mm256_set1_epi8('C');
+    const __m256i v_g = _mm256_set1_epi8('G');
+    const __m256i v_t = _mm256_set1_epi8('T');
+    const __m256i v_n = _mm256_set1_epi8('N');
+
+    int64_t ca = 0, cc = 0, cg = 0, ct = 0, cn = 0;
+    hts_pos_t i = 0;
+    for (; i + 32 <= len; i += 32) {
+        __m256i bytes = _mm256_loadu_si256((const __m256i *)(seq + i));
+        __m256i up    = _mm256_and_si256(bytes, case_mask);
+        ca += __builtin_popcount((uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(up, v_a)));
+        cc += __builtin_popcount((uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(up, v_c)));
+        cg += __builtin_popcount((uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(up, v_g)));
+        ct += __builtin_popcount((uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(up, v_t)));
+        cn += __builtin_popcount((uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(up, v_n)));
+    }
+    for (; i < len; i++) {
+        unsigned char ch = (unsigned char)seq[i] & 0xDF;
+        if      (ch == 'A') ca++;
+        else if (ch == 'C') cc++;
+        else if (ch == 'G') cg++;
+        else if (ch == 'T') ct++;
+        else if (ch == 'N') cn++;
+        // anything else falls into `other`, computed below as the
+        // residual of `len - sum(known bases)` so both paths agree.
+    }
+    *a = ca; *c = cc; *g = cg; *t = ct; *n = cn;
+    *other = (int64_t)len - (ca + cc + cg + ct + cn);
+}
+#define HAVE_NUC_SIMD 1
+#endif
+
 static void count_nucleotides(const char *seq, hts_pos_t len,
                               int64_t *a, int64_t *c, int64_t *g, int64_t *t,
                               int64_t *n, int64_t *other) {
+#ifdef HAVE_NUC_SIMD
+    if (len >= 32) {
+        count_nucleotides_avx2(seq, len, a, c, g, t, n, other);
+        return;
+    }
+#endif
     *a = *c = *g = *t = *n = *other = 0;
     for (hts_pos_t i = 0; i < len; i++) {
-        switch (toupper((unsigned char)seq[i])) {
-            case 'A': (*a)++; break;
-            case 'C': (*c)++; break;
-            case 'G': (*g)++; break;
-            case 'T': (*t)++; break;
-            case 'N': (*n)++; break;
-            default: (*other)++; break;
-        }
+        unsigned char ch = (unsigned char)seq[i] & 0xDF;
+        if      (ch == 'A') (*a)++;
+        else if (ch == 'C') (*c)++;
+        else if (ch == 'G') (*g)++;
+        else if (ch == 'T') (*t)++;
+        else if (ch == 'N') (*n)++;
+        else                (*other)++;
     }
 }
 
