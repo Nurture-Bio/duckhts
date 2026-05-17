@@ -871,14 +871,29 @@ static void fasta_index_bind(duckdb_bind_info info) {
     }
     if (idx_val) duckdb_destroy_value(&idx_val);
 
-    if (fai_build3(file_path, index_path, NULL) != 0) {
+    /* Explicit path for the bgzip block-map index (.gzi) emitted on
+     * bgzipped FASTA input. htslib's fai_build3 third arg accepts a
+     * separate output path; passing NULL defaults to "${file_path}.gzi",
+     * which over s3:// routes the write through htslib's S3 plugin —
+     * the write path that historically doesn't reliably persist. Mirror
+     * of the gzi_path parameter already on read_fasta. */
+    char *gzi_path = NULL;
+    duckdb_value gzi_val = duckdb_bind_get_named_parameter(info, "gzi_path");
+    if (gzi_val && !duckdb_is_null_value(gzi_val)) {
+        gzi_path = duckdb_get_varchar(gzi_val);
+    }
+    if (gzi_val) duckdb_destroy_value(&gzi_val);
+
+    if (fai_build3(file_path, index_path, gzi_path) != 0) {
         char err[512];
         snprintf(err, sizeof(err), "fasta_index: failed to build index for %s", file_path);
         duckdb_bind_set_error(info, err);
         duckdb_free(file_path);
         if (index_path) duckdb_free(index_path);
+        if (gzi_path) duckdb_free(gzi_path);
         return;
     }
+    if (gzi_path) duckdb_free(gzi_path);
 
     duckdb_logical_type bool_type = duckdb_create_logical_type(DUCKDB_TYPE_BOOLEAN);
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
@@ -921,6 +936,7 @@ void register_fasta_index_function(duckdb_connection connection) {
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, varchar_type);
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "gzi_path", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_table_function_set_bind(tf, fasta_index_bind);
