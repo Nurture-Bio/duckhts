@@ -1253,6 +1253,28 @@ int sam_index_build2(const char *fn, const char *fnidx, int min_shift) HTS_RESUL
 HTSLIB_EXPORT
 int sam_index_build3(const char *fn, const char *fnidx, int min_shift, int nthreads) HTS_RESULT_USED;
 
+/// Generate and save an index from an already-open htsFile.
+/** @param fp        Already-opened input htsFile* (caller-owned; not closed
+                     by this function)
+    @param fn        Input filename — needed for CRAM's per-slice index
+                     metadata and for error messages
+    @param fnidx     Output index filename, or NULL for the default sibling
+    @param min_shift Positive to generate CSI, or 0 to generate BAI
+    @param nthreads  Number of threads to use (0 = no extra threads)
+    @return  0 if successful, or negative if an error occurred (see
+             sam_index_build for error codes)
+
+  This variant is for callers that need to apply `hts_set_opt` (BGZF cache,
+  block size, thread pool) BEFORE the index build runs — important for
+  high-latency I/O (S3, HTTPS) where the default 16 KB read buffer turns
+  the index scan into hundreds of thousands of round-tripped recv()s.
+  `sam_index_build3` opens the file internally, leaving no place to set
+  those options. This one accepts the open file directly so the caller
+  controls tuning, then dispatches the same way build3 does internally.
+*/
+HTSLIB_EXPORT
+int sam_index_build4(htsFile *fp, const char *fn, const char *fnidx, int min_shift, int nthreads) HTS_RESULT_USED;
+
 /// Free a SAM iterator
 /// @param iter     Iterator to free
 #define sam_itr_destroy(iter) hts_itr_destroy(iter)

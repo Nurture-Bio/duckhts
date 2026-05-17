@@ -12,6 +12,35 @@ DUCKDB_EXTENSION_EXTERN
 #include <htslib/sam.h>
 #include <htslib/tbx.h>
 #include <htslib/vcf.h>
+#include <htslib/hts.h>
+
+/* Tuning for high-latency remote I/O (S3 / HTTPS).
+ *
+ * sam_index_build* is a single sequential scan over every BGZF block
+ * in the BAM. On a local file this is trivially I/O-bound on the
+ * filesystem; on s3:// it becomes a sequence of HTTP range GETs whose
+ * throughput is dominated by per-request round-trip latency unless
+ * htslib's BGZF layer batches block fetches.
+ *
+ * The two hts_set_opt knobs below directly address that:
+ *
+ *   HTS_OPT_BLOCK_SIZE  — hfile-level read-ahead buffer. Forcing this
+ *     to 4 MB asks libcurl (via hfile_libcurl) to ingest in bigger
+ *     range chunks rather than 16 KB default micro-recvs. Each TLS
+ *     round-trip then carries 4 MB of payload instead of one BGZF
+ *     block, collapsing total round-trip count by ~64×.
+ *
+ *   HTS_OPT_CACHE_SIZE  — BGZF block decompression cache. Set to
+ *     256 MB so the threaded prefetcher (enabled via the explicit
+ *     threads argument) can stage many blocks ahead of the index-
+ *     scan cursor without re-fetching anything it already decompressed.
+ *
+ * These were not needed when we read BAMs from local NVMe; the
+ * default tiny buffers were fine when each "read" was a kernel
+ * page-cache hit. They became necessary the moment the discipline
+ * shifted to "BAM stays on S3, only small siblings localize." */
+#define DUCKHTS_HTS_BLOCK_SIZE  (4 * 1024 * 1024)
+#define DUCKHTS_HTS_CACHE_SIZE  (256 * 1024 * 1024)
 
 typedef struct {
     char *index_path;
@@ -117,6 +146,7 @@ static void bind_bam_index(duckdb_bind_info info) {
     int threads = 4;
     int ret;
     char err[512];
+    htsFile *fp;
 
     duckdb_destroy_value(&path_val);
     if (!path || path[0] == '\0') {
@@ -137,7 +167,34 @@ static void bind_bam_index(duckdb_bind_info info) {
     if (val && !duckdb_is_null_value(val)) threads = (int)duckdb_get_int64(val);
     if (val) duckdb_destroy_value(&val);
 
-    ret = sam_index_build3(path, index_path, min_shift, threads);
+    /* Open, set high-latency-I/O tuning, build, close.
+     *
+     * The previous one-shot sam_index_build3 call opened the file and
+     * dispatched the index build without giving us a window to tune
+     * BGZF cache / hfile block size. For s3:// inputs that became the
+     * dominant slowdown — see DUCKHTS_HTS_BLOCK_SIZE / CACHE_SIZE
+     * commentary at the top of the file. sam_index_build4 (our htslib
+     * addition) accepts the pre-opened htsFile* so options applied
+     * here take effect for the whole scan. */
+    fp = hts_open(path, "r");
+    if (!fp) {
+        snprintf(err, sizeof(err), "bam_index: failed to open %s", path);
+        duckdb_bind_set_error(info, err);
+        duckdb_free(path);
+        if (index_path) duckdb_free(index_path);
+        return;
+    }
+    /* hts_set_opt returns non-zero on failure; we ignore it here
+     * because the options are advisory — on a file type that doesn't
+     * use them (e.g. uncompressed SAM) they're harmless no-ops, and
+     * we don't want option-tuning failure to kill an otherwise viable
+     * index build. */
+    (void)hts_set_opt(fp, HTS_OPT_BLOCK_SIZE, DUCKHTS_HTS_BLOCK_SIZE);
+    (void)hts_set_opt(fp, HTS_OPT_CACHE_SIZE, DUCKHTS_HTS_CACHE_SIZE);
+
+    ret = sam_index_build4(fp, path, index_path, min_shift, threads);
+    hts_close(fp);
+
     if (ret != 0) {
         snprintf(err, sizeof(err), "bam_index: failed to build index for %s (error %d)", path, ret);
         duckdb_bind_set_error(info, err);
