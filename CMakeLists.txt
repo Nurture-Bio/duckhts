@@ -80,6 +80,7 @@ set(EXTENSION_SOURCES
         src/interval_udf.c
         src/kmer_udf.c
         src/tabix_reader.c
+        src/genbank_reader.c
         src/vep_parser.c
         src/hts_meta_reader.c
         src/quality_encoding.c

@@ -36,6 +36,9 @@ extern void register_kmer_udf_functions(duckdb_connection connection);
 extern void register_read_tabix_function(duckdb_connection connection);
 extern void register_read_gtf_function(duckdb_connection connection);
 extern void register_read_gff_function(duckdb_connection connection);
+/* genbank_reader.c */
+extern void register_read_genbank_function(duckdb_connection connection);
+extern void register_genbank_to_fasta_function(duckdb_connection connection);
 /* hts_meta_reader.c */
 extern void register_read_hts_header_function(duckdb_connection connection);
 extern void register_read_hts_index_function(duckdb_connection connection);
@@ -72,6 +75,8 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
     register_read_tabix_function(connection);
     register_read_gtf_function(connection);
     register_read_gff_function(connection);
+    register_read_genbank_function(connection);
+    register_genbank_to_fasta_function(connection);
     register_read_hts_header_function(connection);
     register_read_hts_index_function(connection);
     register_detect_quality_encoding_function(connection);

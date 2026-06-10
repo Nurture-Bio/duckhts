@@ -1,0 +1,40 @@
+LOCUS       TESTSEQ                  240 bp    DNA     linear   SYN 01-JAN-2026
+DEFINITION  Synthetic test construct for the DuckHTS genbank reader,
+            spanning multiple lines.
+ACCESSION   TESTSEQ
+VERSION     TESTSEQ.1
+KEYWORDS    .
+SOURCE      synthetic construct
+  ORGANISM  synthetic construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..240
+                     /organism="synthetic construct"
+                     /mol_type="other DNA"
+     gene            10..60
+                     /locus_tag="t_0001"
+                     /gene="alpha"
+     CDS             10..60
+                     /locus_tag="t_0001"
+                     /gene="alpha"
+                     /codon_start=1
+                     /product="alpha protein with a long
+                     multi-line product description"
+     gene            complement(80..150)
+                     /locus_tag="t_0002"
+                     /gene="beta"
+     CDS             complement(80..150)
+                     /locus_tag="t_0002"
+                     /codon_start=2
+                     /product="beta protein"
+     CDS             join(170..190,210..230)
+                     /locus_tag="t_0003"
+                     /product="spliced product"
+     tRNA            200..235
+                     /product="tRNA-Met"
+ORIGIN
+        1 atgaaacgca ttagcaccac cattaccacc accatcacca ttaccacagg taacggtgcg
+       61 ggctgacgcg tacaggaaac acagaaaaaa gcccgcacct gacagtgcgg gctttttttt
+      121 tcgaccaaag gtaacgaggt aacaaccatg cgagtgttga agttcggcgg tacatcagtg
+      181 gcaaatgcag aacgttttct gcgtgttgcc gatattctgg aaagcaatgc caggcagggg
+//
