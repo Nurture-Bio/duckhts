@@ -844,6 +844,7 @@ void register_read_fasta_function(duckdb_connection connection) {
 
 typedef struct {
     char *index_path;
+    char *gzi_path;
     int emitted;
 } fasta_index_bind_t;
 
@@ -851,6 +852,7 @@ static void destroy_fasta_index_bind(void *data) {
     fasta_index_bind_t *b = (fasta_index_bind_t *)data;
     if (!b) return;
     if (b->index_path) duckdb_free(b->index_path);
+    if (b->gzi_path) duckdb_free(b->gzi_path);
     duckdb_free(b);
 }
 
@@ -871,12 +873,25 @@ static void fasta_index_bind(duckdb_bind_info info) {
     }
     if (idx_val) duckdb_destroy_value(&idx_val);
 
-    if (fai_build3(file_path, index_path, NULL) != 0) {
+    /* gzi_path: htslib's fai_build3 third argument, the bgzip block-offset index it emits
+     * alongside the .fai for BGZF-compressed input. Previously hardcoded NULL here, which meant
+     * fasta_index could never write a .gzi at all regardless of what a caller asked for — the
+     * gzi_path parameter that exists on read_fasta was never wired to this function. NULL is
+     * still the correct default (htslib picks its own sibling path) for a caller that omits it. */
+    char *gzi_path = NULL;
+    duckdb_value gzi_val = duckdb_bind_get_named_parameter(info, "gzi_path");
+    if (gzi_val && !duckdb_is_null_value(gzi_val)) {
+        gzi_path = duckdb_get_varchar(gzi_val);
+    }
+    if (gzi_val) duckdb_destroy_value(&gzi_val);
+
+    if (fai_build3(file_path, index_path, gzi_path) != 0) {
         char err[512];
         snprintf(err, sizeof(err), "fasta_index: failed to build index for %s", file_path);
         duckdb_bind_set_error(info, err);
         duckdb_free(file_path);
         if (index_path) duckdb_free(index_path);
+        if (gzi_path) duckdb_free(gzi_path);
         return;
     }
 
@@ -884,11 +899,13 @@ static void fasta_index_bind(duckdb_bind_info info) {
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_bind_add_result_column(info, "success", bool_type);
     duckdb_bind_add_result_column(info, "index_path", varchar_type);
+    duckdb_bind_add_result_column(info, "gzi_path", varchar_type);
     duckdb_destroy_logical_type(&bool_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     fasta_index_bind_t *bind = (fasta_index_bind_t *)duckdb_malloc(sizeof(fasta_index_bind_t));
     bind->index_path = index_path ? index_path : strdup_duckdb("");
+    bind->gzi_path = gzi_path ? gzi_path : strdup_duckdb("");
     bind->emitted = 0;
     duckdb_bind_set_bind_data(info, bind, destroy_fasta_index_bind);
     duckdb_free(file_path);
@@ -907,9 +924,11 @@ static void fasta_index_scan(duckdb_function_info info, duckdb_data_chunk output
     }
     duckdb_vector success_vec = duckdb_data_chunk_get_vector(output, 0);
     duckdb_vector index_vec = duckdb_data_chunk_get_vector(output, 1);
+    duckdb_vector gzi_vec = duckdb_data_chunk_get_vector(output, 2);
     bool *success_data = (bool *)duckdb_vector_get_data(success_vec);
     success_data[0] = true;
     duckdb_vector_assign_string_element(index_vec, 0, bind->index_path ? bind->index_path : "");
+    duckdb_vector_assign_string_element(gzi_vec, 0, bind->gzi_path ? bind->gzi_path : "");
     bind->emitted = 1;
     duckdb_data_chunk_set_size(output, 1);
 }
@@ -921,6 +940,7 @@ void register_fasta_index_function(duckdb_connection connection) {
     duckdb_logical_type varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_table_function_add_parameter(tf, varchar_type);
     duckdb_table_function_add_named_parameter(tf, "index_path", varchar_type);
+    duckdb_table_function_add_named_parameter(tf, "gzi_path", varchar_type);
     duckdb_destroy_logical_type(&varchar_type);
 
     duckdb_table_function_set_bind(tf, fasta_index_bind);

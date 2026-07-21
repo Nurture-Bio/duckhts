@@ -2,6 +2,7 @@
 
 ## duckhts 0.1.3.9001 (2026-03-13)
 
+- fix `fasta_index(...)`: wire the `gzi_path` named parameter through to `fai_build3`'s third argument. Previously hardcoded to `NULL`, so `fasta_index` could never write a `.gzi` for BGZF-compressed input regardless of what a caller passed — `gzi_path` existed as a parameter on `read_fasta(...)` but was never connected to the indexer
 - add `quality_representation := 'phred'` to `read_bam(...)` and `read_fastq(...)` so base qualities can be returned as `UTINYINT[]` raw Phred values instead of SAM/FASTQ text
 - add `input_quality_encoding := 'phred33' | 'auto' | 'phred64' | 'solexa64'` to `read_fastq(...)`; default to modern `phred33`, with optional legacy decoding and canonical Phred output on read
 - add `detect_quality_encoding(...)` to inspect FASTQ quality ASCII ranges and report compatible encodings plus a heuristic guessed encoding
