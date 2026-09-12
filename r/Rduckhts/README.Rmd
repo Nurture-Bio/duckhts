@@ -257,7 +257,12 @@ Use `rduckhts_functions()` inside R to inspect the generated extension catalog.
 <summary>Show generated function catalog</summary>
 
 ```{r function-catalog, echo=FALSE, results='asis'}
-cat(paste(readLines("inst/function_catalog/functions.md"), collapse = "\n"))
+catalog <- readLines("inst/function_catalog/functions.md")
+catalog <- gsub(
+  "](reference.md", "](inst/function_catalog/reference.md",
+  catalog, fixed = TRUE
+)
+cat(paste(catalog, collapse = "\n"))
 ```
 
 </details>

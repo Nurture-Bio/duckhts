@@ -86,6 +86,8 @@ Circular annotation and mapped MANE-on-GRCh37 enrichment are not provided.
 
 ## Installation, compatibility and migration
 
+- Provide concise function summaries and a bundled SQL reference with signatures,
+  return schemas, usage contracts and examples, linked from the package README.
 - Quote wrapper paths/options through DBI literals and object names through DBI
   identifiers, while preserving explicitly documented SQL-expression arguments.
 - Compile a registered R native library so binary repositories record the actual
