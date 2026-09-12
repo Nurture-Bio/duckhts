@@ -80,7 +80,12 @@ compression, indexing, and export.
 <summary>Show generated function catalog</summary>
 
 ```{r function-catalog, echo=FALSE, results='asis'}
-cat(paste(readLines("r/Rduckhts/inst/function_catalog/functions.md"), collapse = "\n"))
+catalog <- readLines("r/Rduckhts/inst/function_catalog/functions.md")
+catalog <- gsub(
+  "](reference.md", "](r/Rduckhts/inst/function_catalog/reference.md",
+  catalog, fixed = TRUE
+)
+cat(paste(catalog, collapse = "\n"))
 ```
 
 </details>

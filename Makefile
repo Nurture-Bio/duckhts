@@ -2,7 +2,7 @@
 # Project configuration
 # =============================================================================
 
-.PHONY: help docs clean clean_all clean_local function_catalog \
+.PHONY: help docs clean clean_all clean_local function_catalog test-function-catalog \
 	test-duckvep-kernel test-duckvep-kernel-asan \
 	test-duckvep-kernel-ubsan test-duckvep-kernel-statistical \
 	duckvep-generated-check duckvep-upstream-git-check \
@@ -142,6 +142,7 @@ endif
 # -----------------------------------------------------------------------------
 
 test: test_debug
+test_debug test_release: test-function-catalog
 test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
 test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
 test_release: test-reference-cache
@@ -367,7 +368,10 @@ docs: check-benchmark-portability rdm
 check-benchmark-portability:
 	Rscript r/duckhtsbench/scripts/check_benchmark_portability.R
 
-function_catalog:
+test-function-catalog:
+	PYTHONDONTWRITEBYTECODE=1 python3 test/scripts/test_function_catalog.py
+
+function_catalog: test-function-catalog
 	python3 scripts/render_function_catalog.py
 rdm: function_catalog
 	Rscript -e "rmarkdown::render('README.Rmd', output_format = 'github_document')"

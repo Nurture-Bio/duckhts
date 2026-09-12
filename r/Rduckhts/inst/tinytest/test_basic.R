@@ -557,6 +557,19 @@ expect_true(all(file.exists(file.path(
 
 catalog <- rduckhts_functions()
 expect_true(is.data.frame(catalog))
+expect_identical(
+  names(catalog),
+  c("name", "kind", "category", "signature", "returns", "r_wrapper", "description", "examples")
+)
+catalog_reference <- readLines(system.file(
+  "function_catalog", "reference.md", package = "Rduckhts", mustWork = TRUE
+))
+expect_identical(
+  sub("^## ", "", grep("^## ", catalog_reference, value = TRUE)),
+  catalog$name
+)
+expect_true(all(catalog$signature %in% catalog_reference))
+expect_true(all(catalog$returns %in% catalog_reference))
 expect_true(all(
   c("name", "kind", "category", "signature", "description") %in% names(catalog)
 ))

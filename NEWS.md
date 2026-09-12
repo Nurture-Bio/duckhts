@@ -110,6 +110,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
 
 ## R packaging and migration
 
+- Separate concise function-catalog summaries from linked SQL reference sections
+  covering signatures, return schemas, usage contracts and examples.
 - Add R wrappers for genotype/sample reading and haplotype replay, with per-call
   sample/FORMAT selection and DBI-safe quoting of paths, values and identifiers.
 - Record the actual compiled package architecture and verify it against the

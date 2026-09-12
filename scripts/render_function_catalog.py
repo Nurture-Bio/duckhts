@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,21 @@ def die(message: str) -> None:
 
 def escape_md(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+def fenced_code(text: str, language: str = "") -> str:
+    longest_run = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest_run + 1)
+    return f"{fence}{language}\n{text}\n{fence}"
+
+
+def unique_object(pairs: list[tuple[str, object]]) -> OrderedDict[str, object]:
+    result: OrderedDict[str, object] = OrderedDict()
+    for key, value in pairs:
+        if key in result:
+            die(f"Duplicate manifest property: {key}")
+        result[key] = value
+    return result
 
 
 def load_root_description(path: Path) -> dict[str, object]:
@@ -75,7 +91,7 @@ def load_root_description(path: Path) -> dict[str, object]:
 
 def load_manifest(path: Path) -> OrderedDict[str, object]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=OrderedDict)
+        payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except json.JSONDecodeError as exc:
         die(f"Failed to parse {path}: {exc}")
 
@@ -135,6 +151,15 @@ def load_manifest(path: Path) -> OrderedDict[str, object]:
         examples = entry["examples"]
         if not isinstance(examples, list) or not all(isinstance(x, str) for x in examples):
             die(f"functions[{index}].examples must be a list of strings")
+        if "details" in entry:
+            details = entry["details"]
+            if not isinstance(details, dict):
+                die(f"functions[{index}].details must be an object")
+            for heading, prose in details.items():
+                if not heading.strip() or "\n" in heading or "\r" in heading:
+                    die(f"functions[{index}].details headings must be non-empty single-line strings")
+                if not isinstance(prose, str) or not prose.strip():
+                    die(f"functions[{index}].details[{heading!r}] must be a non-empty string")
     return payload
 
 
@@ -152,19 +177,33 @@ def render_markdown(functions: list[dict[str, object]]) -> str:
     for category, entries in by_category.items():
         lines.append(f"### {category}")
         lines.append("")
-        lines.append("| Function | Kind | Returns | R helper | Description |")
-        lines.append("| --- | --- | --- | --- | --- |")
+        lines.append("| Function | Kind | R helper | Description |")
+        lines.append("| --- | --- | --- | --- |")
         for entry in entries:
-            name = f"`{entry['name']}`"
+            name = f"[`{entry['name']}`](reference.md#{entry['name']})"
             kind = escape_md(str(entry["kind"]))
-            returns = escape_md(str(entry["returns"]))
             wrapper = str(entry["r_wrapper"]).strip()
             wrapper_md = f"`{wrapper}`" if wrapper else ""
             description = escape_md(str(entry["description"]))
-            lines.append(f"| {name} | {kind} | {returns} | {wrapper_md} | {description} |")
+            lines.append(f"| {name} | {kind} | {wrapper_md} | {description} |")
         lines.append("")
 
     return "\n".join(lines)
+
+
+def render_reference(functions: list[dict[str, object]]) -> str:
+    lines = ["# Extension Function Reference", "", "Generated from `functions.yaml`.", ""]
+    for entry in functions:
+        lines.extend([f"## {entry['name']}", "", str(entry["description"]), ""])
+        lines.extend(["Signature:", "", fenced_code(str(entry["signature"]), "sql"), ""])
+        lines.extend(["Returns:", "", fenced_code(str(entry["returns"])), ""])
+        for heading, prose in entry.get("details", {}).items():
+            lines.extend([f"### {heading}", "", prose, ""])
+        if entry["examples"]:
+            lines.extend(["### Examples", ""])
+            for example in entry["examples"]:
+                lines.extend([fenced_code(example, "sql"), ""])
+    return "\n".join(lines).rstrip("\n")
 
 
 def write_tsv(path: Path, functions: list[dict[str, object]]) -> None:
@@ -195,7 +234,7 @@ def quote_yaml_scalar(value: str) -> str:
 
 
 def build_extended_description(
-    functions: list[dict[str, object]], docs: dict[str, object]
+    functions: list[dict[str, object]], docs: dict[str, object], reference_url: str
 ) -> list[str]:
     by_category: OrderedDict[str, list[dict[str, object]]] = OrderedDict()
     for function in functions:
@@ -206,15 +245,19 @@ def build_extended_description(
         lines.extend(str(paragraph).splitlines())
         lines.append("")
 
+    lines.append(f"[Full function reference]({reference_url}) includes signatures, return schemas and examples.")
+    lines.append("")
     lines.append("Functions included in this extension:")
     lines.append("")
     for category, entries in by_category.items():
         lines.append(f"### {category}")
+        lines.append("")
         for entry in entries:
-            lines.append(f"- `{entry['signature']}`: {entry['description']}")
+            lines.append(f"- `{entry['name']}`: {entry['description']}")
         lines.append("")
 
     lines.append("Operational notes:")
+    lines.append("")
     for note in docs["feature_notes"]:
         lines.append(f"- {note}")
 
@@ -255,7 +298,11 @@ def render_description_yaml(
     repo = community_extension["repo"]
     docs = community_extension["docs"]
     repo_ref = resolve_repo_ref(repo_root, repo)
-    extended_description_lines = build_extended_description(functions, docs)
+    reference_url = (
+        f"https://github.com/{repo['github']}/blob/{repo_ref}/"
+        "r/Rduckhts/inst/function_catalog/reference.md"
+    )
+    extended_description_lines = build_extended_description(functions, docs, reference_url)
 
     lines: list[str] = []
     lines.append("extension:")
@@ -307,6 +354,7 @@ def main(argv: list[str]) -> int:
 
     shutil.copyfile(manifest_path, catalog_dir / "functions.yaml")
     (catalog_dir / "functions.md").write_text(render_markdown(functions) + "\n", encoding="utf-8")
+    (catalog_dir / "reference.md").write_text(render_reference(functions) + "\n", encoding="utf-8")
     write_tsv(catalog_dir / "functions.tsv", functions)
     description_path.write_text(
         render_description_yaml(repo_root, manifest, functions, root_description),
