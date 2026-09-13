@@ -303,6 +303,7 @@ test-benchmark-registry: release test-variantkey-provider-staging test-duckvep-c
 	Rscript test/scripts/test_fastvep_receipt.R
 	Rscript test/scripts/test_fastvep_field_compare.R
 	Rscript test/scripts/test_fastvep_field_extract.R
+	Rscript test/scripts/test_fastvep_source_coverage.R
 	Rscript test/scripts/test_fastvep_field_projection.R
 	Rscript test/scripts/test_fastvep_field_report.R
 	Rscript test/scripts/test_vep_cache_staging.R

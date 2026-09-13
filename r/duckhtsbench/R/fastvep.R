@@ -19,6 +19,100 @@ duckhts_bench_fastvep_source <- function(checkout, commit) {
   invisible(TRUE)
 }
 
+duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = NULL) {
+  receipt <- utils::read.delim(path, colClasses = "character", quote = "", comment.char = "",
+    check.names = FALSE)
+  required <- c("binding", "source_commit", "cargo_lock_sha256", "toolchain", "rustc", "cargo",
+    "rustflags", "command", "executable_sha256", "log", "log_sha256", "exit_status")
+  if (!identical(names(receipt), c("field", "value")) ||
+      !identical(receipt$field, required) || anyNA(receipt$value) || any(!nzchar(receipt$value))) {
+    stop("invalid FastVEP build receipt schema", call. = FALSE)
+  }
+  values <- stats::setNames(receipt$value, receipt$field)
+  hashes <- values[c("cargo_lock_sha256", "executable_sha256", "log_sha256")]
+  if (values[["binding"]] != "cargo_fresh_release_locked_offline" ||
+      !identical(values[["source_commit"]], source_commit) ||
+      !grepl("^[0-9a-f]{40}$", source_commit) || any(!grepl("^[0-9a-f]{64}$", hashes)) ||
+      values[["exit_status"]] != "0" || basename(values[["log"]]) != values[["log"]]) {
+    stop("FastVEP build receipt does not bind the pinned successful build", call. = FALSE)
+  }
+  hash <- duckhts_bench_duckvep_sha256_file
+  log <- file.path(dirname(path), values[["log"]])
+  if (!file.exists(log) || !identical(hash(log), values[["log_sha256"]])) {
+    stop("FastVEP build log differs from its receipt", call. = FALSE)
+  }
+  if (!is.null(executable) && !identical(hash(executable), values[["executable_sha256"]])) {
+    stop("FastVEP executable differs from its build receipt", call. = FALSE)
+  }
+  values
+}
+
+# Build in an empty Cargo target directory: an ignored pre-existing executable
+# cannot be adopted as output. The retained log and receipt belong to this build.
+duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
+    rustflags = "-C target-cpu=native", jobs = 2L) {
+  checkout <- normalizePath(checkout, mustWork = TRUE)
+  if (file.exists(output) || !grepl("^[0-9]+[.][0-9]+[.][0-9]+$", toolchain) ||
+      length(jobs) != 1L || is.na(jobs) || jobs < 1L || jobs != as.integer(jobs) ||
+      length(rustflags) != 1L || is.na(rustflags) || !nzchar(rustflags) ||
+      grepl("[\r\n\t]", rustflags)) {
+    stop("FastVEP build needs a new output directory, exact toolchain, flags and positive jobs", call. = FALSE)
+  }
+  registry <- duckhts_bench_registry()
+  row <- registry[registry$id == "fastvep_ensembl116_cache", , drop = FALSE]
+  if (nrow(row) != 1L) stop("expected one registered FastVEP source", call. = FALSE)
+  identity <- duckhts_bench_identity_fields(row$supplier_identity)
+  commit <- identity[["source_commit"]]
+  duckhts_bench_fastvep_source(checkout, commit)
+  hash <- duckhts_bench_duckvep_sha256_file
+  lock <- file.path(checkout, "Cargo.lock")
+  lock_hash <- hash(lock)
+  command <- function(executable, args) {
+    result <- suppressWarnings(system2(executable, shQuote(args), stdout = TRUE, stderr = TRUE))
+    if (!is.null(attr(result, "status")) && attr(result, "status") != 0L) {
+      stop(paste(result, collapse = "\n"), call. = FALSE)
+    }
+    result
+  }
+  rustc <- paste(command("rustc", c(paste0("+", toolchain), "-vV")), collapse = "; ")
+  cargo <- paste(command("cargo", c(paste0("+", toolchain), "--version")), collapse = "; ")
+  dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
+  if (!dir.create(output)) stop("could not create FastVEP build directory", call. = FALSE)
+  output <- normalizePath(output)
+  target <- file.path(output, "target")
+  log <- file.path(output, "build.log")
+  args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(checkout, "Cargo.toml"),
+    "--release", "--locked", "--offline", "--jobs", jobs, "--target-dir", target,
+    "-p", "fastvep-cli", "--bin", "fastvep")
+  previous <- Sys.getenv(c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"), unset = NA_character_)
+  on.exit(for (name in names(previous)) {
+    if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
+  }, add = TRUE)
+  Sys.unsetenv("CARGO_ENCODED_RUSTFLAGS")
+  Sys.setenv(RUSTFLAGS = rustflags)
+  status <- system2("cargo", shQuote(args), stdout = log, stderr = log)
+  if (status != 0L) stop("FastVEP build failed; log retained at ", log, call. = FALSE)
+  duckhts_bench_fastvep_source(checkout, commit)
+  if (!identical(lock_hash, hash(lock))) stop("FastVEP Cargo.lock changed during build", call. = FALSE)
+  built <- file.path(target, "release", paste0("fastvep", if (.Platform$OS.type == "windows") ".exe" else ""))
+  version <- command(built, "--version")
+  if (!identical(version, paste("fastvep", identity[["version"]]))) {
+    stop("built FastVEP version differs from its registered source", call. = FALSE)
+  }
+  executable <- file.path(output, basename(built))
+  if (!file.copy(built, executable)) stop("could not retain built FastVEP executable", call. = FALSE)
+  values <- c(binding = "cargo_fresh_release_locked_offline", source_commit = commit,
+    cargo_lock_sha256 = lock_hash, toolchain = toolchain, rustc = rustc, cargo = cargo,
+    rustflags = rustflags, command = paste(c("cargo", shQuote(args)), collapse = " "),
+    executable_sha256 = hash(executable), log = basename(log), log_sha256 = hash(log), exit_status = "0")
+  receipt <- file.path(output, "build.tsv")
+  utils::write.table(data.frame(field = names(values), value = unname(values)), receipt,
+    sep = "\t", quote = FALSE, row.names = FALSE)
+  duckhts_bench_read_fastvep_build(receipt, commit, executable)
+  unlink(target, recursive = TRUE)
+  c(executable = executable, receipt = receipt, log = log)
+}
+
 #' Stage a pinned FastVEP transcript cache from registered Ensembl inputs.
 #'
 #' Requires staged GFF3 and indexed uncompressed FASTA inputs, an unchanged upstream

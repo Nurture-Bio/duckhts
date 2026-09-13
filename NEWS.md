@@ -35,7 +35,8 @@ https://github.com/RGenomicsETL/duckhts/issues/218.
 
 - Add `duckvep_transcript_projection()` for typed transcript/CDS/protein ranges,
   exon/intron ordinals, transcript distance, quality flags and codon/amino-acid
-  display from existing annotations and prepared models.
+  display from existing annotations and prepared models. Selected transcripts
+  share decoded sequences; per-event codon display uses local sequence spans.
 - Correct SNV, MNV and indel consequences around phase-padded CDS starts,
   exon/CDS transitions, partial terminal codons and transcript ends. Physical
   REF validation remains distinct from VEP feature coordinates; unavailable
@@ -168,8 +169,9 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   manifests gate published timings. FastVEP transcript caches have a registered,
   checksum-verified staging path. Retained field witnesses can be replayed by
   fixture case; benchmark processes have explicit memory and spill limits.
-  Published timing runs require an independently recorded FastVEP executable
-  digest via `--fastvep-sha256`.
+  Published timing runs require a fresh pinned-source FastVEP build receipt.
+  Final-file checks reconcile physical record/ALT identities with the unchanged
+  source input; common CSQ files carry explicit identity columns.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
