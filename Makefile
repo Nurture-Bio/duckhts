@@ -306,6 +306,8 @@ test-benchmark-registry: release test-variantkey-provider-staging test-duckvep-c
 	Rscript test/scripts/test_fastvep_source_coverage.R
 	Rscript test/scripts/test_fastvep_field_projection.R
 	Rscript test/scripts/test_fastvep_field_report.R
+	Rscript test/scripts/test_fastvep_field_publish.R
+	Rscript test/scripts/test_fastvep_field_replay.R
 	Rscript test/scripts/test_vep_cache_staging.R
 	Rscript test/scripts/test_duckvep_model_relations.R
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \

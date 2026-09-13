@@ -47,6 +47,29 @@ duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = N
   values
 }
 
+# Cargo discovers config from its invocation directory, not --manifest-path.
+duckhts_bench_fastvep_cargo_config_paths <- function(directory = getwd(),
+    cargo_home = Sys.getenv("CARGO_HOME"),
+    user_home = Sys.getenv(if (.Platform$OS.type == "windows") "USERPROFILE" else "HOME")) {
+  invocation <- directory
+  config_directories <- character()
+  repeat {
+    config_directories <- c(config_directories, paste0(sub("/+$", "", directory), "/.cargo"))
+    parent <- dirname(directory)
+    if (identical(parent, directory)) break
+    directory <- parent
+  }
+  if (!nzchar(cargo_home)) {
+    if (!nzchar(user_home)) {
+      stop("set CARGO_HOME to locate Cargo configuration for this build", call. = FALSE)
+    }
+    cargo_home <- file.path(user_home, ".cargo")
+  }
+  if (!grepl("^([/\\\\]|[A-Za-z]:)", cargo_home)) cargo_home <- file.path(invocation, cargo_home)
+  file.path(rep(unique(c(config_directories, cargo_home)), each = 2L),
+    c("config", "config.toml"))
+}
+
 # Build in an empty Cargo target directory: an ignored pre-existing executable
 # cannot be adopted as output. The retained log and receipt belong to this build.
 duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
@@ -58,6 +81,15 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
       grepl("[\r\n\t]", rustflags)) {
     stop("FastVEP build needs a new output directory, exact toolchain, flags and positive jobs", call. = FALSE)
   }
+  check_config <- function() {
+    config_paths <- duckhts_bench_fastvep_cargo_config_paths()
+    present <- config_paths[file.exists(config_paths)]
+    if (length(present)) {
+      stop("FastVEP pinned builds do not support Cargo configuration files: ",
+        paste(present, collapse = ", "), call. = FALSE)
+    }
+  }
+  check_config()
   registry <- duckhts_bench_registry()
   row <- registry[registry$id == "fastvep_ensembl116_cache", , drop = FALSE]
   if (nrow(row) != 1L) stop("expected one registered FastVEP source", call. = FALSE)
@@ -110,6 +142,7 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   if (!identical(version, paste("fastvep", identity[["version"]]))) {
     stop("built FastVEP version differs from its registered source", call. = FALSE)
   }
+  check_config()
   executable <- file.path(output, basename(built))
   if (!file.copy(built, executable)) stop("could not retain built FastVEP executable", call. = FALSE)
   values <- c(binding = "cargo_fresh_release_locked_offline", source_commit = commit,

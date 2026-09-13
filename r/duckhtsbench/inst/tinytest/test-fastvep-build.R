@@ -4,7 +4,11 @@ local({
   if (.Platform$OS.type != "unix" || !nzchar(Sys.which("git"))) return(invisible(NULL))
   directory <- tempfile("fastvep-build-test-")
   dir.create(directory)
-  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  previous_directory <- getwd()
+  on.exit({
+    setwd(previous_directory)
+    unlink(directory, recursive = TRUE)
+  }, add = TRUE)
   profile_controls <- c(CARGO_PROFILE_RELEASE_OPT_LEVEL = "0", CARGO_PROFILE_RELEASE_LTO = "off",
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "256", CARGO_PROFILE_RELEASE_DEBUG = "true",
     CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL = "0", CARGO_PROFILE_DEV_PANIC = "abort",
@@ -12,7 +16,8 @@ local({
   controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
     "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(profile_controls))
-  previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "FASTVEP_BUILD_TEST_FAIL", controls),
+  previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "CARGO_HOME", "FASTVEP_BUILD_TEST_FAIL",
+    "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG", controls),
     unset = NA_character_)
   on.exit(for (name in names(previous)) {
     if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
@@ -47,6 +52,7 @@ local({
     "test \"$*\" = 'which --toolchain 1.98.1 rustc'",
     paste("printf '%s\\n'", shQuote(compiler))), file.path(bin, "rustup"))
   writeLines(c("#!/bin/sh", "set -eu",
+    "echo invoked >> \"$FASTVEP_BUILD_TEST_CARGO_MARKER\"",
     "if [ \"$2\" = --version ]; then echo 'cargo 1.98.1 fixture'; exit 0; fi",
     paste("test \"$RUSTC\" =", shQuote(compiler)),
     "test \"${RUSTC_WRAPPER+x}\" = x", "test -z \"$RUSTC_WRAPPER\"",
@@ -62,16 +68,47 @@ local({
     "if [ \"${FASTVEP_BUILD_TEST_FAIL-}\" = 1 ]; then echo 'injected build failure'; exit 7; fi",
     "test -n \"$target\"", "test ! -e \"$target\"", "mkdir -p \"$target/release\"",
     "printf '#!/bin/sh\necho fastvep 0.3.0\n# fresh fixture artifact\n' > \"$target/release/fastvep\"",
-    "chmod +x \"$target/release/fastvep\"", "echo 'fixture build completed'"
+    "chmod +x \"$target/release/fastvep\"",
+    "if [ -n \"${FASTVEP_BUILD_TEST_CONFIG-}\" ]; then",
+    "  printf '[profile.release]\\nopt-level = 0\\n' > \"$FASTVEP_BUILD_TEST_CONFIG\"", "fi",
+    "echo 'fixture build completed'"
   ), file.path(bin, "cargo"))
   Sys.chmod(c(compiler, file.path(bin, c("cargo", "rustc", "rustup"))), "0755")
+  invocation <- file.path(directory, "invocation", "deep", "leaf")
+  dir.create(invocation, recursive = TRUE)
+  cargo_home <- file.path(directory, "cargo-home")
+  dir.create(cargo_home)
+  marker <- file.path(directory, "cargo-invoked")
+  setwd(invocation)
   Sys.setenv(PATH = paste(bin, previous[["PATH"]], sep = .Platform$path.sep),
-    DUCKHTSBENCH_REGISTRY = registry_path)
+    DUCKHTSBENCH_REGISTRY = registry_path, CARGO_HOME = cargo_home,
+    FASTVEP_BUILD_TEST_CARGO_MARKER = marker)
   poisoned <- stats::setNames(paste0("poison-", controls), controls)
   poisoned[names(profile_controls)] <- profile_controls
   do.call(Sys.setenv, as.list(poisoned))
-  Sys.unsetenv("FASTVEP_BUILD_TEST_FAIL")
+  Sys.unsetenv(c("FASTVEP_BUILD_TEST_FAIL", "FASTVEP_BUILD_TEST_CONFIG"))
+  config_paths <- duckhtsbench:::duckhts_bench_fastvep_cargo_config_paths
+  ancestors <- c("/fixture/work/.cargo/config", "/fixture/work/.cargo/config.toml",
+    "/fixture/.cargo/config", "/fixture/.cargo/config.toml", "/.cargo/config", "/.cargo/config.toml")
+  expect_identical(config_paths("/fixture/work", "/cargo-home", "/user"),
+    c(ancestors, "/cargo-home/config", "/cargo-home/config.toml"))
+  expect_identical(config_paths("/fixture/work", "cache", "/user"),
+    c(ancestors, "/fixture/work/cache/config", "/fixture/work/cache/config.toml"))
+  expect_identical(config_paths("/fixture/work", "~/cache", "/user"),
+    c(ancestors, "/fixture/work/~/cache/config", "/fixture/work/~/cache/config.toml"))
+  expect_identical(config_paths("/fixture/work", "", "/user"),
+    c(ancestors, "/user/.cargo/config", "/user/.cargo/config.toml"))
+  expect_identical(config_paths("/", "/cargo-home", "/user"),
+    c("/.cargo/config", "/.cargo/config.toml", "/cargo-home/config", "/cargo-home/config.toml"))
+  expect_error(config_paths("/fixture/work", "", ""), "set CARGO_HOME")
   build <- duckhtsbench:::duckhts_bench_build_fastvep
+  # Only config discovery is fixture-local; the builder's rejecting predicate,
+  # build, receipt and environment-restoration checks run unchanged.
+  environment(build) <- new.env(parent = environment(build))
+  environment(build)$duckhts_bench_fastvep_cargo_config_paths <- function() {
+    candidates <- config_paths()
+    candidates[startsWith(candidates, paste0(directory, "/"))]
+  }
   read_build <- duckhtsbench:::duckhts_bench_read_fastvep_build
   hash <- duckhtsbench:::duckhts_bench_duckvep_sha256_file
   stale <- file.path(checkout, "target/release/fastvep")
@@ -90,6 +127,44 @@ local({
   expect_equal(receipt[["executable_sha256"]], hash(product[["executable"]]))
   expect_equal(receipt[["rustc"]], "rustc 1.98.1 fixture")
   expect_true(grepl("--verbose", receipt[["command"]], fixed = TRUE))
+  expect_identical(getwd(), invocation)
+  expect_identical(Sys.getenv("CARGO_HOME"), cargo_home)
+  config_directories <- c(current = file.path(invocation, ".cargo"),
+    ancestor = file.path(directory, ".cargo"), cargo_home = cargo_home,
+    relative_home = file.path(invocation, "relative-home"))
+  for (location in names(config_directories)) {
+    dir.create(config_directories[[location]], showWarnings = FALSE)
+    selected_home <- if (location == "relative_home") "relative-home" else cargo_home
+    Sys.setenv(CARGO_HOME = selected_home)
+    for (filename in c("config", "config.toml")) {
+      config <- file.path(config_directories[[location]], filename)
+      content <- c("[profile.release]", "opt-level = 0")
+      writeLines(content, config)
+      unlink(marker)
+      destination <- file.path(directory, paste(location, filename, sep = "-"))
+      expect_error(build(checkout, destination), "do not support Cargo configuration files")
+      expect_false(file.exists(marker))
+      expect_false(file.exists(destination))
+      expect_identical(readLines(config), content)
+      expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
+      expect_identical(Sys.getenv("CARGO_HOME"), selected_home)
+      expect_identical(getwd(), invocation)
+      unlink(config)
+    }
+  }
+  Sys.setenv(CARGO_HOME = cargo_home)
+  config <- file.path(cargo_home, "config.toml")
+  Sys.setenv(FASTVEP_BUILD_TEST_CONFIG = config)
+  destination <- file.path(directory, "config-during-build")
+  expect_error(build(checkout, destination), "do not support Cargo configuration files")
+  expect_true(file.exists(file.path(destination, "build.log")))
+  expect_false(file.exists(file.path(destination, "fastvep")))
+  expect_false(file.exists(file.path(destination, "build.tsv")))
+  expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
+  expect_identical(Sys.getenv("CARGO_HOME"), cargo_home)
+  expect_identical(getwd(), invocation)
+  unlink(config)
+  Sys.unsetenv("FASTVEP_BUILD_TEST_CONFIG")
   expect_error(build(checkout, output), "new output directory")
   expect_error(read_build(product[["receipt"]], strrep("0", 40L)), "pinned successful build")
   expect_error(read_build(product[["receipt"]], commit, stale), "differs from its build receipt")
