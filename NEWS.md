@@ -171,7 +171,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   fixture case; benchmark processes have explicit memory and spill limits.
   Published timing runs require a fresh pinned-source FastVEP build receipt.
   Final-file checks reconcile physical record/ALT identities with the unchanged
-  source input; common CSQ files carry explicit identity columns.
+  source input; common CSQ files carry explicit identity columns. Publication
+  verifies the retained registered source map and each failure-witness file.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build

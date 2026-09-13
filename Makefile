@@ -311,7 +311,7 @@ test-benchmark-registry: release test-variantkey-provider-staging test-duckvep-c
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	(cd "$$tmp" && R CMD build --no-build-vignettes --no-manual "$(PROJ_DIR)r/duckhtsbench"); \
 	R CMD INSTALL -l "$$tmp" "$$tmp"/duckhtsbench_*.tar.gz; \
-	Rscript -e '.libPaths(c("'"$$tmp"'", .libPaths())); tinytest::test_package("duckhtsbench", testdir = "tinytest")'
+	DUCKHTS_REPO="$(PROJ_DIR)" Rscript -e '.libPaths(c("'"$$tmp"'", .libPaths())); tinytest::test_package("duckhtsbench", testdir = "tinytest")'
 
 test-variantkey-provider-staging:
 	bash test/scripts/test_variantkey_provider_staging.sh
