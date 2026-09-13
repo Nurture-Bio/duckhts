@@ -168,6 +168,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   manifests gate published timings. FastVEP transcript caches have a registered,
   checksum-verified staging path. Retained field witnesses can be replayed by
   fixture case; benchmark processes have explicit memory and spill limits.
+  Published timing runs require an independently recorded FastVEP executable
+  digest via `--fastvep-sha256`.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
