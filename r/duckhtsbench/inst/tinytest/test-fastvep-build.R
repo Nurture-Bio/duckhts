@@ -9,13 +9,21 @@ local({
     setwd(previous_directory)
     unlink(directory, recursive = TRUE)
   }, add = TRUE)
-  profile_controls <- c(CARGO_PROFILE_RELEASE_OPT_LEVEL = "0", CARGO_PROFILE_RELEASE_LTO = "off",
+  configuration_controls <- c(CARGO_PROFILE_RELEASE_OPT_LEVEL = "0", CARGO_PROFILE_RELEASE_LTO = "off",
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "256", CARGO_PROFILE_RELEASE_DEBUG = "true",
     CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL = "0", CARGO_PROFILE_DEV_PANIC = "abort",
-    CARGO_PROFILE_FIXTURE_OPT_LEVEL = "1")
+    CARGO_PROFILE_FIXTURE_OPT_LEVEL = "1",
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "/poison/x86-linker",
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "/poison/arm-linker",
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C linker=/poison/target-linker",
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER = "/poison/runner",
+    CARGO_TARGET_DIR = "poison-target", CARGO_BUILD_TARGET = "aarch64-unknown-linux-gnu",
+    CARGO_BUILD_RUSTFLAGS = "-C linker=/poison/build-linker",
+    CARGO_BUILD_TARGET_DIR = "poison-build-target", CARGO_BUILD_BUILD_DIR = "poison-intermediates",
+    CARGO_BUILD_JOBS = "17", CARGO_BUILD_INCREMENTAL = "true", CARGO_INCREMENTAL = "1")
   controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
-    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(profile_controls))
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls))
   previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "CARGO_HOME", "FASTVEP_BUILD_TEST_FAIL",
     "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG", controls),
     unset = NA_character_)
@@ -57,14 +65,16 @@ local({
     paste("test \"$RUSTC\" =", shQuote(compiler)),
     "test \"${RUSTC_WRAPPER+x}\" = x", "test -z \"$RUSTC_WRAPPER\"",
     "test \"${RUSTC_WORKSPACE_WRAPPER+x}\" = x", "test -z \"$RUSTC_WORKSPACE_WRAPPER\"",
-    "test -z \"${CARGO_BUILD_RUSTC+x}\"", "test -z \"${CARGO_BUILD_RUSTC_WRAPPER+x}\"",
-    "test -z \"${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER+x}\"",
     "test -z \"${CARGO_ENCODED_RUSTFLAGS+x}\"", "test \"$RUSTFLAGS\" = '-C target-cpu=native'",
-    "if env | grep -q '^CARGO_PROFILE_'; then echo 'inherited Cargo profile override' >&2; exit 8; fi",
-    "\"$RUSTC\" -vV", "target=", "verbose=", "while [ $# -gt 0 ]; do",
+    "test -z \"${CARGO_INCREMENTAL+x}\"",
+    "if env | grep -Eq '^CARGO_(TARGET_|BUILD_|PROFILE_)'; then",
+    "  echo 'inherited Cargo build configuration' >&2; exit 8", "fi",
+    "test -f \"$CARGO_HOME/offline-cache-fixture\"",
+    "\"$RUSTC\" -vV", "target=", "verbose=", "offline=", "while [ $# -gt 0 ]; do",
     "  if [ \"$1\" = --verbose ]; then verbose=1; fi",
+    "  if [ \"$1\" = --offline ]; then offline=1; fi",
     "  if [ \"$1\" = --target-dir ]; then target=$2; shift; fi", "  shift", "done",
-    "test \"$verbose\" = 1", "echo 'compiler controls verified'",
+    "test \"$verbose\" = 1", "test \"$offline\" = 1", "echo 'compiler controls verified'",
     "if [ \"${FASTVEP_BUILD_TEST_FAIL-}\" = 1 ]; then echo 'injected build failure'; exit 7; fi",
     "test -n \"$target\"", "test ! -e \"$target\"", "mkdir -p \"$target/release\"",
     "printf '#!/bin/sh\necho fastvep 0.3.0\n# fresh fixture artifact\n' > \"$target/release/fastvep\"",
@@ -78,13 +88,17 @@ local({
   dir.create(invocation, recursive = TRUE)
   cargo_home <- file.path(directory, "cargo-home")
   dir.create(cargo_home)
+  cache_fixture <- file.path(cargo_home, "offline-cache-fixture")
+  writeLines("retained offline dependency cache", cache_fixture)
+  Sys.setFileTime(cache_fixture, as.POSIXct("2000-01-01", tz = "UTC"))
+  cache_identity <- file.info(cache_fixture)[, c("size", "mtime")]
   marker <- file.path(directory, "cargo-invoked")
   setwd(invocation)
   Sys.setenv(PATH = paste(bin, previous[["PATH"]], sep = .Platform$path.sep),
     DUCKHTSBENCH_REGISTRY = registry_path, CARGO_HOME = cargo_home,
     FASTVEP_BUILD_TEST_CARGO_MARKER = marker)
   poisoned <- stats::setNames(paste0("poison-", controls), controls)
-  poisoned[names(profile_controls)] <- profile_controls
+  poisoned[names(configuration_controls)] <- configuration_controls
   do.call(Sys.setenv, as.list(poisoned))
   Sys.unsetenv(c("FASTVEP_BUILD_TEST_FAIL", "FASTVEP_BUILD_TEST_CONFIG"))
   config_paths <- duckhtsbench:::duckhts_bench_fastvep_cargo_config_paths
@@ -129,6 +143,8 @@ local({
   expect_true(grepl("--verbose", receipt[["command"]], fixed = TRUE))
   expect_identical(getwd(), invocation)
   expect_identical(Sys.getenv("CARGO_HOME"), cargo_home)
+  expect_identical(file.info(cache_fixture)[, c("size", "mtime")], cache_identity)
+  expect_identical(readLines(cache_fixture), "retained offline dependency cache")
   config_directories <- c(current = file.path(invocation, ".cargo"),
     ancestor = file.path(directory, ".cargo"), cargo_home = cargo_home,
     relative_home = file.path(invocation, "relative-home"))
@@ -205,6 +221,9 @@ local({
       expect_identical(Sys.getenv(controls, unset = NA_character_), expected)
       expect_true("compiler controls verified" %in% readLines(file.path(destination, "build.log")))
       expect_identical(file.exists(file.path(destination, "build.tsv")), !failure)
+      expect_identical(Sys.getenv("CARGO_HOME"), cargo_home)
+      expect_identical(file.info(cache_fixture)[, c("size", "mtime")], cache_identity)
+      expect_identical(readLines(cache_fixture), "retained offline dependency cache")
     }
   }
 })
