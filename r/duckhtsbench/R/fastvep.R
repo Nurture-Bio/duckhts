@@ -25,11 +25,52 @@ duckhts_bench_fastvep_tree_entries <- function(lines) {
     stop("unsupported FastVEP source tree entries", call. = FALSE)
   }
   paths <- sub("^[^\t]+\t", "", lines)
-  if (anyDuplicated(paths) || any(grepl('^["/]|(^|/)\\.\\.?(/|$)|/$', paths))) {
+  if (anyDuplicated(paths) || any(grepl('^["/]|(^|/)\\.\\.?(/|$)|//|/$', paths))) {
     stop("unsupported FastVEP source tree paths", call. = FALSE)
   }
   data.frame(mode = substr(lines, 1L, 6L), type = substr(lines, 8L, 11L),
     oid = substr(lines, 13L, 52L), path = paths, stringsAsFactors = FALSE)
+}
+
+duckhts_bench_fastvep_verify_commit_tree <- function(tree, commit_path, commit) {
+  object_hash <- function(type, bytes) {
+    digest::digest(c(charToRaw(paste(type, length(bytes))), as.raw(0L), bytes),
+      algo = "sha1", serialize = FALSE)
+  }
+  if (!file.exists(commit_path)) {
+    stop("FastVEP commit object is missing", call. = FALSE)
+  }
+  bytes <- readBin(commit_path, "raw", n = file.info(commit_path)$size)
+  if (!identical(object_hash("commit", bytes), commit)) {
+    stop("FastVEP commit object differs from the pinned source commit", call. = FALSE)
+  }
+  if (length(bytes) < 46L || !grepl("^tree [0-9a-f]{40}\n$", rawToChar(bytes[1:46]))) {
+    stop("FastVEP commit object has no supported root tree", call. = FALSE)
+  }
+  root <- rawToChar(bytes[6:45])
+  entries <- duckhts_bench_fastvep_tree_entries(tree)
+  parents <- dirname(entries$path)
+  directories <- c(".", entries$path[entries$type == "tree"])
+  if (any(!parents %in% directories)) {
+    stop("FastVEP source tree manifest is missing a parent directory", call. = FALSE)
+  }
+  for (directory in directories) {
+    children <- entries[parents == directory, , drop = FALSE]
+    child_names <- basename(children$path)
+    # Git compares directory names with a trailing slash, using byte order.
+    ordering <- order(paste0(child_names, ifelse(children$type == "tree", "/", "")), method = "radix")
+    payload <- lapply(ordering, function(i) {
+      oid <- as.raw(strtoi(substring(children$oid[[i]], seq.int(1L, 39L, 2L),
+        seq.int(2L, 40L, 2L)), base = 16L))
+      mode <- if (children$type[[i]] == "tree") "40000" else children$mode[[i]]
+      c(charToRaw(paste(mode, child_names[[i]])), as.raw(0L), oid)
+    })
+    expected <- if (directory == ".") root else entries$oid[entries$path == directory]
+    if (!identical(object_hash("tree", do.call(c, payload)), expected)) {
+      stop("FastVEP source tree manifest differs from the pinned commit at ", directory, call. = FALSE)
+    }
+  }
+  invisible(TRUE)
 }
 
 duckhts_bench_fastvep_verify_export <- function(checkout, source, tree) {
@@ -69,23 +110,27 @@ duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = N
     check.names = FALSE)
   required <- c("binding", "source_commit", "cargo_lock_sha256", "toolchain", "rustc", "cargo",
     "rustflags", "command", "executable_sha256", "log", "log_sha256", "exit_status")
+  recorded_binding <- receipt$value[receipt$field == "binding"]
   historical <- !is.null(verification_receipt) &&
-    identical(receipt$value[receipt$field == "binding"], "cargo_fresh_release_locked_offline")
-  if (!historical) required <- c(required, "source_tree", "source_tree_sha256")
+    length(recorded_binding) == 1L && recorded_binding %in%
+      c("cargo_fresh_release_locked_offline", "cargo_verified_tree_release_locked_offline")
+  has_tree <- !historical || identical(recorded_binding, "cargo_verified_tree_release_locked_offline")
+  if (has_tree) required <- c(required, "source_tree", "source_tree_sha256")
+  if (!historical) required <- c(required, "source_commit_object")
   if (!identical(names(receipt), c("field", "value")) ||
       !identical(receipt$field, required) || anyNA(receipt$value) || any(!nzchar(receipt$value))) {
     stop("invalid FastVEP build receipt schema", call. = FALSE)
   }
   values <- stats::setNames(receipt$value, receipt$field)
   hashes <- values[c("cargo_lock_sha256", "executable_sha256", "log_sha256",
-    if (!historical) "source_tree_sha256")]
-  binding <- if (historical) "cargo_fresh_release_locked_offline" else
-    "cargo_verified_tree_release_locked_offline"
+    if (has_tree) "source_tree_sha256")]
+  binding <- if (historical) recorded_binding else "cargo_verified_commit_tree_release_locked_offline"
   if (values[["binding"]] != binding ||
       !identical(values[["source_commit"]], source_commit) ||
       !grepl("^[0-9a-f]{40}$", source_commit) || any(!grepl("^[0-9a-f]{64}$", hashes)) ||
       values[["exit_status"]] != "0" || basename(values[["log"]]) != values[["log"]] ||
-      (!historical && values[["source_tree"]] != "source-tree.txt")) {
+      (has_tree && values[["source_tree"]] != "source-tree.txt") ||
+      (!historical && values[["source_commit_object"]] != "source-commit.bin")) {
     stop("FastVEP build receipt does not bind the pinned successful build", call. = FALSE)
   }
   hash <- duckhts_bench_duckvep_sha256_file
@@ -93,12 +138,17 @@ duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = N
   if (!file.exists(log) || !identical(hash(log), values[["log_sha256"]])) {
     stop("FastVEP build log differs from its receipt", call. = FALSE)
   }
-  if (!historical) {
+  if (has_tree) {
     tree <- file.path(dirname(path), values[["source_tree"]])
     if (!file.exists(tree) || !identical(hash(tree), values[["source_tree_sha256"]])) {
       stop("FastVEP source tree manifest differs from its receipt", call. = FALSE)
     }
-    duckhts_bench_fastvep_tree_entries(readLines(tree, warn = FALSE))
+    tree_lines <- readLines(tree, warn = FALSE)
+    duckhts_bench_fastvep_tree_entries(tree_lines)
+  }
+  if (!historical) {
+    duckhts_bench_fastvep_verify_commit_tree(tree_lines,
+      file.path(dirname(path), values[["source_commit_object"]]), source_commit)
   }
   if (!is.null(executable) && !identical(hash(executable), values[["executable_sha256"]])) {
     stop("FastVEP executable differs from its build receipt", call. = FALSE)
@@ -109,6 +159,10 @@ duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = N
       "rustflags", "executable_sha256")
     if (!identical(values[identity], verified[identity])) {
       stop("FastVEP verification build identity differs from the measured build receipt", call. = FALSE)
+    }
+    if (historical && has_tree) {
+      duckhts_bench_fastvep_verify_commit_tree(tree_lines,
+        file.path(dirname(verification_receipt), verified[["source_commit_object"]]), source_commit)
     }
   }
   values
@@ -189,6 +243,11 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   duckhts_bench_fastvep_tree_entries(tree)
   tree_path <- file.path(output, "source-tree.txt")
   writeLines(tree, tree_path, useBytes = TRUE)
+  commit_path <- file.path(output, "source-commit.bin")
+  status <- system2(Sys.which("git"), shQuote(c("-C", checkout, "cat-file", "commit", commit)),
+    stdout = commit_path)
+  if (status != 0L) stop("could not retain the pinned FastVEP commit object", call. = FALSE)
+  duckhts_bench_fastvep_verify_commit_tree(tree, commit_path, commit)
   command(Sys.which("git"), c("-C", checkout, "archive", "--format=tar", "--output", archive, commit))
   if (!dir.create(source) || utils::untar(archive, exdir = source, tar = "internal") != 0L) {
     stop("could not export the pinned FastVEP source tree", call. = FALSE)
@@ -229,11 +288,12 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   check_config()
   executable <- file.path(output, basename(built))
   if (!file.copy(built, executable)) stop("could not retain built FastVEP executable", call. = FALSE)
-  values <- c(binding = "cargo_verified_tree_release_locked_offline", source_commit = commit,
+  values <- c(binding = "cargo_verified_commit_tree_release_locked_offline", source_commit = commit,
     cargo_lock_sha256 = lock_hash, toolchain = toolchain, rustc = rustc, cargo = cargo,
     rustflags = rustflags, command = paste(c("cargo", shQuote(args)), collapse = " "),
     executable_sha256 = hash(executable), log = basename(log), log_sha256 = hash(log), exit_status = "0",
-    source_tree = basename(tree_path), source_tree_sha256 = hash(tree_path))
+    source_tree = basename(tree_path), source_tree_sha256 = hash(tree_path),
+    source_commit_object = basename(commit_path))
   receipt <- file.path(output, "build.tsv")
   utils::write.table(data.frame(field = names(values), value = unname(values)), receipt,
     sep = "\t", quote = FALSE, row.names = FALSE)

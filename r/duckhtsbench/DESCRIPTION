@@ -8,6 +8,7 @@ Description: Internal utilities that declare, stage, and validate reproducible
 License: MIT + file LICENSE
 Encoding: UTF-8
 Imports:
+    digest,
     utils
 Suggests:
     DBI,

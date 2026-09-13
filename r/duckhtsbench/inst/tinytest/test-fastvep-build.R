@@ -41,14 +41,17 @@ local({
   dir.create(file.path(package, "src"), recursive = TRUE)
   writeLines("fixture member package", file.path(package, "Cargo.toml"))
   writeLines(c("fixture tracked source", "$Format:%H$"), file.path(package, "src", "lib.rs"))
+  dir.create(file.path(checkout, "sort", "a"), recursive = TRUE)
+  for (name in c("a/z", "a.c", "a0", "A")) writeLines(name, file.path(checkout, "sort", name))
   writeLines(c("target/", "ignored.rs", "ignored.txt"), file.path(checkout, ".gitignore"))
-  git <- function(args) {
-    value <- system2(Sys.which("git"), shQuote(c("-C", checkout, args)), stdout = TRUE, stderr = TRUE)
+  git <- function(args, input = NULL) {
+    value <- system2(Sys.which("git"), shQuote(c("-C", checkout, args)), input = input,
+      stdout = TRUE, stderr = TRUE)
     stopifnot(is.null(attr(value, "status")))
     value
   }
   git(c("init", "--quiet"))
-  git(c("add", "Cargo.toml", "Cargo.lock", "fixture.sh", ".gitignore", "crates"))
+  git(c("add", "Cargo.toml", "Cargo.lock", "fixture.sh", ".gitignore", "crates", "sort"))
   git(c("-c", "user.email=test@example.invalid", "-c", "user.name=Fixture", "commit", "--quiet", "-m", "Fixture"))
   commit <- git(c("rev-parse", "HEAD"))
   extras <- file.path(checkout, c("build.rs", "crates/fixture/build.rs",
@@ -176,10 +179,12 @@ local({
   expect_true(file.exists(stale))
   expect_false(identical(hash(stale), hash(product[["executable"]])))
   receipt <- read_build(product[["receipt"]], commit, product[["executable"]])
-  expect_identical(receipt[["binding"]], "cargo_verified_tree_release_locked_offline")
+  expect_identical(receipt[["binding"]], "cargo_verified_commit_tree_release_locked_offline")
   tree_path <- file.path(output, receipt[["source_tree"]])
   expect_identical(readLines(tree_path), git(c("ls-tree", "-r", "-t", "--full-tree", commit)))
   expect_identical(receipt[["source_tree_sha256"]], hash(tree_path))
+  commit_path <- file.path(output, receipt[["source_commit_object"]])
+  expect_identical(git(c("hash-object", "-t", "commit", "--no-filters", commit_path)), commit)
   expect_equal(receipt[["source_commit"]], commit)
   expect_equal(receipt[["executable_sha256"]], hash(product[["executable"]]))
   expect_equal(receipt[["rustc"]], "rustc 1.98.1 fixture")
@@ -271,7 +276,7 @@ local({
     expect_error(read_build(product[["receipt"]], commit), "schema")
   }
   for (field in c("binding", "source_commit", "executable_sha256", "log_sha256", "exit_status", "log",
-      "source_tree", "source_tree_sha256")) {
+      "source_tree", "source_tree_sha256", "source_commit_object")) {
     value <- original
     value$value[value$field == field] <- if (field == "log") "../outside.log" else "invalid"
     write_receipt(value)
@@ -290,10 +295,58 @@ local({
   writeLines(manifest, tree_path)
   write_receipt(original)
 
+  commit_bytes <- readBin(commit_path, "raw", n = file.info(commit_path)$size)
+  unlink(commit_path)
+  expect_error(read_build(product[["receipt"]], commit), "commit object is missing")
+  writeBin(c(commit_bytes, charToRaw("changed")), commit_path)
+  expect_error(read_build(product[["receipt"]], commit), "commit object differs")
+  writeBin(commit_bytes, commit_path)
+  # A plausible manifest is still invalid after its self-hash is resealed.
+  changed <- manifest
+  at <- which(grepl("\tcrates/fixture/src/lib.rs$", changed))
+  changed[[at]] <- sub("[0-9a-f]{40}", strrep("0", 40L), changed[[at]])
+  writeLines(changed, tree_path)
+  value <- original
+  value$value[value$field == "source_tree_sha256"] <- hash(tree_path)
+  write_receipt(value)
+  expect_error(read_build(product[["receipt"]], commit), "manifest differs from the pinned commit")
+  writeLines(manifest, tree_path)
+  write_receipt(original)
+
+  verify_tree <- duckhtsbench:::duckhts_bench_fastvep_verify_commit_tree
+  expect_true(verify_tree(rev(manifest), commit_path, commit))
+  expect_error(verify_tree(manifest[!grepl("\tcrates/fixture/src$", manifest)], commit_path, commit),
+    "missing a parent directory")
+  missing_child <- manifest[!grepl("\tcrates/fixture/src/lib.rs$", manifest)]
+  expect_error(verify_tree(missing_child, commit_path, commit), "manifest differs from the pinned commit")
+  impossible <- c(manifest, sub("crates/fixture/src/lib.rs$", "Cargo.lock/child", manifest[[at]]))
+  expect_error(verify_tree(impossible, commit_path, commit), "missing a parent directory")
+  expect_error(verify_tree(c(manifest, manifest[[at]]), commit_path, commit), "unsupported.*paths")
+  empty_oid <- git("mktree", input = character())
+  empty_root <- git("mktree", input = paste0("040000 tree ", empty_oid, "\tempty"))
+  empty_commit_path <- file.path(directory, "empty-commit.bin")
+  writeLines(c(paste("tree", empty_root), "author Fixture <test@example.invalid> 1 +0000",
+    "committer Fixture <test@example.invalid> 1 +0000", "", "Empty directory fixture"), empty_commit_path)
+  empty_commit <- git(c("hash-object", "-t", "commit", "--no-filters", empty_commit_path))
+  empty_manifest <- paste0("040000 tree ", empty_oid, "\tempty")
+  expect_true(verify_tree(empty_manifest, empty_commit_path, empty_commit))
+  # Both the manifest and its commit are internally valid, but not the pinned pair.
+  writeLines(empty_manifest, tree_path)
+  value <- original
+  value$value[value$field == "source_tree_sha256"] <- hash(tree_path)
+  write_receipt(value)
+  expect_error(read_build(product[["receipt"]], commit), "manifest differs from the pinned commit")
+  writeBin(readBin(empty_commit_path, "raw", n = file.info(empty_commit_path)$size), commit_path)
+  expect_error(read_build(product[["receipt"]], commit), "commit object differs")
+  writeBin(commit_bytes, commit_path)
+  writeLines(manifest, tree_path)
+  write_receipt(original)
+
   measured <- file.path(directory, "measured")
   dir.create(measured)
   measured_path <- file.path(measured, "build.tsv")
-  measured_receipt <- original[!original$field %in% c("source_tree", "source_tree_sha256"), ]
+  measured_receipt <- original[!original$field %in%
+    c("source_tree", "source_tree_sha256", "source_commit_object"), ]
   measured_receipt$value[measured_receipt$field == "binding"] <- "cargo_fresh_release_locked_offline"
   measured_receipt$value[measured_receipt$field == "command"] <- "retained measured Cargo invocation"
   measured_log <- file.path(measured, "build.log")
@@ -307,6 +360,22 @@ local({
     verification_receipt = product[["receipt"]]), measured_values)
   expect_identical(tools::md5sum(c(measured_path, measured_log)), measured_hashes)
   expect_error(read_build(measured_path, commit, verification_receipt = measured_path), "schema")
+  tree_measured_path <- file.path(measured, "tree-build.tsv")
+  tree_measured <- original[original$field != "source_commit_object", ]
+  tree_measured$value[tree_measured$field == "binding"] <- "cargo_verified_tree_release_locked_offline"
+  tree_measured$value[tree_measured$field == "log_sha256"] <- hash(measured_log)
+  utils::write.table(tree_measured, tree_measured_path, sep = "\t", quote = FALSE, row.names = FALSE)
+  measured_tree_path <- file.path(measured, "source-tree.txt")
+  writeLines(manifest, measured_tree_path)
+  tree_values <- stats::setNames(tree_measured$value, tree_measured$field)
+  expect_error(read_build(tree_measured_path, commit), "schema")
+  expect_identical(read_build(tree_measured_path, commit, verification_receipt = product[["receipt"]]),
+    tree_values)
+  writeLines(empty_manifest, measured_tree_path)
+  tree_measured$value[tree_measured$field == "source_tree_sha256"] <- hash(measured_tree_path)
+  utils::write.table(tree_measured, tree_measured_path, sep = "\t", quote = FALSE, row.names = FALSE)
+  expect_error(read_build(tree_measured_path, commit, verification_receipt = product[["receipt"]]),
+    "manifest differs from the pinned commit")
   for (field in c("cargo_lock_sha256", "toolchain", "rustc", "cargo", "rustflags", "executable_sha256")) {
     value <- original
     value$value[value$field == field] <- if (grepl("sha256$", field)) strrep("0", 64L) else "different"
