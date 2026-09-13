@@ -70,8 +70,8 @@ duckhts_bench_fastvep_cargo_config_paths <- function(directory = getwd(),
     c("config", "config.toml"))
 }
 
-# Build in an empty Cargo target directory: an ignored pre-existing executable
-# cannot be adopted as output. The retained log and receipt belong to this build.
+# Build the pinned Git tree with an empty Cargo target directory. Local untracked
+# or ignored files cannot supply build scripts, source, assets or an executable.
 duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
     rustflags = "-C target-cpu=native", jobs = 2L) {
   checkout <- normalizePath(checkout, mustWork = TRUE)
@@ -116,9 +116,19 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
   if (!dir.create(output)) stop("could not create FastVEP build directory", call. = FALSE)
   output <- normalizePath(output)
+  source <- file.path(output, "source")
+  archive <- file.path(output, "source.tar")
+  command(Sys.which("git"), c("-C", checkout, "archive", "--format=tar", "--output", archive, commit))
+  if (!dir.create(source) || utils::untar(archive, exdir = source, tar = "internal") != 0L) {
+    stop("could not export the pinned FastVEP source tree", call. = FALSE)
+  }
+  source_lock <- file.path(source, "Cargo.lock")
+  if (!identical(lock_hash, hash(source_lock))) {
+    stop("exported FastVEP Cargo.lock differs from the pinned checkout", call. = FALSE)
+  }
   target <- file.path(output, "target")
   log <- file.path(output, "build.log")
-  args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(checkout, "Cargo.toml"),
+  args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(source, "Cargo.toml"),
     "--release", "--locked", "--offline", "--verbose", "--jobs", jobs, "--target-dir", target,
     "-p", "fastvep-cli", "--bin", "fastvep")
   build_controls <- grep("^CARGO_(TARGET_|BUILD_|PROFILE_)", names(Sys.getenv()), value = TRUE)
@@ -135,7 +145,9 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   status <- system2("cargo", shQuote(args), stdout = log, stderr = log)
   if (status != 0L) stop("FastVEP build failed; log retained at ", log, call. = FALSE)
   duckhts_bench_fastvep_source(checkout, commit)
-  if (!identical(lock_hash, hash(lock))) stop("FastVEP Cargo.lock changed during build", call. = FALSE)
+  if (!identical(lock_hash, hash(lock)) || !identical(lock_hash, hash(source_lock))) {
+    stop("FastVEP Cargo.lock changed during build", call. = FALSE)
+  }
   built <- file.path(target, "release", paste0("fastvep", if (.Platform$OS.type == "windows") ".exe" else ""))
   version <- command(built, "--version")
   if (!identical(version, paste("fastvep", identity[["version"]]))) {
@@ -152,7 +164,7 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   utils::write.table(data.frame(field = names(values), value = unname(values)), receipt,
     sep = "\t", quote = FALSE, row.names = FALSE)
   duckhts_bench_read_fastvep_build(receipt, commit, executable)
-  unlink(target, recursive = TRUE)
+  unlink(c(target, source, archive), recursive = TRUE)
   c(executable = executable, receipt = receipt, log = log)
 }
 

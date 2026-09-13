@@ -34,15 +34,28 @@ local({
   dir.create(checkout)
   writeLines("fixture package", file.path(checkout, "Cargo.toml"))
   writeLines("fixture locked dependencies", file.path(checkout, "Cargo.lock"))
+  package <- file.path(checkout, "crates", "fixture")
+  dir.create(file.path(package, "src"), recursive = TRUE)
+  writeLines("fixture member package", file.path(package, "Cargo.toml"))
+  writeLines("fixture tracked source", file.path(package, "src", "lib.rs"))
+  writeLines(c("target/", "ignored.rs", "ignored.txt"), file.path(checkout, ".gitignore"))
   git <- function(args) {
     value <- system2(Sys.which("git"), shQuote(c("-C", checkout, args)), stdout = TRUE, stderr = TRUE)
     stopifnot(is.null(attr(value, "status")))
     value
   }
   git(c("init", "--quiet"))
-  git(c("add", "Cargo.toml", "Cargo.lock"))
+  git(c("add", "Cargo.toml", "Cargo.lock", ".gitignore", "crates"))
   git(c("-c", "user.email=test@example.invalid", "-c", "user.name=Fixture", "commit", "--quiet", "-m", "Fixture"))
   commit <- git(c("rev-parse", "HEAD"))
+  extras <- file.path(checkout, c("build.rs", "crates/fixture/build.rs",
+    "crates/fixture/src/untracked.rs", "crates/fixture/src/ignored.rs",
+    "crates/fixture/ignored.txt", "crates/fixture/examples/real_lookup.rs"))
+  dir.create(dirname(extras[[length(extras)]]))
+  for (path in extras) writeLines(paste("local input", basename(path)), path)
+  Sys.setFileTime(extras, as.POSIXct("2000-01-01", tz = "UTC"))
+  extra_hashes <- tools::md5sum(extras)
+  extra_metadata <- file.info(extras)[, c("size", "mtime")]
   registry <- duckhts_bench_registry()
   at <- registry$id == "fastvep_ensembl116_cache"
   registry$supplier_identity[at] <- sub("source_commit=[0-9a-f]+", paste0("source_commit=", commit),
@@ -70,11 +83,21 @@ local({
     "if env | grep -Eq '^CARGO_(TARGET_|BUILD_|PROFILE_)'; then",
     "  echo 'inherited Cargo build configuration' >&2; exit 8", "fi",
     "test -f \"$CARGO_HOME/offline-cache-fixture\"",
-    "\"$RUSTC\" -vV", "target=", "verbose=", "offline=", "while [ $# -gt 0 ]; do",
+    "\"$RUSTC\" -vV", "target=", "manifest=", "verbose=", "offline=", "while [ $# -gt 0 ]; do",
     "  if [ \"$1\" = --verbose ]; then verbose=1; fi",
     "  if [ \"$1\" = --offline ]; then offline=1; fi",
+    "  if [ \"$1\" = --manifest-path ]; then manifest=$2; shift; fi",
     "  if [ \"$1\" = --target-dir ]; then target=$2; shift; fi", "  shift", "done",
     "test \"$verbose\" = 1", "test \"$offline\" = 1", "echo 'compiler controls verified'",
+    "source=$(dirname \"$manifest\")", paste("test \"$source\" !=", shQuote(checkout)),
+    "test -f \"$source/Cargo.toml\"", "test -f \"$source/Cargo.lock\"",
+    "test -f \"$source/crates/fixture/Cargo.toml\"", "test -f \"$source/crates/fixture/src/lib.rs\"",
+    "test ! -e \"$source/build.rs\"", "test ! -e \"$source/crates/fixture/build.rs\"",
+    "test ! -e \"$source/crates/fixture/src/untracked.rs\"",
+    "test ! -e \"$source/crates/fixture/src/ignored.rs\"",
+    "test ! -e \"$source/crates/fixture/ignored.txt\"",
+    "test ! -e \"$source/crates/fixture/examples/real_lookup.rs\"", "test ! -e \"$source/target\"",
+    "echo 'pinned source export verified'",
     "if [ \"${FASTVEP_BUILD_TEST_FAIL-}\" = 1 ]; then echo 'injected build failure'; exit 7; fi",
     "test -n \"$target\"", "test ! -e \"$target\"", "mkdir -p \"$target/release\"",
     "printf '#!/bin/sh\necho fastvep 0.3.0\n# fresh fixture artifact\n' > \"$target/release/fastvep\"",
@@ -134,6 +157,11 @@ local({
   expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
   expect_true("compiler controls verified" %in% readLines(product[["log"]]))
   expect_false(file.exists(file.path(output, "target")))
+  expect_false(file.exists(file.path(output, "source")))
+  expect_false(file.exists(file.path(output, "source.tar")))
+  expect_true("pinned source export verified" %in% readLines(product[["log"]]))
+  expect_identical(tools::md5sum(extras), extra_hashes)
+  expect_identical(file.info(extras)[, c("size", "mtime")], extra_metadata)
   expect_true(file.exists(stale))
   expect_false(identical(hash(stale), hash(product[["executable"]])))
   receipt <- read_build(product[["receipt"]], commit, product[["executable"]])
@@ -206,6 +234,11 @@ local({
   expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
   expect_true(file.exists(file.path(failed, "build.log")))
   expect_false(file.exists(file.path(failed, "build.tsv")))
+  expect_true(file.exists(file.path(failed, "source.tar")))
+  expect_true(file.exists(file.path(failed, "source", "Cargo.toml")))
+  expect_true("pinned source export verified" %in% readLines(file.path(failed, "build.log")))
+  expect_identical(tools::md5sum(extras), extra_hashes)
+  expect_identical(file.info(extras)[, c("size", "mtime")], extra_metadata)
   expect_true("compiler controls verified" %in% readLines(file.path(failed, "build.log")))
   for (state in c("unset", "empty")) {
     if (state == "unset") Sys.unsetenv(controls) else {

@@ -169,7 +169,7 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   manifests gate published timings. FastVEP transcript caches have a registered,
   checksum-verified staging path. Retained field witnesses can be replayed by
   fixture case; benchmark processes have explicit memory and spill limits.
-  Published timing runs require a fresh pinned-source FastVEP build receipt,
+  Published timing runs require a fresh FastVEP build from the pinned Git tree,
   explicit compiler selection, no compiler wrappers, inherited Cargo build/target/
   profile overrides or configuration files; build logs record compiler invocations.
   Final-file checks reconcile physical record/ALT identities with the unchanged
