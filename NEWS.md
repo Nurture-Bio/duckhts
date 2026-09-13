@@ -162,6 +162,11 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   conformance publication verifies retained observations and rejects altered
   comparison inputs. Existing Python tooling remains where required; new
   statistical/benchmark drivers are R-native.
+- DuckVEP benchmark tooling distinguishes compact output, native FastVEP tab
+  fields and common VEP CSQ fields. Exact comparisons retain duplicate and
+  missing pairs, transport spelling and field disagreements; complete-run
+  manifests gate published timings. FastVEP transcript caches have a registered,
+  checksum-verified staging path.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
