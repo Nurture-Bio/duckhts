@@ -20,6 +20,16 @@ duckhts_bench_stage_repository_fixtures <- function(repo, workload) {
     duckhts_bench_validate_identity(plan$id[[i]], source)
     if (file.exists(paths[[i]])) {
       duckhts_bench_validate_identity(plan$id[[i]], paths[[i]])
+      receipt <- paste0(paths[[i]], ".provenance.tsv")
+      if (!file.exists(receipt)) {
+        stop("cached fixture provenance is missing: ", receipt, call. = FALSE)
+      }
+      retained <- tryCatch(utils::read.delim(receipt, colClasses = "character",
+        quote = "", comment.char = "", check.names = FALSE), error = function(error) NULL)
+      expected <- duckhts_bench_provenance_fields(plan$id[[i]], paths[[i]])
+      if (!identical(retained, expected)) {
+        stop("cached fixture provenance does not match current registry: ", receipt, call. = FALSE)
+      }
       next
     }
     dir.create(dirname(paths[[i]]), recursive = TRUE, showWarnings = FALSE)
@@ -149,6 +159,17 @@ duckhts_bench_validate_identity <- function(id, output = duckhts_bench_artifact_
   invisible(TRUE)
 }
 
+duckhts_bench_provenance_fields <- function(id, output) {
+  registry <- duckhts_bench_registry()
+  row <- registry[registry$id == id, , drop = FALSE]
+  if (nrow(row) != 1L) stop("unknown or non-unique benchmark artifact: ", id, call. = FALSE)
+  data.frame(
+    field = c("artifact_id", "workload", "release", "source_locator", "access", "transform", "supplier_identity", "cached_output", "consumer"),
+    value = c(id, row$workload, row$release, row$locator, row$access, row$transform, row$supplier_identity, output, row$consumer),
+    stringsAsFactors = FALSE
+  )
+}
+
 #' Write the registry receipt adjacent to one staged artifact.
 #'
 #' @param id Artifact identifier.
@@ -156,15 +177,8 @@ duckhts_bench_validate_identity <- function(id, output = duckhts_bench_artifact_
 #' @return The receipt path, invisibly.
 #' @export
 duckhts_bench_write_provenance <- function(id, output = duckhts_bench_artifact_path(id)) {
-  registry <- duckhts_bench_registry()
-  row <- registry[registry$id == id, , drop = FALSE]
-  if (nrow(row) != 1L) stop("unknown or non-unique benchmark artifact: ", id, call. = FALSE)
+  fields <- duckhts_bench_provenance_fields(id, output)
   receipt <- paste0(output, ".provenance.tsv")
-  fields <- data.frame(
-    field = c("artifact_id", "workload", "release", "source_locator", "access", "transform", "supplier_identity", "cached_output", "consumer"),
-    value = c(id, row$workload, row$release, row$locator, row$access, row$transform, row$supplier_identity, output, row$consumer),
-    stringsAsFactors = FALSE
-  )
   dir.create(dirname(receipt), recursive = TRUE, showWarnings = FALSE)
   utils::write.table(fields, receipt, sep = "\t", row.names = FALSE, quote = FALSE)
   invisible(receipt)
