@@ -178,6 +178,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   build and checks each failure-witness file. CSQ identity checks use validated
   numeric hash joins. Portable field packs retain raw output bytes and failure
   relations; isolated-record replay checks every original disagreement cell.
+  Parallel replay stages reference fixtures once and reuses validated cache
+  files without modifying them during execution.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build

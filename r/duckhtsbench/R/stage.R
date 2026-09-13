@@ -18,8 +18,12 @@ duckhts_bench_stage_repository_fixtures <- function(repo, workload) {
       stop("registered fixture resolves outside test/data: ", source, call. = FALSE)
     }
     duckhts_bench_validate_identity(plan$id[[i]], source)
+    if (file.exists(paths[[i]])) {
+      duckhts_bench_validate_identity(plan$id[[i]], paths[[i]])
+      next
+    }
     dir.create(dirname(paths[[i]]), recursive = TRUE, showWarnings = FALSE)
-    stopifnot(file.copy(source, paths[[i]], overwrite = TRUE))
+    stopifnot(file.copy(source, paths[[i]], overwrite = FALSE))
     duckhts_bench_validate_identity(plan$id[[i]], paths[[i]])
     duckhts_bench_write_provenance(plan$id[[i]], paths[[i]])
   }

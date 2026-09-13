@@ -26,10 +26,33 @@ for (workload in c("duckvep-projection", "duckvep-haplotypes")) local({
   paths <- duckhts_bench_stage_repository_fixtures(directory, workload)
   expect_equal(unname(tools::md5sum(paths)), unname(tools::md5sum(sources)))
   expect_true(all(file.exists(paste0(paths, ".provenance.tsv"))))
+  staged <- c(unname(paths), paste0(paths, ".provenance.tsv"))
+  timestamp <- as.POSIXct("2000-01-01", tz = "UTC")
+  Sys.setFileTime(staged, timestamp)
+  cache_state <- function() list(md5 = tools::md5sum(staged),
+    metadata = file.info(staged)[, c("size", "mtime")])
+  original <- cache_state()
+  for (iteration in seq_len(3L)) {
+    expect_identical(duckhts_bench_stage_repository_fixtures(directory, workload), paths)
+    expect_identical(cache_state(), original)
+  }
   writeLines("bad source", sources[[1]])
   expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
     pattern = "identity does not match")
+  expect_identical(cache_state(), original)
+  writeLines("fixture 1", sources[[1]])
+  for (i in seq_along(paths)) {
+    writeLines("corrupted cached fixture", paths[[i]])
+    Sys.setFileTime(paths[[i]], timestamp)
+    corrupted <- cache_state()
+    expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
+      pattern = "identity does not match")
+    expect_identical(cache_state(), corrupted)
+    stopifnot(file.copy(sources[[i]], paths[[i]], overwrite = TRUE))
+    Sys.setFileTime(paths[[i]], timestamp)
+  }
   plan$locator[[1]] <- "repo:test/data/../outside"
   utils::write.table(plan, registry, sep = "\t", row.names = FALSE, quote = FALSE)
   expect_error(duckhts_bench_stage_repository_fixtures(directory, workload))
+  expect_identical(cache_state(), original)
 })
