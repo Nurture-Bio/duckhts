@@ -25,7 +25,8 @@ local({
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
     "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls))
   previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "CARGO_HOME", "FASTVEP_BUILD_TEST_FAIL",
-    "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG", controls),
+    "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG",
+    "FASTVEP_BUILD_TEST_SOURCE_MUTATION", controls),
     unset = NA_character_)
   on.exit(for (name in names(previous)) {
     if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
@@ -34,10 +35,12 @@ local({
   dir.create(checkout)
   writeLines("fixture package", file.path(checkout, "Cargo.toml"))
   writeLines("fixture locked dependencies", file.path(checkout, "Cargo.lock"))
+  writeLines(c("#!/bin/sh", "exit 0"), file.path(checkout, "fixture.sh"))
+  Sys.chmod(file.path(checkout, "fixture.sh"), "0755")
   package <- file.path(checkout, "crates", "fixture")
   dir.create(file.path(package, "src"), recursive = TRUE)
   writeLines("fixture member package", file.path(package, "Cargo.toml"))
-  writeLines("fixture tracked source", file.path(package, "src", "lib.rs"))
+  writeLines(c("fixture tracked source", "$Format:%H$"), file.path(package, "src", "lib.rs"))
   writeLines(c("target/", "ignored.rs", "ignored.txt"), file.path(checkout, ".gitignore"))
   git <- function(args) {
     value <- system2(Sys.which("git"), shQuote(c("-C", checkout, args)), stdout = TRUE, stderr = TRUE)
@@ -45,7 +48,7 @@ local({
     value
   }
   git(c("init", "--quiet"))
-  git(c("add", "Cargo.toml", "Cargo.lock", ".gitignore", "crates"))
+  git(c("add", "Cargo.toml", "Cargo.lock", "fixture.sh", ".gitignore", "crates"))
   git(c("-c", "user.email=test@example.invalid", "-c", "user.name=Fixture", "commit", "--quiet", "-m", "Fixture"))
   commit <- git(c("rev-parse", "HEAD"))
   extras <- file.path(checkout, c("build.rs", "crates/fixture/build.rs",
@@ -73,7 +76,7 @@ local({
     "test \"$*\" = 'which --toolchain 1.98.1 rustc'",
     paste("printf '%s\\n'", shQuote(compiler))), file.path(bin, "rustup"))
   writeLines(c("#!/bin/sh", "set -eu",
-    "echo invoked >> \"$FASTVEP_BUILD_TEST_CARGO_MARKER\"",
+    "echo \"$2\" >> \"$FASTVEP_BUILD_TEST_CARGO_MARKER\"",
     "if [ \"$2\" = --version ]; then echo 'cargo 1.98.1 fixture'; exit 0; fi",
     paste("test \"$RUSTC\" =", shQuote(compiler)),
     "test \"${RUSTC_WRAPPER+x}\" = x", "test -z \"$RUSTC_WRAPPER\"",
@@ -91,6 +94,7 @@ local({
     "test \"$verbose\" = 1", "test \"$offline\" = 1", "echo 'compiler controls verified'",
     "source=$(dirname \"$manifest\")", paste("test \"$source\" !=", shQuote(checkout)),
     "test -f \"$source/Cargo.toml\"", "test -f \"$source/Cargo.lock\"",
+    "test -x \"$source/fixture.sh\"",
     "test -f \"$source/crates/fixture/Cargo.toml\"", "test -f \"$source/crates/fixture/src/lib.rs\"",
     "test ! -e \"$source/build.rs\"", "test ! -e \"$source/crates/fixture/build.rs\"",
     "test ! -e \"$source/crates/fixture/src/untracked.rs\"",
@@ -104,6 +108,12 @@ local({
     "chmod +x \"$target/release/fastvep\"",
     "if [ -n \"${FASTVEP_BUILD_TEST_CONFIG-}\" ]; then",
     "  printf '[profile.release]\\nopt-level = 0\\n' > \"$FASTVEP_BUILD_TEST_CONFIG\"", "fi",
+    "case \"${FASTVEP_BUILD_TEST_SOURCE_MUTATION-}\" in",
+    "  extra) printf 'extra input\\n' > \"$source/build.rs\" ;;",
+    "  bytes) printf 'mutated input\\n' > \"$source/crates/fixture/src/lib.rs\" ;;",
+    "  type) mv \"$source/crates/fixture/src/lib.rs\" \"$target/saved-lib.rs\";",
+    "    mkdir \"$source/crates/fixture/src/lib.rs\" ;;",
+    "  mode) chmod -x \"$source/fixture.sh\" ;;", "esac",
     "echo 'fixture build completed'"
   ), file.path(bin, "cargo"))
   Sys.chmod(c(compiler, file.path(bin, c("cargo", "rustc", "rustup"))), "0755")
@@ -123,7 +133,8 @@ local({
   poisoned <- stats::setNames(paste0("poison-", controls), controls)
   poisoned[names(configuration_controls)] <- configuration_controls
   do.call(Sys.setenv, as.list(poisoned))
-  Sys.unsetenv(c("FASTVEP_BUILD_TEST_FAIL", "FASTVEP_BUILD_TEST_CONFIG"))
+  Sys.unsetenv(c("FASTVEP_BUILD_TEST_FAIL", "FASTVEP_BUILD_TEST_CONFIG",
+    "FASTVEP_BUILD_TEST_SOURCE_MUTATION"))
   config_paths <- duckhtsbench:::duckhts_bench_fastvep_cargo_config_paths
   ancestors <- c("/fixture/work/.cargo/config", "/fixture/work/.cargo/config.toml",
     "/fixture/.cargo/config", "/fixture/.cargo/config.toml", "/.cargo/config", "/.cargo/config.toml")
@@ -165,6 +176,10 @@ local({
   expect_true(file.exists(stale))
   expect_false(identical(hash(stale), hash(product[["executable"]])))
   receipt <- read_build(product[["receipt"]], commit, product[["executable"]])
+  expect_identical(receipt[["binding"]], "cargo_verified_tree_release_locked_offline")
+  tree_path <- file.path(output, receipt[["source_tree"]])
+  expect_identical(readLines(tree_path), git(c("ls-tree", "-r", "-t", "--full-tree", commit)))
+  expect_identical(receipt[["source_tree_sha256"]], hash(tree_path))
   expect_equal(receipt[["source_commit"]], commit)
   expect_equal(receipt[["executable_sha256"]], hash(product[["executable"]]))
   expect_equal(receipt[["rustc"]], "rustc 1.98.1 fixture")
@@ -173,6 +188,42 @@ local({
   expect_identical(Sys.getenv("CARGO_HOME"), cargo_home)
   expect_identical(file.info(cache_fixture)[, c("size", "mtime")], cache_identity)
   expect_identical(readLines(cache_fixture), "retained offline dependency cache")
+  attributes <- file.path(checkout, ".git", "info", "attributes")
+  source_file <- file.path(package, "src", "lib.rs")
+  source_hash <- hash(source_file)
+  for (attribute in c("export-ignore", "export-subst")) {
+    content <- paste("crates/fixture/src/lib.rs", attribute)
+    writeLines(content, attributes)
+    Sys.setFileTime(attributes, as.POSIXct("2000-01-01", tz = "UTC"))
+    metadata <- file.info(attributes)[, c("size", "mtime")]
+    unlink(marker)
+    destination <- file.path(directory, attribute)
+    expected_error <- if (attribute == "export-ignore") "path inventory differs" else "file bytes differ"
+    expect_error(build(checkout, destination), expected_error)
+    expect_identical(readLines(marker), "--version")
+    expect_false(file.exists(file.path(destination, "build.log")))
+    expect_false(file.exists(file.path(destination, "build.tsv")))
+    expect_identical(readLines(attributes), content)
+    expect_identical(file.info(attributes)[, c("size", "mtime")], metadata)
+    expect_identical(hash(source_file), source_hash)
+    expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
+    unlink(attributes)
+  }
+  for (mutation in c("extra", "bytes", "type", "mode")) {
+    Sys.setenv(FASTVEP_BUILD_TEST_SOURCE_MUTATION = mutation)
+    destination <- file.path(directory, paste0("mutated-source-", mutation))
+    expected_error <- switch(mutation, extra = "path inventory differs", bytes = "file bytes differ",
+      type = "file types differ", mode = "executable modes differ")
+    expect_error(build(checkout, destination), expected_error)
+    expect_true(file.exists(file.path(destination, "build.log")))
+    expect_false(file.exists(file.path(destination, "fastvep")))
+    expect_false(file.exists(file.path(destination, "build.tsv")))
+    expect_identical(hash(source_file), source_hash)
+    expect_identical(tools::md5sum(extras), extra_hashes)
+    expect_identical(file.info(extras)[, c("size", "mtime")], extra_metadata)
+    expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
+  }
+  Sys.unsetenv("FASTVEP_BUILD_TEST_SOURCE_MUTATION")
   config_directories <- c(current = file.path(invocation, ".cargo"),
     ancestor = file.path(directory, ".cargo"), cargo_home = cargo_home,
     relative_home = file.path(invocation, "relative-home"))
@@ -219,15 +270,64 @@ local({
     write_receipt(original[original$field != field, ])
     expect_error(read_build(product[["receipt"]], commit), "schema")
   }
-  for (field in c("binding", "source_commit", "executable_sha256", "log_sha256", "exit_status", "log")) {
+  for (field in c("binding", "source_commit", "executable_sha256", "log_sha256", "exit_status", "log",
+      "source_tree", "source_tree_sha256")) {
     value <- original
     value$value[value$field == field] <- if (field == "log") "../outside.log" else "invalid"
     write_receipt(value)
     expect_error(read_build(product[["receipt"]], commit), "pinned successful build")
   }
   write_receipt(original)
+  manifest <- readLines(tree_path)
+  unlink(tree_path)
+  expect_error(read_build(product[["receipt"]], commit), "source tree manifest differs")
+  writeLines("changed manifest", tree_path)
+  expect_error(read_build(product[["receipt"]], commit), "source tree manifest differs")
+  value <- original
+  value$value[value$field == "source_tree_sha256"] <- hash(tree_path)
+  write_receipt(value)
+  expect_error(read_build(product[["receipt"]], commit), "unsupported FastVEP source tree entries")
+  writeLines(manifest, tree_path)
+  write_receipt(original)
+
+  measured <- file.path(directory, "measured")
+  dir.create(measured)
+  measured_path <- file.path(measured, "build.tsv")
+  measured_receipt <- original[!original$field %in% c("source_tree", "source_tree_sha256"), ]
+  measured_receipt$value[measured_receipt$field == "binding"] <- "cargo_fresh_release_locked_offline"
+  measured_receipt$value[measured_receipt$field == "command"] <- "retained measured Cargo invocation"
+  measured_log <- file.path(measured, "build.log")
+  writeLines("retained measured build log", measured_log)
+  measured_receipt$value[measured_receipt$field == "log_sha256"] <- hash(measured_log)
+  utils::write.table(measured_receipt, measured_path, sep = "\t", quote = FALSE, row.names = FALSE)
+  measured_hashes <- tools::md5sum(c(measured_path, measured_log))
+  measured_values <- stats::setNames(measured_receipt$value, measured_receipt$field)
+  expect_error(read_build(measured_path, commit), "schema")
+  expect_identical(read_build(measured_path, commit, product[["executable"]],
+    verification_receipt = product[["receipt"]]), measured_values)
+  expect_identical(tools::md5sum(c(measured_path, measured_log)), measured_hashes)
+  expect_error(read_build(measured_path, commit, verification_receipt = measured_path), "schema")
+  for (field in c("cargo_lock_sha256", "toolchain", "rustc", "cargo", "rustflags", "executable_sha256")) {
+    value <- original
+    value$value[value$field == field] <- if (grepl("sha256$", field)) strrep("0", 64L) else "different"
+    write_receipt(value)
+    expect_error(read_build(measured_path, commit, verification_receipt = product[["receipt"]]),
+      "verification build identity differs")
+  }
+  value <- original
+  value$value[value$field == "source_commit"] <- strrep("0", 40L)
+  write_receipt(value)
+  expect_error(read_build(measured_path, commit, verification_receipt = product[["receipt"]]),
+    "pinned successful build")
+  write_receipt(original)
+  writeLines("corrupt measured build log", measured_log)
+  expect_error(read_build(measured_path, commit, verification_receipt = product[["receipt"]]),
+    "build log differs")
+  writeLines("retained measured build log", measured_log)
   writeLines("changed build log", product[["log"]])
   expect_error(read_build(product[["receipt"]], commit), "build log differs")
+  expect_error(read_build(measured_path, commit, verification_receipt = product[["receipt"]]),
+    "build log differs")
   Sys.setenv(FASTVEP_BUILD_TEST_FAIL = "1")
   failed <- file.path(directory, "failed")
   expect_error(build(checkout, failed), "build failed")

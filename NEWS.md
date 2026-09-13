@@ -163,26 +163,13 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   conformance publication verifies retained observations and rejects altered
   comparison inputs. Existing Python tooling remains where required; new
   statistical/benchmark drivers are R-native.
-- DuckVEP benchmark tooling distinguishes compact output, native FastVEP tab
-  fields and common VEP CSQ fields. Exact comparisons retain duplicate and
-  missing pairs, transport spelling and field disagreements; complete-run
-  manifests gate published timings. FastVEP transcript caches have a registered,
-  checksum-verified staging path. Retained field witnesses can be replayed by
-  fixture case; benchmark processes have explicit memory and spill limits.
-  Published timing runs require a fresh FastVEP build from the pinned Git tree,
-  explicit compiler selection, no compiler wrappers, inherited Cargo build/target/
-  profile overrides or configuration files; build logs record compiler invocations.
-  Final-file checks reconcile physical record/ALT identities with the unchanged
-  source input; common CSQ files carry explicit identity columns. Publication
-  verifies the retained registered source map against the measured extension
-  build and checks each failure-witness file. CSQ identity checks use validated
-  numeric hash joins. Portable field packs retain raw output bytes and failure
-  relations; isolated-record replay checks every original disagreement cell.
-  Shared fixture staging reuses validated bytes and current provenance without
-  writes; corrupt files or missing/stale receipts fail and remain available for
-  diagnosis.
-  Parallel replay stages reference fixtures once and reuses validated cache
-  files without modifying them during execution.
+- The [DuckVEP/FastVEP benchmark](benchmarks/benchmark_duckvep_fastvep.md)
+  distinguishes compact, native-tab and common-CSQ workloads, with repeated
+  one-/four-core timings, explicit memory limits and complete source-ALT checks.
+  Verified pinned-source builds and registered caches accompany the measurements.
+  Field comparisons preserve every discrepancy; isolated-record replay checks
+  those same cells without changing the alleles or model. Independent-event HGVS
+  gaps remain tracked in https://github.com/RGenomicsETL/duckhts/issues/223.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build

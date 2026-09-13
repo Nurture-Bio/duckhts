@@ -19,21 +19,73 @@ duckhts_bench_fastvep_source <- function(checkout, commit) {
   invisible(TRUE)
 }
 
-duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = NULL) {
+duckhts_bench_fastvep_tree_entries <- function(lines) {
+  pattern <- "^(040000 tree|100644 blob|100755 blob) [0-9a-f]{40}\t[^\t\r\n]+$"
+  if (!length(lines) || anyNA(lines) || any(!grepl(pattern, lines))) {
+    stop("unsupported FastVEP source tree entries", call. = FALSE)
+  }
+  paths <- sub("^[^\t]+\t", "", lines)
+  if (anyDuplicated(paths) || any(grepl('^["/]|(^|/)\\.\\.?(/|$)|/$', paths))) {
+    stop("unsupported FastVEP source tree paths", call. = FALSE)
+  }
+  data.frame(mode = substr(lines, 1L, 6L), type = substr(lines, 8L, 11L),
+    oid = substr(lines, 13L, 52L), path = paths, stringsAsFactors = FALSE)
+}
+
+duckhts_bench_fastvep_verify_export <- function(checkout, source, tree) {
+  entries <- duckhts_bench_fastvep_tree_entries(tree)
+  actual <- list.files(source, recursive = TRUE, all.files = TRUE,
+    include.dirs = TRUE, no.. = TRUE)
+  if (!identical(sort(actual), sort(entries$path))) {
+    stop("exported FastVEP path inventory differs from the pinned Git tree", call. = FALSE)
+  }
+  paths <- file.path(source, entries$path)
+  info <- file.info(paths)
+  is_tree <- entries$type == "tree"
+  links <- Sys.readlink(paths)
+  if (anyNA(info$isdir) || any(info$isdir != is_tree) || any(nzchar(links) & !is.na(links))) {
+    stop("exported FastVEP file types differ from the pinned Git tree", call. = FALSE)
+  }
+  if (.Platform$OS.type == "unix" &&
+      any((bitwAnd(as.integer(info$mode[!is_tree]), 64L) != 0L) !=
+        (entries$mode[!is_tree] == "100755"))) {
+    stop("exported FastVEP executable modes differ from the pinned Git tree", call. = FALSE)
+  }
+  hashes <- suppressWarnings(system2(Sys.which("git"),
+    shQuote(c("-C", checkout, "hash-object", "--no-filters", "--stdin-paths")),
+    input = encodeString(paths[!is_tree], quote = '"'), stdout = TRUE, stderr = TRUE))
+  if ((!is.null(attr(hashes, "status")) && attr(hashes, "status") != 0L) ||
+      !identical(hashes, entries$oid[!is_tree])) {
+    stop("exported FastVEP file bytes differ from the pinned Git tree", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Report callers may corroborate a retained measured receipt with a separate
+# verified-tree rebuild. Returned fields always describe the measured execution.
+duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = NULL,
+    verification_receipt = NULL) {
   receipt <- utils::read.delim(path, colClasses = "character", quote = "", comment.char = "",
     check.names = FALSE)
   required <- c("binding", "source_commit", "cargo_lock_sha256", "toolchain", "rustc", "cargo",
     "rustflags", "command", "executable_sha256", "log", "log_sha256", "exit_status")
+  historical <- !is.null(verification_receipt) &&
+    identical(receipt$value[receipt$field == "binding"], "cargo_fresh_release_locked_offline")
+  if (!historical) required <- c(required, "source_tree", "source_tree_sha256")
   if (!identical(names(receipt), c("field", "value")) ||
       !identical(receipt$field, required) || anyNA(receipt$value) || any(!nzchar(receipt$value))) {
     stop("invalid FastVEP build receipt schema", call. = FALSE)
   }
   values <- stats::setNames(receipt$value, receipt$field)
-  hashes <- values[c("cargo_lock_sha256", "executable_sha256", "log_sha256")]
-  if (values[["binding"]] != "cargo_fresh_release_locked_offline" ||
+  hashes <- values[c("cargo_lock_sha256", "executable_sha256", "log_sha256",
+    if (!historical) "source_tree_sha256")]
+  binding <- if (historical) "cargo_fresh_release_locked_offline" else
+    "cargo_verified_tree_release_locked_offline"
+  if (values[["binding"]] != binding ||
       !identical(values[["source_commit"]], source_commit) ||
       !grepl("^[0-9a-f]{40}$", source_commit) || any(!grepl("^[0-9a-f]{64}$", hashes)) ||
-      values[["exit_status"]] != "0" || basename(values[["log"]]) != values[["log"]]) {
+      values[["exit_status"]] != "0" || basename(values[["log"]]) != values[["log"]] ||
+      (!historical && values[["source_tree"]] != "source-tree.txt")) {
     stop("FastVEP build receipt does not bind the pinned successful build", call. = FALSE)
   }
   hash <- duckhts_bench_duckvep_sha256_file
@@ -41,8 +93,23 @@ duckhts_bench_read_fastvep_build <- function(path, source_commit, executable = N
   if (!file.exists(log) || !identical(hash(log), values[["log_sha256"]])) {
     stop("FastVEP build log differs from its receipt", call. = FALSE)
   }
+  if (!historical) {
+    tree <- file.path(dirname(path), values[["source_tree"]])
+    if (!file.exists(tree) || !identical(hash(tree), values[["source_tree_sha256"]])) {
+      stop("FastVEP source tree manifest differs from its receipt", call. = FALSE)
+    }
+    duckhts_bench_fastvep_tree_entries(readLines(tree, warn = FALSE))
+  }
   if (!is.null(executable) && !identical(hash(executable), values[["executable_sha256"]])) {
     stop("FastVEP executable differs from its build receipt", call. = FALSE)
+  }
+  if (!is.null(verification_receipt)) {
+    verified <- duckhts_bench_read_fastvep_build(verification_receipt, source_commit, executable)
+    identity <- c("source_commit", "cargo_lock_sha256", "toolchain", "rustc", "cargo",
+      "rustflags", "executable_sha256")
+    if (!identical(values[identity], verified[identity])) {
+      stop("FastVEP verification build identity differs from the measured build receipt", call. = FALSE)
+    }
   }
   values
 }
@@ -118,10 +185,15 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   output <- normalizePath(output)
   source <- file.path(output, "source")
   archive <- file.path(output, "source.tar")
+  tree <- command(Sys.which("git"), c("-C", checkout, "ls-tree", "-r", "-t", "--full-tree", commit))
+  duckhts_bench_fastvep_tree_entries(tree)
+  tree_path <- file.path(output, "source-tree.txt")
+  writeLines(tree, tree_path, useBytes = TRUE)
   command(Sys.which("git"), c("-C", checkout, "archive", "--format=tar", "--output", archive, commit))
   if (!dir.create(source) || utils::untar(archive, exdir = source, tar = "internal") != 0L) {
     stop("could not export the pinned FastVEP source tree", call. = FALSE)
   }
+  duckhts_bench_fastvep_verify_export(checkout, source, tree)
   source_lock <- file.path(source, "Cargo.lock")
   if (!identical(lock_hash, hash(source_lock))) {
     stop("exported FastVEP Cargo.lock differs from the pinned checkout", call. = FALSE)
@@ -145,6 +217,7 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   status <- system2("cargo", shQuote(args), stdout = log, stderr = log)
   if (status != 0L) stop("FastVEP build failed; log retained at ", log, call. = FALSE)
   duckhts_bench_fastvep_source(checkout, commit)
+  duckhts_bench_fastvep_verify_export(checkout, source, tree)
   if (!identical(lock_hash, hash(lock)) || !identical(lock_hash, hash(source_lock))) {
     stop("FastVEP Cargo.lock changed during build", call. = FALSE)
   }
@@ -156,10 +229,11 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   check_config()
   executable <- file.path(output, basename(built))
   if (!file.copy(built, executable)) stop("could not retain built FastVEP executable", call. = FALSE)
-  values <- c(binding = "cargo_fresh_release_locked_offline", source_commit = commit,
+  values <- c(binding = "cargo_verified_tree_release_locked_offline", source_commit = commit,
     cargo_lock_sha256 = lock_hash, toolchain = toolchain, rustc = rustc, cargo = cargo,
     rustflags = rustflags, command = paste(c("cargo", shQuote(args)), collapse = " "),
-    executable_sha256 = hash(executable), log = basename(log), log_sha256 = hash(log), exit_status = "0")
+    executable_sha256 = hash(executable), log = basename(log), log_sha256 = hash(log), exit_status = "0",
+    source_tree = basename(tree_path), source_tree_sha256 = hash(tree_path))
   receipt <- file.path(output, "build.tsv")
   utils::write.table(data.frame(field = names(values), value = unname(values)), receipt,
     sep = "\t", quote = FALSE, row.names = FALSE)
