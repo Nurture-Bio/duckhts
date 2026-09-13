@@ -5,7 +5,11 @@ local({
   directory <- tempfile("fastvep-build-test-")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
-  previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "FASTVEP_BUILD_TEST_FAIL"), unset = NA_character_)
+  controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+  previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "FASTVEP_BUILD_TEST_FAIL", controls),
+    unset = NA_character_)
   on.exit(for (name in names(previous)) {
     if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
   }, add = TRUE)
@@ -30,19 +34,37 @@ local({
   utils::write.table(registry, registry_path, sep = "\t", quote = FALSE, row.names = FALSE)
   bin <- file.path(directory, "bin")
   dir.create(bin)
-  writeLines(c("#!/bin/sh", "echo 'rustc 1.98.1 fixture'"), file.path(bin, "rustc"))
+  compiler <- file.path(directory, "toolchain", "rustc")
+  dir.create(dirname(compiler))
+  writeLines(c("#!/bin/sh", "set -eu", "test \"$#\" = 1", "test \"$1\" = -vV",
+    "echo 'rustc 1.98.1 fixture'"), compiler)
+  writeLines(c("#!/bin/sh", "echo 'unselected PATH compiler' >&2", "exit 9"), file.path(bin, "rustc"))
+  writeLines(c("#!/bin/sh", "set -eu",
+    "test \"$*\" = 'which --toolchain 1.98.1 rustc'",
+    paste("printf '%s\\n'", shQuote(compiler))), file.path(bin, "rustup"))
   writeLines(c("#!/bin/sh", "set -eu",
     "if [ \"$2\" = --version ]; then echo 'cargo 1.98.1 fixture'; exit 0; fi",
-    "if [ \"${FASTVEP_BUILD_TEST_FAIL-}\" = 1 ]; then echo 'injected build failure'; exit 7; fi",
-    "target=", "while [ $# -gt 0 ]; do",
+    paste("test \"$RUSTC\" =", shQuote(compiler)),
+    "test \"${RUSTC_WRAPPER+x}\" = x", "test -z \"$RUSTC_WRAPPER\"",
+    "test \"${RUSTC_WORKSPACE_WRAPPER+x}\" = x", "test -z \"$RUSTC_WORKSPACE_WRAPPER\"",
+    "test -z \"${CARGO_BUILD_RUSTC+x}\"", "test -z \"${CARGO_BUILD_RUSTC_WRAPPER+x}\"",
+    "test -z \"${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER+x}\"",
+    "test -z \"${CARGO_ENCODED_RUSTFLAGS+x}\"", "test \"$RUSTFLAGS\" = '-C target-cpu=native'",
+    "\"$RUSTC\" -vV", "target=", "verbose=", "while [ $# -gt 0 ]; do",
+    "  if [ \"$1\" = --verbose ]; then verbose=1; fi",
     "  if [ \"$1\" = --target-dir ]; then target=$2; shift; fi", "  shift", "done",
+    "test \"$verbose\" = 1", "echo 'compiler controls verified'",
+    "if [ \"${FASTVEP_BUILD_TEST_FAIL-}\" = 1 ]; then echo 'injected build failure'; exit 7; fi",
     "test -n \"$target\"", "test ! -e \"$target\"", "mkdir -p \"$target/release\"",
     "printf '#!/bin/sh\necho fastvep 0.3.0\n# fresh fixture artifact\n' > \"$target/release/fastvep\"",
     "chmod +x \"$target/release/fastvep\"", "echo 'fixture build completed'"
   ), file.path(bin, "cargo"))
-  Sys.chmod(file.path(bin, c("cargo", "rustc")), "0755")
+  Sys.chmod(c(compiler, file.path(bin, c("cargo", "rustc", "rustup"))), "0755")
   Sys.setenv(PATH = paste(bin, previous[["PATH"]], sep = .Platform$path.sep),
     DUCKHTSBENCH_REGISTRY = registry_path)
+  poisoned <- stats::setNames(paste0("poison-", controls), controls)
+  do.call(Sys.setenv, as.list(poisoned))
+  Sys.unsetenv("FASTVEP_BUILD_TEST_FAIL")
   build <- duckhtsbench:::duckhts_bench_build_fastvep
   read_build <- duckhtsbench:::duckhts_bench_read_fastvep_build
   hash <- duckhtsbench:::duckhts_bench_duckvep_sha256_file
@@ -52,12 +74,16 @@ local({
   Sys.chmod(stale, "0755")
   output <- file.path(directory, "build")
   product <- build(checkout, output)
+  expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
+  expect_true("compiler controls verified" %in% readLines(product[["log"]]))
   expect_false(file.exists(file.path(output, "target")))
   expect_true(file.exists(stale))
   expect_false(identical(hash(stale), hash(product[["executable"]])))
   receipt <- read_build(product[["receipt"]], commit, product[["executable"]])
   expect_equal(receipt[["source_commit"]], commit)
   expect_equal(receipt[["executable_sha256"]], hash(product[["executable"]]))
+  expect_equal(receipt[["rustc"]], "rustc 1.98.1 fixture")
+  expect_true(grepl("--verbose", receipt[["command"]], fixed = TRUE))
   expect_error(build(checkout, output), "new output directory")
   expect_error(read_build(product[["receipt"]], strrep("0", 40L)), "pinned successful build")
   expect_error(read_build(product[["receipt"]], commit, stale), "differs from its build receipt")
@@ -80,6 +106,24 @@ local({
   Sys.setenv(FASTVEP_BUILD_TEST_FAIL = "1")
   failed <- file.path(directory, "failed")
   expect_error(build(checkout, failed), "build failed")
+  expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
   expect_true(file.exists(file.path(failed, "build.log")))
   expect_false(file.exists(file.path(failed, "build.tsv")))
+  expect_true("compiler controls verified" %in% readLines(file.path(failed, "build.log")))
+  for (state in c("unset", "empty")) {
+    if (state == "unset") Sys.unsetenv(controls) else {
+      do.call(Sys.setenv, as.list(stats::setNames(rep("", length(controls)), controls)))
+    }
+    expected <- Sys.getenv(controls, unset = NA_character_)
+    for (failure in c(FALSE, TRUE)) {
+      Sys.setenv(FASTVEP_BUILD_TEST_FAIL = if (failure) "1" else "0")
+      destination <- file.path(directory, paste(state, failure, sep = "-"))
+      if (failure) expect_error(build(checkout, destination), "build failed") else {
+        build(checkout, destination)
+      }
+      expect_identical(Sys.getenv(controls, unset = NA_character_), expected)
+      expect_true("compiler controls verified" %in% readLines(file.path(destination, "build.log")))
+      expect_identical(file.exists(file.path(destination, "build.tsv")), !failure)
+    }
+  }
 })

@@ -74,7 +74,12 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
     }
     result
   }
-  rustc <- paste(command("rustc", c(paste0("+", toolchain), "-vV")), collapse = "; ")
+  compiler <- command("rustup", c("which", "--toolchain", toolchain, "rustc"))
+  if (length(compiler) != 1L || !nzchar(compiler)) {
+    stop("rustup must resolve one compiler for the pinned toolchain", call. = FALSE)
+  }
+  compiler <- normalizePath(compiler, mustWork = TRUE)
+  rustc <- paste(command(compiler, "-vV"), collapse = "; ")
   cargo <- paste(command("cargo", c(paste0("+", toolchain), "--version")), collapse = "; ")
   dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
   if (!dir.create(output)) stop("could not create FastVEP build directory", call. = FALSE)
@@ -82,14 +87,19 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   target <- file.path(output, "target")
   log <- file.path(output, "build.log")
   args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(checkout, "Cargo.toml"),
-    "--release", "--locked", "--offline", "--jobs", jobs, "--target-dir", target,
+    "--release", "--locked", "--offline", "--verbose", "--jobs", jobs, "--target-dir", target,
     "-p", "fastvep-cli", "--bin", "fastvep")
-  previous <- Sys.getenv(c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"), unset = NA_character_)
+  unset <- c("CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+  previous <- Sys.getenv(c("RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", unset),
+    unset = NA_character_)
   on.exit(for (name in names(previous)) {
     if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
   }, add = TRUE)
-  Sys.unsetenv("CARGO_ENCODED_RUSTFLAGS")
-  Sys.setenv(RUSTFLAGS = rustflags)
+  Sys.unsetenv(unset)
+  # Empty wrapper values also disable wrappers configured in Cargo config files.
+  Sys.setenv(RUSTFLAGS = rustflags, RUSTC = compiler, RUSTC_WRAPPER = "",
+    RUSTC_WORKSPACE_WRAPPER = "")
   status <- system2("cargo", shQuote(args), stdout = log, stderr = log)
   if (status != 0L) stop("FastVEP build failed; log retained at ", log, call. = FALSE)
   duckhts_bench_fastvep_source(checkout, commit)
