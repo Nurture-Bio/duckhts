@@ -1,6 +1,6 @@
 # Resolve retained evidence only. Rendering never derives or repairs an object.
 duckhts_bench_read_fastvep_source_map <- function(expected_sha256 = NULL,
-    expected_input_sha256 = NULL) {
+    expected_input_sha256 = NULL, expected_extension_sha256 = NULL) {
   id <- "fastvep_giab_hg002_v421_source_map"
   row <- duckhts_bench_registry()
   row <- row[row$id == id, , drop = FALSE]
@@ -35,9 +35,13 @@ duckhts_bench_read_fastvep_source_map <- function(expected_sha256 = NULL,
         unname(declared[c("input_sha256", count_fields)]))) {
     stop("GIAB source-map receipt differs from its registered identity", call. = FALSE)
   }
-  for (expected in list(expected_sha256, expected_input_sha256)) {
+  for (expected in list(expected_sha256, expected_input_sha256, expected_extension_sha256)) {
     if (!is.null(expected) && (length(expected) != 1L || is.na(expected) ||
         !grepl("^[0-9a-f]{64}$", expected))) stop("expected source-map digests must be SHA256 values", call. = FALSE)
+  }
+  if (!is.null(expected_extension_sha256) &&
+      expected_extension_sha256 != values[["extension_sha256"]]) {
+    stop("retained GIAB source-map extension differs from the expected digest", call. = FALSE)
   }
   if ((!is.null(expected_sha256) && expected_sha256 != values[["source_map_sha256"]]) ||
       (!is.null(expected_input_sha256) && expected_input_sha256 != values[["input_sha256"]]) ||
@@ -83,7 +87,9 @@ duckhts_bench_stage_fastvep_source_map <- function(repo, extension,
     stop("GIAB source bytes differ from the registered source-map input", call. = FALSE)
   }
   if (file.exists(destination)) {
-    result <- duckhts_bench_read_fastvep_source_map(expected_input_sha256 = hashes[["input_sha256"]])
+    result <- duckhts_bench_read_fastvep_source_map(
+      expected_input_sha256 = hashes[["input_sha256"]],
+      expected_extension_sha256 = hashes[["extension_sha256"]])
     if (attr(result, "identity")[["generator_sha256"]] != generator_hash) {
       stop("retained GIAB source-map generator differs; existing bundle preserved", call. = FALSE)
     }
@@ -141,5 +147,6 @@ duckhts_bench_stage_fastvep_source_map <- function(repo, extension,
   if (file.exists(destination) || !file.rename(staging, destination)) {
     stop("could not publish source-map bundle without replacing existing data", call. = FALSE)
   }
-  duckhts_bench_read_fastvep_source_map(evidence[["source_map_sha256"]], evidence[["input_sha256"]])
+  duckhts_bench_read_fastvep_source_map(evidence[["source_map_sha256"]],
+    evidence[["input_sha256"]], evidence[["extension_sha256"]])
 }

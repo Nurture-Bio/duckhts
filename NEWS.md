@@ -174,7 +174,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   records compiler invocations.
   Final-file checks reconcile physical record/ALT identities with the unchanged
   source input; common CSQ files carry explicit identity columns. Publication
-  verifies the retained registered source map and each failure-witness file.
+  verifies the retained registered source map against the measured extension
+  build and checks each failure-witness file.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
