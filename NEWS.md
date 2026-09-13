@@ -170,8 +170,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   checksum-verified staging path. Retained field witnesses can be replayed by
   fixture case; benchmark processes have explicit memory and spill limits.
   Published timing runs require a fresh pinned-source FastVEP build receipt,
-  explicit compiler selection and no compiler wrappers; the retained build log
-  records compiler invocations.
+  explicit compiler selection, no compiler wrappers and no inherited Cargo
+  profile overrides; the retained build log records compiler invocations.
   Final-file checks reconcile physical record/ALT identities with the unchanged
   source input; common CSQ files carry explicit identity columns. Publication
   verifies the retained registered source map against the measured extension

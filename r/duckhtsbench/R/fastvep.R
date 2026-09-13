@@ -89,8 +89,9 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(checkout, "Cargo.toml"),
     "--release", "--locked", "--offline", "--verbose", "--jobs", jobs, "--target-dir", target,
     "-p", "fastvep-cli", "--bin", "fastvep")
+  profile_controls <- grep("^CARGO_PROFILE_", names(Sys.getenv()), value = TRUE)
   unset <- c("CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
-    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", profile_controls)
   previous <- Sys.getenv(c("RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", unset),
     unset = NA_character_)
   on.exit(for (name in names(previous)) {

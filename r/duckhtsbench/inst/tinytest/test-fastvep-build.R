@@ -5,9 +5,13 @@ local({
   directory <- tempfile("fastvep-build-test-")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  profile_controls <- c(CARGO_PROFILE_RELEASE_OPT_LEVEL = "0", CARGO_PROFILE_RELEASE_LTO = "off",
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "256", CARGO_PROFILE_RELEASE_DEBUG = "true",
+    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL = "0", CARGO_PROFILE_DEV_PANIC = "abort",
+    CARGO_PROFILE_FIXTURE_OPT_LEVEL = "1")
   controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
-    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(profile_controls))
   previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "FASTVEP_BUILD_TEST_FAIL", controls),
     unset = NA_character_)
   on.exit(for (name in names(previous)) {
@@ -50,6 +54,7 @@ local({
     "test -z \"${CARGO_BUILD_RUSTC+x}\"", "test -z \"${CARGO_BUILD_RUSTC_WRAPPER+x}\"",
     "test -z \"${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER+x}\"",
     "test -z \"${CARGO_ENCODED_RUSTFLAGS+x}\"", "test \"$RUSTFLAGS\" = '-C target-cpu=native'",
+    "if env | grep -q '^CARGO_PROFILE_'; then echo 'inherited Cargo profile override' >&2; exit 8; fi",
     "\"$RUSTC\" -vV", "target=", "verbose=", "while [ $# -gt 0 ]; do",
     "  if [ \"$1\" = --verbose ]; then verbose=1; fi",
     "  if [ \"$1\" = --target-dir ]; then target=$2; shift; fi", "  shift", "done",
@@ -63,6 +68,7 @@ local({
   Sys.setenv(PATH = paste(bin, previous[["PATH"]], sep = .Platform$path.sep),
     DUCKHTSBENCH_REGISTRY = registry_path)
   poisoned <- stats::setNames(paste0("poison-", controls), controls)
+  poisoned[names(profile_controls)] <- profile_controls
   do.call(Sys.setenv, as.list(poisoned))
   Sys.unsetenv("FASTVEP_BUILD_TEST_FAIL")
   build <- duckhtsbench:::duckhts_bench_build_fastvep
