@@ -166,7 +166,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   fields and common VEP CSQ fields. Exact comparisons retain duplicate and
   missing pairs, transport spelling and field disagreements; complete-run
   manifests gate published timings. FastVEP transcript caches have a registered,
-  checksum-verified staging path.
+  checksum-verified staging path. Retained field witnesses can be replayed by
+  fixture case; benchmark processes have explicit memory and spill limits.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
