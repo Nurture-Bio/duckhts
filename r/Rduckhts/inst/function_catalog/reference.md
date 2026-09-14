@@ -840,7 +840,7 @@ Compact fields include SO/region masks, IMPACT/status/reason codes, one-based cD
 
 ### HGVS
 
-hgvs := TRUE adds independent-event HGVSc/HGVSn/HGVSp for small variants and composes with rich := TRUE. Structural/BND HGVS remains NULL.
+hgvs := TRUE adds independent-event HGVSc/HGVSn/HGVSp for small variants and composes with rich := TRUE. transcript_hgvs and protein_hgvs are accession-free c./n./p. bodies; join versioned transcript/protein identifiers from retained model metadata when a complete serialized VEP-style field is required. Structural/BND HGVS remains NULL.
 
 ### gVCF alleles
 

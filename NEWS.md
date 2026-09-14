@@ -47,6 +47,10 @@ https://github.com/RGenomicsETL/duckhts/issues/218.
 - Correct source-sensitive protein HGVS duplication, extension, frameshift and
   transcript-end handling. Reference translation, alternate translation and
   curated reference-peptide edits retain their distinct VEP-116 rules.
+- Match VEP-116 transcript HGVS for literal SNPs when coding begins after a
+  noncoding exon, clipped coordinate ordering, and reverse-strand insertions
+  shifted immediately outside transcript start. HGVS result columns remain
+  accession-free bodies; retained model identifiers supply serialized prefixes.
 - Add `duckvep_breakend_geometry()` for paired and single raw BND ALT forms,
   returning exact mate names/positions, orientation and replacement sequence.
   Replacement sequence includes retained local bases; it is not inserted-only
