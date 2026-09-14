@@ -163,3 +163,108 @@ local({
   save_registry()
   expect_error(stage(), "registered commit")
 })
+
+local({
+  if (!requireNamespace("DBI", quietly = TRUE) || !requireNamespace("duckdb", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  directory <- tempfile("fastvep-model-gff-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  model <- file.path(directory, "model.duckdb")
+  connection <- DBI::dbConnect(duckdb::duckdb(), model)
+  DBI::dbExecute(connection, paste(
+    "CREATE TABLE model_transcripts AS SELECT",
+    "'T1'::VARCHAR transcript_stable_id, 1::BIGINT transcript_version,",
+    "'G1'::VARCHAR gene_stable_id, '1'::VARCHAR seq_region_name,",
+    "10::UBIGINT transcript_start, 20::UBIGINT transcript_end, 1::TINYINT strand,",
+    "12::UBIGINT cds_start, 18::UBIGINT cds_end,",
+    "[{'rank':1::UINTEGER,'exon_start':10::UBIGINT,'exon_end':20::UBIGINT,",
+    "'phase':-1::TINYINT,'end_phase':-1::TINYINT}] exons UNION ALL SELECT",
+    "'T3', 2, 'G2', '2', 30::UBIGINT, 40::UBIGINT, -1::TINYINT,",
+    "NULL::UBIGINT, NULL::UBIGINT,",
+    "[{'rank':1::UINTEGER,'exon_start':30::UBIGINT,'exon_end':40::UBIGINT,",
+    "'phase':-1::TINYINT,'end_phase':-1::TINYINT}]"
+  ))
+  DBI::dbExecute(connection, sprintf(
+    "CREATE TABLE model_receipt AS SELECT '%s'::VARCHAR model_sha256", strrep("a", 64L)
+  ))
+  DBI::dbDisconnect(connection, shutdown = TRUE)
+
+  lines <- c(
+    "##gff-version 3",
+    "##sequence-region   1 1 100",
+    "1\tx\tgene\t10\t25\t.\t+\t.\tID=gene:G1;version=1",
+    "1\tx\tmRNA\t10\t20\t.\t+\t.\tID=transcript:T1;Parent=gene:G1;version=1",
+    paste0("1\tx\texon\t10\t20\t.\t+\t.\tParent=transcript:T1;rank=1;",
+      "ensembl_phase=-1;ensembl_end_phase=-1"),
+    "1\tx\tCDS\t12\t18\t.\t+\t0\tParent=transcript:T1",
+    "1\tx\tmRNA\t21\t25\t.\t+\t.\tID=transcript:T2;Parent=gene:G1;version=1",
+    paste0("1\tx\texon\t21\t25\t.\t+\t.\tParent=transcript:T2;rank=1;",
+      "ensembl_phase=-1;ensembl_end_phase=-1"),
+    "###",
+    "2\tx\tgene\t30\t40\t.\t-\t.\tID=gene:G2;version=1",
+    "2\tx\tlnc_RNA\t30\t40\t.\t-\t.\tID=transcript:T3;Parent=gene:G2;version=2",
+    paste0("2\tx\texon\t30\t40\t.\t-\t.\tParent=transcript:T3;rank=1;",
+      "ensembl_phase=-1;ensembl_end_phase=-1")
+  )
+  source <- file.path(directory, "source.gff3")
+  writeLines(lines, source, useBytes = TRUE)
+  output <- file.path(directory, "selected.gff3.gz")
+  stage <- duckhtsbench:::duckhts_bench_stage_fastvep_model_gff
+  result <- stage(model, source, output)
+  expected <- lines[-c(7L, 8L)]
+  expect_identical(readLines(gzfile(result[["gff3"]]), warn = FALSE), expected)
+  receipt <- duckhtsbench:::duckhts_bench_fastvep_model_gff_receipt(output)
+  expect_identical(receipt[["schema"]], "duckvep_fastvep_matched_gff_v1")
+  expect_identical(receipt[["proof"]], "initial_derivation_six_except_all")
+  expect_identical(receipt[["transcript_count"]], "2")
+  expect_identical(receipt[["gene_count"]], "2")
+  expect_identical(receipt[["exon_count"]], "2")
+  expect_identical(receipt[["cds_segment_count"]], "1")
+  expect_true(all(receipt[c("transcript_model_only", "transcript_source_only",
+    "exon_model_only", "exon_source_only", "cds_model_only", "cds_source_only")] == "0"))
+  expect_identical(result[["receipt_sha256"]],
+    duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]]))
+  expect_identical(stage(model, source, output), result)
+
+  model_identity <- strrep("a", 64L)
+  matched_registry <- data.frame(id = "matched_gff", supplier_identity = paste0(
+    "schema=duckvep_fastvep_matched_gff_v1;model_sha256=", model_identity,
+    ";transcripts=2"
+  ))
+  cache_identity <- c(model_sha256 = model_identity, transcripts = "2")
+  validate_identity <- duckhtsbench:::duckhts_bench_fastvep_validate_matched_identity
+  expect_true(validate_identity(matched_registry, cache_identity, "matched_gff", receipt))
+  changed_receipt <- receipt
+  changed_receipt[["model_sha256"]] <- strrep("b", 64L)
+  expect_error(validate_identity(matched_registry, cache_identity, "matched_gff", changed_receipt),
+    "registered model identity")
+
+  check_failure <- function(changed, pattern, suffix) {
+    input <- file.path(directory, paste0("source-", suffix, ".gff3"))
+    target <- file.path(directory, paste0("selected-", suffix, ".gff3.gz"))
+    writeLines(changed, input, useBytes = TRUE)
+    expect_error(stage(model, input, target), pattern)
+    expect_false(file.exists(target))
+    expect_false(file.exists(paste0(target, ".provenance.tsv")))
+  }
+  changed <- lines
+  changed[[4L]] <- sub(";version=1", "", changed[[4L]], fixed = TRUE)
+  check_failure(changed, "transcripts geometry", "missing-version")
+  changed <- lines
+  changed[[5L]] <- sub("ensembl_phase=-1", "ensembl_phase=0", changed[[5L]], fixed = TRUE)
+  check_failure(changed, "exons geometry", "exon-phase")
+  changed <- lines
+  changed[[6L]] <- sub("\t0\t", "\t1\t", changed[[6L]], fixed = TRUE)
+  check_failure(changed, "cds geometry", "cds-phase")
+  changed <- lines
+  changed[[5L]] <- sub("Parent=transcript:T1", "Parent=transcript:T1,transcript:T2",
+    changed[[5L]], fixed = TRUE)
+  check_failure(changed, "mixes selected and unselected parents", "mixed-parent")
+  check_failure(lines[-10L], "every selected transcript and parent gene", "missing-gene")
+
+  writeLines("corrupt", output)
+  expect_error(stage(model, source, output), "existing matched FastVEP GFF3")
+  expect_identical(readLines(output), "corrupt")
+})

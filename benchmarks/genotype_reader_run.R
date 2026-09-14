@@ -1,7 +1,8 @@
 # One measured materialization per fresh process. The report supplies registry
 # paths and independent denominators; this driver never stages or downloads.
 genotype_reader_run <- function(extension, input, reader, workload, selector,
-                                sample_names, snapshot, threads = 1L) {
+                                sample_names, snapshot, threads = 1L,
+                                phase_set_field = FALSE) {
   directory <- tempfile("duckhts-genotype-run-")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
@@ -25,17 +26,19 @@ genotype_reader_run <- function(extension, input, reader, workload, selector,
       "SELECT CHROM, POS, ID, REF, ALT, c.sample_index, c.alleles, c.phase_before, c.phase_set ",
       "FROM (SELECT CHROM,POS,ID,REF,ALT,unnest(calls) AS c FROM ", table, ")")
   } else {
-    source <- paste0("SELECT CHROM,POS,ID,REF,ALT,SAMPLE_ID,FORMAT_GT FROM read_bcf(",
+    source <- paste0("SELECT CHROM,POS,ID,REF,ALT,SAMPLE_ID,FORMAT_GT",
+                     if (phase_set_field) ",FORMAT_PS" else "", " FROM read_bcf(",
                      arguments, ", tidy_format:=true)",
                      if (sparse) " WHERE regexp_matches(FORMAT_GT,'(^|[|/])[1-9][0-9]*($|[|/])')" else "")
-    # The registered source is VCF 4.2, GT-only. HTSlib's leading-slot flag is
-    # implied by the other separators (or by a known haploid); no PS is invented.
+    # For VCF 4.2, HTSlib's leading-slot flag is implied by the other separators
+    # (or by a known haploid). PS is copied only for a declared benchmark field.
     normalized <- function(table) paste0(
       "SELECT CHROM,POS,ID,REF,ALT,s.sample_index,",
       "list_transform(tokens,x->CASE WHEN x='.' THEN NULL ELSE x::INTEGER END) AS alleles,",
       "list_transform(range(1,len(tokens)+1),i->CASE WHEN i=1 THEN CASE WHEN len(tokens)=1 ",
       "THEN tokens[1]<>'.' ELSE NOT contains(FORMAT_GT,'/') END ELSE separators[i-1]='|' END) AS phase_before,",
-      "NULL::BIGINT AS phase_set FROM (SELECT *,regexp_split_to_array(FORMAT_GT,'[|/]') AS tokens,",
+      if (phase_set_field) "FORMAT_PS::BIGINT AS phase_set " else "NULL::BIGINT AS phase_set ",
+      "FROM (SELECT *,regexp_split_to_array(FORMAT_GT,'[|/]') AS tokens,",
       "regexp_extract_all(FORMAT_GT,'[|/]') AS separators FROM ", table, ") q JOIN samples s ON SAMPLE_ID=s.sample_name")
   }
   carriers <- function(calls) paste0(
@@ -57,10 +60,21 @@ genotype_reader_run <- function(extension, input, reader, workload, selector,
     "SELECT * FROM result" else normalized("result")))
   if (nzchar(snapshot)) DBI::dbExecute(con, paste0(
     "COPY normalized TO ", quote(snapshot), " (FORMAT PARQUET, COMPRESSION ZSTD)"))
-  counts <- if (workload == "carriers") data.frame(calls = NA_real_, slots = output_rows) else query(
-    "SELECT count(*) AS calls,sum(len(alleles)) AS slots FROM normalized")
+  counts <- if (workload == "carriers") {
+    data.frame(calls = NA_real_, slots = output_rows, ps_values = query(
+      "SELECT count(phase_set) AS n FROM normalized")$n)
+  } else {
+    query("SELECT count(*) AS calls,sum(len(alleles)) AS slots,count(phase_set) AS ps_values FROM normalized")
+  }
   data.frame(reader, workload, output_rows, output_calls = as.numeric(counts$calls),
-             output_slots = as.numeric(counts$slots), checksum = fingerprint,
+             output_slots = as.numeric(counts$slots), output_ps_values = as.numeric(counts$ps_values),
+             checksum = fingerprint,
              elapsed = unname(elapsed["elapsed"]), cpu = sum(elapsed[c("user.self", "sys.self")]),
              peak_rss_kib = rss, materialized_database_bytes = materialized_bytes)
+}
+
+genotype_reader_difference <- function(con, left, right) {
+  sql <- sprintf(paste("SELECT count(*) AS n FROM (((%s) EXCEPT ALL (%s))",
+                       "UNION ALL ((%s) EXCEPT ALL (%s)))"), left, right, right, left)
+  as.numeric(DBI::dbGetQuery(con, sql)$n)
 }

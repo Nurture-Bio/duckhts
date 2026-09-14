@@ -2,20 +2,28 @@
 \alias{duckhts_bench_stage_fastvep}
 \title{Stage a pinned FastVEP transcript cache from registered Ensembl inputs}
 \usage{
-duckhts_bench_stage_fastvep(repo, checkout, executable, threads = 1L)
+duckhts_bench_stage_fastvep(
+  repo,
+  checkout,
+  executable,
+  threads = 1L,
+  cache_id = "fastvep_ensembl116_cache"
+)
 }
 \arguments{
 \item{repo}{DuckHTS checkout containing the registered probe VCF.}
 \item{checkout}{FastVEP checkout at the registered commit, with no tracked changes.}
 \item{executable}{FastVEP executable path.}
 \item{threads}{Positive integer Rayon worker count for preparation and probes.}
+
+\item{cache_id}{Registered full-source or DuckVEP-model-matched cache artifact.}
 }
 \value{Named cache, receipt, preparation and validation log paths.}
 \description{
 Requires staged GFF3 and indexed uncompressed FASTA inputs, an unchanged upstream
 checkout, and an executable reporting the registered version. Its digest is
 recorded; checkout and version checks do not prove how it was built.
-FastVEP's full-GFF \code{cache} command and an HGVS preparation pass construct
+FastVEP's registered GFF3 \code{cache} command and an HGVS preparation pass construct
 coding and noncoding spliced sequences. A committed tiny VCF then checks
 the registered transcript count and cache immutability on repeated native
 and HGVS reads. Existing artifacts are validated, never overwritten. This

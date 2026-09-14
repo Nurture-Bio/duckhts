@@ -315,6 +315,343 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   c(executable = executable, receipt = receipt, log = log)
 }
 
+duckhts_bench_fastvep_attribute <- function(attributes, name) {
+  fields <- strsplit(attributes, ";", fixed = TRUE)[[1L]]
+  prefix <- paste0(name, "=")
+  value <- fields[startsWith(fields, prefix)]
+  if (length(value) > 1L) stop("GFF3 attribute occurs more than once: ", name, call. = FALSE)
+  if (!length(value)) character() else substring(value, nchar(prefix) + 1L)
+}
+
+duckhts_bench_fastvep_model_gff_receipt <- function(output) {
+  path <- paste0(output, ".provenance.tsv")
+  if (!file.exists(output) || !file.exists(path)) {
+    stop("matched FastVEP GFF3 bundle is incomplete", call. = FALSE)
+  }
+  receipt <- utils::read.delim(path, colClasses = "character", quote = "", comment.char = "",
+    check.names = FALSE)
+  required <- c(
+    "artifact_id", "workload", "release", "source_locator", "access", "transform",
+    "supplier_identity", "cached_output", "consumer", "schema", "source_gff3_sha256",
+    "model_sha256", "proof", "transcript_count", "gene_count", "exon_count", "cds_segment_count",
+    "transcript_inventory_sha256", "exon_geometry_sha256", "cds_geometry_sha256",
+    "transcript_model_only", "transcript_source_only", "exon_model_only", "exon_source_only",
+    "cds_model_only", "cds_source_only",
+    "filtered_gff3_sha256", "source_lines", "retained_lines", "retained_features"
+  )
+  if (!identical(names(receipt), c("field", "value")) ||
+      !identical(receipt$field, required) || anyNA(receipt$value)) {
+    stop("invalid matched FastVEP GFF3 receipt", call. = FALSE)
+  }
+  stats::setNames(receipt$value, receipt$field)
+}
+
+duckhts_bench_fastvep_validate_matched_identity <- function(registry, cache_identity,
+    gff_id, receipt) {
+  gff_row <- registry[registry$id == gff_id, , drop = FALSE]
+  gff_identity <- if (nrow(gff_row) == 1L) {
+    duckhts_bench_identity_fields(gff_row$supplier_identity)
+  } else character()
+  gff_required <- c("schema", "model_sha256", "transcripts")
+  if (!all(gff_required %in% names(gff_identity)) ||
+      gff_identity[["schema"]] != receipt[["schema"]] ||
+      gff_identity[["model_sha256"]] != receipt[["model_sha256"]] ||
+      gff_identity[["model_sha256"]] != cache_identity[["model_sha256"]] ||
+      gff_identity[["transcripts"]] != receipt[["transcript_count"]] ||
+      gff_identity[["transcripts"]] != cache_identity[["transcripts"]]) {
+    stop("matched FastVEP GFF3 differs from its registered model identity", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+duckhts_bench_fastvep_require_model_export <- function(connection) {
+  columns <- DBI::dbGetQuery(connection, "DESCRIBE model.main.model_transcripts")$column_name
+  required <- c(
+    "transcript_stable_id", "transcript_version", "gene_stable_id", "seq_region_name",
+    "transcript_start", "transcript_end", "strand", "cds_start", "cds_end", "exons"
+  )
+  if (!all(required %in% columns)) {
+    stop("DuckVEP model lacks the stable transcript and geometry export", call. = FALSE)
+  }
+}
+
+duckhts_bench_fastvep_model_geometry <- function(connection) {
+  duckhts_bench_fastvep_require_model_export(connection)
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW expected_transcripts AS SELECT",
+    "transcript_stable_id AS transcript_id, CAST(transcript_version AS VARCHAR) AS version,",
+    "gene_stable_id AS gene_id, seq_region_name AS seq_region,",
+    "CAST(transcript_start AS UBIGINT) AS start1, CAST(transcript_end AS UBIGINT) AS end1,",
+    "CASE strand WHEN 1 THEN '+' WHEN -1 THEN '-' ELSE '.' END AS strand",
+    "FROM model.main.model_transcripts"
+  ))
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW expected_exons AS SELECT t.transcript_stable_id AS transcript_id,",
+    "t.seq_region_name AS seq_region, CAST(e.rank AS UINTEGER) AS rank,",
+    "CAST(e.exon_start AS UBIGINT) AS start1, CAST(e.exon_end AS UBIGINT) AS end1,",
+    "CASE t.strand WHEN 1 THEN '+' WHEN -1 THEN '-' ELSE '.' END AS strand,",
+    "CAST(e.phase AS TINYINT) AS ensembl_phase, CAST(e.end_phase AS TINYINT) AS ensembl_end_phase",
+    "FROM model.main.model_transcripts t, UNNEST(t.exons) u(e)"
+  ))
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW expected_cds AS SELECT t.transcript_stable_id AS transcript_id,",
+    "t.seq_region_name AS seq_region,",
+    "CAST(greatest(e.exon_start, t.cds_start) AS UBIGINT) AS start1,",
+    "CAST(least(e.exon_end, t.cds_end) AS UBIGINT) AS end1,",
+    "CASE t.strand WHEN 1 THEN '+' WHEN -1 THEN '-' ELSE '.' END AS strand,",
+    "CAST(CASE WHEN e.phase < 0 THEN 0 ELSE (3 - e.phase) % 3 END AS VARCHAR) AS phase",
+    "FROM model.main.model_transcripts t, UNNEST(t.exons) u(e)",
+    "WHERE t.cds_start IS NOT NULL AND e.exon_end >= t.cds_start AND e.exon_start <= t.cds_end"
+  ))
+  scalar <- function(sql) as.character(DBI::dbGetQuery(connection, sql)[[1L]][[1L]])
+  digest <- function(relation, fields, order) scalar(sprintf(
+    "SELECT sha256(string_agg(concat_ws('\\t', %s), '\\n' ORDER BY %s)) FROM %s",
+    paste(fields, collapse = ", "), paste(order, collapse = ", "), relation
+  ))
+  list(
+    transcript_count = scalar("SELECT count(*) FROM expected_transcripts"),
+    gene_count = scalar("SELECT count(DISTINCT gene_id) FROM expected_transcripts"),
+    exon_count = scalar("SELECT count(*) FROM expected_exons"),
+    cds_segment_count = scalar("SELECT count(*) FROM expected_cds"),
+    transcript_inventory_sha256 = digest("expected_transcripts",
+      c("transcript_id", "version", "gene_id", "seq_region", "start1", "end1", "strand"),
+      c("transcript_id", "version")),
+    exon_geometry_sha256 = digest("expected_exons",
+      c("transcript_id", "seq_region", "rank", "start1", "end1", "strand", "ensembl_phase",
+        "ensembl_end_phase"),
+      c("transcript_id", "rank", "start1", "end1")),
+    cds_geometry_sha256 = digest("expected_cds",
+      c("transcript_id", "seq_region", "start1", "end1", "strand", "phase"),
+      c("transcript_id", "start1", "end1"))
+  )
+}
+
+duckhts_bench_fastvep_validate_model_gff <- function(connection, output) {
+  quoted <- DBI::dbQuoteString(connection, output)
+  DBI::dbExecute(connection, sprintf(paste0(
+    "CREATE TEMP TABLE filtered_gff AS SELECT * FROM read_csv(%s, delim = '\\t', ",
+    "header = false, quote = '', comment = '#', compression = 'auto', auto_detect = false, ",
+    "columns = {'seq_region':'VARCHAR','source':'VARCHAR','type':'VARCHAR','start_text':'VARCHAR',",
+    "'end_text':'VARCHAR','score':'VARCHAR','strand':'VARCHAR','phase':'VARCHAR',",
+    "'attributes':'VARCHAR'})"), quoted))
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW observed_transcripts AS SELECT",
+    "regexp_extract(attributes, '(^|;)ID=transcript:([^;]+)', 2) AS transcript_id,",
+    "regexp_extract(attributes, '(^|;)version=([^;]+)', 2) AS version,",
+    "regexp_extract(attributes, '(^|;)Parent=gene:([^;]+)', 2) AS gene_id, seq_region,",
+    "CAST(start_text AS UBIGINT) AS start1, CAST(end_text AS UBIGINT) AS end1, strand",
+    "FROM filtered_gff WHERE regexp_extract(attributes, '(^|;)ID=transcript:([^;]+)', 2) <> ''"
+  ))
+  parent <- "UNNEST(string_split(regexp_extract(attributes, '(^|;)Parent=([^;]+)', 2), ',')) p(parent)"
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW observed_exons AS SELECT replace(parent, 'transcript:', '') AS transcript_id,",
+    "seq_region, CAST(regexp_extract(attributes, '(^|;)rank=([0-9]+)', 2) AS UINTEGER) AS rank,",
+    "CAST(start_text AS UBIGINT) AS start1, CAST(end_text AS UBIGINT) AS end1, strand",
+    ", CAST(regexp_extract(attributes, '(^|;)ensembl_phase=(-?[0-9]+)', 2) AS TINYINT)",
+    "AS ensembl_phase,",
+    "CAST(regexp_extract(attributes, '(^|;)ensembl_end_phase=(-?[0-9]+)', 2) AS TINYINT)",
+    "AS ensembl_end_phase",
+    "FROM filtered_gff,", parent,
+    "WHERE type = 'exon' AND starts_with(parent, 'transcript:')"
+  ))
+  DBI::dbExecute(connection, paste(
+    "CREATE TEMP VIEW observed_cds AS SELECT replace(parent, 'transcript:', '') AS transcript_id,",
+    "seq_region, CAST(start_text AS UBIGINT) AS start1, CAST(end_text AS UBIGINT) AS end1, strand, phase",
+    "FROM filtered_gff,", parent,
+    "WHERE type = 'CDS' AND starts_with(parent, 'transcript:')"
+  ))
+  differences <- character()
+  relations <- c(transcript = "transcripts", exon = "exons", cds = "cds")
+  for (label in names(relations)) {
+    name <- relations[[label]]
+    model_only <- DBI::dbGetQuery(connection, sprintf(
+      "SELECT count(*) AS n FROM (SELECT * FROM expected_%1$s EXCEPT ALL SELECT * FROM observed_%1$s)",
+      name
+    ))$n[[1L]]
+    source_only <- DBI::dbGetQuery(connection, sprintf(
+      "SELECT count(*) AS n FROM (SELECT * FROM observed_%1$s EXCEPT ALL SELECT * FROM expected_%1$s)",
+      name
+    ))$n[[1L]]
+    differences[[paste0(label, "_model_only")]] <- as.character(model_only)
+    differences[[paste0(label, "_source_only")]] <- as.character(source_only)
+    if (model_only != 0 || source_only != 0) {
+      stop("filtered FastVEP GFF3 differs from DuckVEP ", name, " geometry", call. = FALSE)
+    }
+  }
+  differences
+}
+
+# Derive a FastVEP input without changing the source GFF feature lines. The
+# admitted transcript IDs come only from DuckVEP's prepared model; gene and
+# transcript children are retained so FastVEP sees one complete source graph.
+duckhts_bench_stage_fastvep_model_gff <- function(model, source, output, artifact_id = NULL) {
+  if (!requireNamespace("DBI", quietly = TRUE) || !requireNamespace("duckdb", quietly = TRUE)) {
+    stop("matched FastVEP staging requires the installed R packages DBI and duckdb", call. = FALSE)
+  }
+  model <- normalizePath(model, mustWork = TRUE)
+  source <- normalizePath(source, mustWork = TRUE)
+  hash <- duckhts_bench_duckvep_sha256_file
+  driver <- duckdb::duckdb()
+  connection <- DBI::dbConnect(driver, dbdir = ":memory:")
+  on.exit(DBI::dbDisconnect(connection, shutdown = TRUE), add = TRUE)
+  DBI::dbExecute(connection, sprintf("ATTACH %s AS model (READ_ONLY)",
+    DBI::dbQuoteString(connection, model)))
+  duckhts_bench_fastvep_require_model_export(connection)
+  model_receipt <- DBI::dbGetQuery(connection, paste(
+    "SELECT model_sha256 FROM model.main.model_receipt"
+  ))
+  if (nrow(model_receipt) != 1L || !grepl("^[0-9a-f]{64}$", model_receipt$model_sha256[[1L]])) {
+    stop("DuckVEP model has no unique logical model receipt", call. = FALSE)
+  }
+  proof <- "initial_derivation_six_except_all"
+  identity <- c(schema = "duckvep_fastvep_matched_gff_v1",
+    source_gff3_sha256 = hash(source), model_sha256 = model_receipt$model_sha256[[1L]],
+    proof = proof)
+  if (file.exists(output) || file.exists(paste0(output, ".provenance.tsv"))) {
+    receipt <- duckhts_bench_fastvep_model_gff_receipt(output)
+    counts <- c("transcript_count", "gene_count", "exon_count", "cds_segment_count")
+    digests <- c("transcript_inventory_sha256", "exon_geometry_sha256", "cds_geometry_sha256")
+    differences <- c("transcript_model_only", "transcript_source_only", "exon_model_only",
+      "exon_source_only", "cds_model_only", "cds_source_only")
+    provenance <- if (is.null(artifact_id)) NULL else
+      duckhts_bench_provenance_fields(artifact_id, output)
+    if (!identical(unname(receipt[names(identity)]), unname(identity)) ||
+        any(!grepl("^[1-9][0-9]*$", receipt[counts])) ||
+        any(!grepl("^[0-9a-f]{64}$", receipt[digests])) ||
+        any(receipt[differences] != "0") ||
+        !identical(receipt[["filtered_gff3_sha256"]], hash(output)) ||
+        (!is.null(provenance) &&
+          !identical(unname(receipt[provenance$field]), unname(provenance$value)))) {
+      stop("existing matched FastVEP GFF3 differs from its model or source", call. = FALSE)
+    }
+    receipt_path <- paste0(output, ".provenance.tsv")
+    return(c(gff3 = output, receipt = receipt_path, receipt_sha256 = hash(receipt_path)))
+  }
+
+  geometry <- duckhts_bench_fastvep_model_geometry(connection)
+  expected <- c(identity, unlist(geometry, use.names = TRUE))
+  inventory <- DBI::dbGetQuery(connection, paste(
+    "SELECT transcript_stable_id AS transcript_id, CAST(transcript_version AS VARCHAR) AS version,",
+    "gene_stable_id AS gene_id FROM model.main.model_transcripts ORDER BY transcript_stable_id"
+  ))
+  if (anyNA(inventory) || anyDuplicated(inventory$transcript_id) ||
+      nrow(inventory) != as.numeric(geometry$transcript_count)) {
+    stop("DuckVEP model transcript identity is incomplete or non-unique", call. = FALSE)
+  }
+  selected_transcripts <- new.env(hash = TRUE, parent = emptyenv())
+  for (index in seq_len(nrow(inventory))) {
+    assign(inventory$transcript_id[[index]], inventory$version[[index]], selected_transcripts)
+  }
+  genes <- unique(inventory$gene_id)
+  selected_genes <- new.env(hash = TRUE, parent = emptyenv())
+  for (gene in genes) assign(gene, TRUE, selected_genes)
+
+  dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
+  compressed <- grepl("[.]gz$", output, ignore.case = TRUE)
+  stem <- if (compressed) sub("[.]gz$", "", output, ignore.case = TRUE) else output
+  temporary <- paste0(stem, ".partial-", Sys.getpid(), if (compressed) ".gz" else "")
+  temporary_receipt <- paste0(temporary, ".provenance.tsv")
+  unlink(c(temporary, temporary_receipt), force = TRUE)
+  complete <- FALSE
+  on.exit(if (!complete) unlink(c(temporary, temporary_receipt), force = TRUE), add = TRUE)
+  input <- if (grepl("[.]gz$", source, ignore.case = TRUE)) gzfile(source, "rt") else file(source, "rt")
+  result <- if (compressed) gzfile(temporary, "wt") else file(temporary, "wt")
+  on.exit(try(close(input), silent = TRUE), add = TRUE)
+  on.exit(try(close(result), silent = TRUE), add = TRUE)
+  found_transcripts <- new.env(hash = TRUE, parent = emptyenv())
+  found_genes <- new.env(hash = TRUE, parent = emptyenv())
+  counts <- c(source_lines = 0, retained_lines = 0, retained_features = 0)
+  repeat {
+    lines <- readLines(input, n = 50000L, warn = FALSE)
+    if (!length(lines)) break
+    counts[["source_lines"]] <- counts[["source_lines"]] + length(lines)
+    keep <- logical(length(lines))
+    for (index in seq_along(lines)) {
+      line <- lines[[index]]
+      if (startsWith(line, "#")) {
+        keep[[index]] <- TRUE
+        next
+      }
+      fields <- strsplit(line, "\t", fixed = TRUE)[[1L]]
+      if (length(fields) != 9L) stop("source GFF3 line does not have nine columns", call. = FALSE)
+      attributes <- fields[[9L]]
+      feature_id <- duckhts_bench_fastvep_attribute(attributes, "ID")
+      parents <- duckhts_bench_fastvep_attribute(attributes, "Parent")
+      if (length(feature_id) && startsWith(feature_id, "gene:")) {
+        gene <- substring(feature_id, 6L)
+        if (exists(gene, selected_genes, inherits = FALSE)) {
+          if (exists(gene, found_genes, inherits = FALSE)) {
+            stop("selected gene occurs more than once in source GFF3: ", gene, call. = FALSE)
+          }
+          assign(gene, TRUE, found_genes)
+          keep[[index]] <- TRUE
+        }
+      } else if (length(feature_id) && startsWith(feature_id, "transcript:")) {
+        transcript <- substring(feature_id, 12L)
+        if (exists(transcript, selected_transcripts, inherits = FALSE)) {
+          if (exists(transcript, found_transcripts, inherits = FALSE)) {
+            stop("selected transcript occurs more than once in source GFF3: ", transcript,
+              call. = FALSE)
+          }
+          assign(transcript, TRUE, found_transcripts)
+          keep[[index]] <- TRUE
+        }
+      } else if (length(parents)) {
+        parent_ids <- strsplit(parents, ",", fixed = TRUE)[[1L]]
+        transcript_parents <- parent_ids[startsWith(parent_ids, "transcript:")]
+        transcript_ids <- substring(transcript_parents, 12L)
+        selected <- vapply(transcript_ids, exists, logical(1L), envir = selected_transcripts,
+          inherits = FALSE)
+        if (any(selected)) {
+          if (length(transcript_parents) != length(parent_ids) || !all(selected)) {
+            stop("source GFF3 child mixes selected and unselected parents", call. = FALSE)
+          }
+          keep[[index]] <- TRUE
+        }
+      }
+    }
+    retained <- lines[keep]
+    writeLines(retained, result, useBytes = TRUE)
+    counts[["retained_lines"]] <- counts[["retained_lines"]] + length(retained)
+    counts[["retained_features"]] <- counts[["retained_features"]] + sum(keep & !startsWith(lines, "#"))
+  }
+  close(input)
+  close(result)
+  if (length(ls(found_transcripts, all.names = TRUE)) != nrow(inventory) ||
+      length(ls(found_genes, all.names = TRUE)) != length(genes)) {
+    stop("source GFF3 does not contain every selected transcript and parent gene", call. = FALSE)
+  }
+  differences <- duckhts_bench_fastvep_validate_model_gff(connection, temporary)
+  evidence <- c(expected, differences, filtered_gff3_sha256 = hash(temporary),
+    source_lines = as.character(counts[["source_lines"]]),
+    retained_lines = as.character(counts[["retained_lines"]]),
+    retained_features = as.character(counts[["retained_features"]]))
+  if (is.null(artifact_id)) {
+    provenance <- data.frame(field = c("artifact_id", "workload", "release", "source_locator",
+      "access", "transform", "supplier_identity", "cached_output", "consumer"),
+      value = c("synthetic", "fastvep", "synthetic", source, "local_derived",
+        "select_duckvep_model_transcripts", "", output, "test"), stringsAsFactors = FALSE)
+  } else {
+    provenance <- duckhts_bench_provenance_fields(artifact_id, output)
+  }
+  receipt <- rbind(provenance,
+    data.frame(field = names(evidence), value = unname(evidence), stringsAsFactors = FALSE))
+  utils::write.table(receipt, temporary_receipt, sep = "\t", quote = FALSE, row.names = FALSE)
+  receipt_path <- paste0(output, ".provenance.tsv")
+  if (file.exists(output) || file.exists(receipt_path) || !file.rename(temporary, output)) {
+    stop("could not publish matched FastVEP GFF3 without replacing existing data", call. = FALSE)
+  }
+  if (!file.rename(temporary_receipt, receipt_path)) {
+    removed <- unlink(output, force = TRUE)
+    if (removed != 0L || file.exists(output)) {
+      stop("could not publish matched FastVEP GFF3 receipt or roll back its GFF3", call. = FALSE)
+    }
+    stop("could not publish matched FastVEP GFF3 receipt", call. = FALSE)
+  }
+  complete <- TRUE
+  c(gff3 = output, receipt = receipt_path, receipt_sha256 = hash(receipt_path))
+}
+
 #' Stage a pinned FastVEP transcript cache from registered Ensembl inputs.
 #'
 #' Requires staged GFF3 and indexed uncompressed FASTA inputs, an unchanged upstream
@@ -330,9 +667,11 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
 #' @param checkout FastVEP checkout at the registered commit, with no tracked changes.
 #' @param executable FastVEP executable path.
 #' @param threads Positive integer Rayon worker count for preparation and probes.
+#' @param cache_id Registered full-source or DuckVEP-model-matched cache artifact.
 #' @return Named cache, receipt, preparation and validation log paths.
 #' @export
-duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L) {
+duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L,
+    cache_id = "fastvep_ensembl116_cache") {
   if (length(threads) != 1L || is.na(threads) || !is.numeric(threads) ||
       !is.finite(threads) || threads < 1 || threads > .Machine$integer.max ||
       threads != floor(threads)) {
@@ -343,20 +682,30 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
   executable <- normalizePath(executable, mustWork = TRUE)
   if (file.access(executable, 1L) != 0L) stop("FastVEP binary is not executable", call. = FALSE)
   registry <- duckhts_bench_registry()
-  id <- "fastvep_ensembl116_cache"
+  supported <- c("fastvep_ensembl116_cache", "fastvep_ensembl116_duckvep_matched_cache")
+  if (length(cache_id) != 1L || is.na(cache_id) || !cache_id %in% supported) {
+    stop("cache_id must name a registered Ensembl 116 FastVEP cache", call. = FALSE)
+  }
+  id <- cache_id
   row <- registry[registry$id == id, , drop = FALSE]
-  if (nrow(row) != 1L || row$transform != "build_fastvep_transcript_cache") {
+  matched <- identical(id, "fastvep_ensembl116_duckvep_matched_cache")
+  expected_transform <- if (matched) "build_fastvep_duckvep_matched_transcript_cache" else
+    "build_fastvep_transcript_cache"
+  expected_preparation <- if (matched) "duckvep_model_matched_hgvs" else "full_gff_hgvs"
+  if (nrow(row) != 1L || row$transform != expected_transform) {
     stop("expected one registered FastVEP transcript cache", call. = FALSE)
   }
   identity <- duckhts_bench_identity_fields(row$supplier_identity)
-  required <- c("source_commit", "version", "cache_format", "preparation", "transcripts")
+  required <- c("source_commit", "version", "cache_format", "preparation", "transcripts",
+    if (matched) "model_sha256" else character())
   if (!all(required %in% names(identity)) ||
       !grepl("^[0-9a-f]{40}$", identity[["source_commit"]]) ||
       !grepl("^[0-9]+\\.[0-9]+\\.[0-9]+$", identity[["version"]]) ||
       identity[["cache_format"]] != "FSTVEP05" ||
-      identity[["preparation"]] != "full_gff_hgvs" ||
-      !grepl("^[1-9][0-9]*$", identity[["transcripts"]])) {
-    stop("FastVEP cache requires a source commit, version, FSTVEP05 format, full_gff_hgvs preparation and transcript count",
+      identity[["preparation"]] != expected_preparation ||
+      !grepl("^[1-9][0-9]*$", identity[["transcripts"]]) ||
+      (matched && !grepl("^[0-9a-f]{64}$", identity[["model_sha256"]]))) {
+    stop("FastVEP cache requires a source commit, version, FSTVEP05 format, declared preparation and transcript count",
       call. = FALSE)
   }
   duckhts_bench_fastvep_source(checkout, identity[["source_commit"]])
@@ -366,7 +715,29 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
     stop("FastVEP executable does not report the registered version: fastvep ",
       identity[["version"]], call. = FALSE)
   }
-  inputs <- c(gff3 = "ensembl116_grch38_gff3", fasta = "ensembl116_grch38_fasta_fa")
+  inputs <- c(gff3 = if (matched) "fastvep_ensembl116_duckvep_gff3" else
+      "ensembl116_grch38_gff3", fasta = "ensembl116_grch38_fasta_fa")
+  matched_gff <- NULL
+  if (matched) {
+    source_id <- "ensembl116_grch38_gff3"
+    model_id <- "duckvep_ensembl116_model"
+    source_path <- duckhts_bench_artifact_path(source_id)
+    model_path <- duckhts_bench_artifact_path(model_id)
+    for (path in c(source_path, model_path)) {
+      if (!file.exists(path) || file.info(path)$size <= 0) {
+        stop("stage the registered source GFF3 and DuckVEP model before the matched cache",
+          call. = FALSE)
+      }
+    }
+    duckhts_bench_validate_identity(source_id, source_path)
+    matched_gff <- duckhts_bench_stage_fastvep_model_gff(
+      model_path, source_path, duckhts_bench_artifact_path(inputs[["gff3"]]), inputs[["gff3"]]
+    )
+    matched_receipt <- duckhts_bench_fastvep_model_gff_receipt(matched_gff[["gff3"]])
+    duckhts_bench_fastvep_validate_matched_identity(
+      registry, identity, inputs[["gff3"]], matched_receipt
+    )
+  }
   paths <- vapply(inputs, duckhts_bench_artifact_path, character(1L))
   for (name in names(inputs)) {
     if (!file.exists(paths[[name]]) || file.info(paths[[name]])$size <= 0) {
@@ -402,6 +773,14 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
     gff3_sha256 = hash(paths[["gff3"]]), fasta_sha256 = hash(paths[["fasta"]]),
     fasta_index_sha256 = hash(paths[["fasta_index"]]),
     probe_sha256 = hash(probe), transcript_count = identity[["transcripts"]])
+  if (matched) {
+    matched_receipt <- duckhts_bench_fastvep_model_gff_receipt(paths[["gff3"]])
+    if (matched_receipt[["transcript_count"]] != identity[["transcripts"]]) {
+      stop("matched GFF3 transcript count differs from the registered cache", call. = FALSE)
+    }
+    expected <- c(expected, model_sha256 = matched_receipt[["model_sha256"]],
+      matched_gff_receipt_sha256 = hash(matched_gff[["receipt"]]))
+  }
   output <- duckhts_bench_artifact_path(id)
   products <- function(directory) c(cache = file.path(directory, "transcripts.cache"),
     receipt = file.path(directory, "transcripts.cache.provenance.tsv"),
@@ -422,6 +801,8 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
         !identical(unname(fields["cache_sha256"]), hash(result[["cache"]]))) {
       stop("existing FastVEP cache identity differs from its inputs or receipt", call. = FALSE)
     }
+    if (matched) result <- c(result, gff3 = paths[["gff3"]],
+      gff3_receipt = matched_gff[["receipt"]])
     return(result)
   }
   dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
@@ -484,6 +865,11 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
       stop("FastVEP input changed during staging: ", name, call. = FALSE)
     }
   }
+  if (matched) {
+    duckhts_bench_stage_fastvep_model_gff(
+      model_path, source_path, paths[["gff3"]], inputs[["gff3"]]
+    )
+  }
   duckhts_bench_write_provenance(id, result[["cache"]])
   receipt <- utils::read.delim(result[["receipt"]], stringsAsFactors = FALSE)
   receipt$value[receipt$field == "cached_output"] <- output
@@ -498,5 +884,8 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
   if (file.exists(output) || !file.rename(staging, output)) {
     stop("could not publish FastVEP cache without replacing existing data", call. = FALSE)
   }
-  products(output)
+  result <- products(output)
+  if (matched) result <- c(result, gff3 = paths[["gff3"]],
+    gff3_receipt = matched_gff[["receipt"]])
+  result
 }

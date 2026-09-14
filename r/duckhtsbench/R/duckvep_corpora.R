@@ -216,27 +216,30 @@ duckhts_bench_duckvep_run_pipeline <- function(bcftools, commands, error) {
   if (status != 0L) stop(error, call. = FALSE)
 }
 
-duckhts_bench_duckvep_publish_pair <- function(temporary, temporary_index, output, output_index) {
-  targets <- c(output, output_index)
-  temporaries <- c(temporary, temporary_index)
+duckhts_bench_publish_files <- function(temporaries, targets) {
+  if (!length(temporaries) || length(temporaries) != length(targets) ||
+      anyDuplicated(targets) || !all(file.exists(temporaries))) {
+    stop("publication requires distinct targets and one existing temporary per target",
+      call. = FALSE)
+  }
   backups <- paste0(targets, ".backup-", Sys.getpid())
   unlink(backups, force = TRUE)
-  backed_up <- logical(2L)
+  backed_up <- logical(length(targets))
   for (index in seq_along(targets)) {
     if (file.exists(targets[[index]])) {
       if (!file.rename(targets[[index]], backups[[index]])) {
         for (restore in which(backed_up)) file.rename(backups[[restore]], targets[[restore]])
-        stop("could not preserve existing DuckVEP corpus artifact: ", targets[[index]], call. = FALSE)
+        stop("could not preserve existing artifact: ", targets[[index]], call. = FALSE)
       }
       backed_up[[index]] <- TRUE
     }
   }
-  published <- logical(2L)
+  published <- logical(length(targets))
   for (index in seq_along(targets)) {
     if (!file.rename(temporaries[[index]], targets[[index]])) {
       for (remove in which(published)) unlink(targets[[remove]], force = TRUE)
       for (restore in which(backed_up)) file.rename(backups[[restore]], targets[[restore]])
-      stop("could not atomically publish DuckVEP corpus artifact: ", targets[[index]], call. = FALSE)
+      stop("could not publish complete artifact set: ", targets[[index]], call. = FALSE)
     }
     published[[index]] <- TRUE
   }
@@ -372,8 +375,8 @@ duckhts_bench_duckvep_derive_corpus <- function(rows, definition, source_index, 
   }
   duckhts_bench_validate_identity(output_row$id, temporary)
   duckhts_bench_validate_identity(output_index_row$id, temporary_index)
-  duckhts_bench_duckvep_publish_pair(
-    temporary, temporary_index, output, paste0(output, ".tbi")
+  duckhts_bench_publish_files(
+    c(temporary, temporary_index), c(output, paste0(output, ".tbi"))
   )
   invisible(output)
 }
