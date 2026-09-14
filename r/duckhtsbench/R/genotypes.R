@@ -163,8 +163,8 @@ duckhts_bench_validate_genotype_phase_set_evidence <- function(
     required_receipt <- c("artifact_id", "workload", "release", "source_locator",
                           "access", "transform", "supplier_identity", "cached_output",
                           "consumer", "source_artifact", "source_supplier_identity",
-                          "source_index_artifact", "bcftools_version", "observed_sha256",
-                          count_fields)
+                          "source_index_artifact", "source_index_supplier_identity",
+                          "bcftools_version", "observed_sha256", count_fields)
     if (!is.character(receipt) || is.null(names(receipt)) ||
         !all(required_receipt %in% names(receipt)) ||
         any(vapply(receipt[required_receipt], length, integer(1L)) != 1L)) {
@@ -177,7 +177,8 @@ duckhts_bench_validate_genotype_phase_set_evidence <- function(
       supplier_identity = as.character(row$supplier_identity), cached_output = paths[[format]],
       consumer = as.character(row$consumer), source_artifact = source_ids[["source"]],
       source_supplier_identity = as.character(source$supplier_identity),
-      source_index_artifact = source_ids[["index"]]
+      source_index_artifact = source_ids[["index"]],
+      source_index_supplier_identity = as.character(source_index$supplier_identity)
     )
     if (!identical(unname(receipt[names(expected_receipt)]), unname(expected_receipt)) ||
         !identical(receipt[["observed_sha256"]],
@@ -309,6 +310,7 @@ duckhts_bench_stage_genotype_phase_set <- function(bcftools = Sys.which("bcftool
     stop("staged phase-set VCF.gz and BCF denominators differ", call. = FALSE)
   }
   source_identity <- plan$supplier_identity[[1L]]
+  source_index_identity <- plan$supplier_identity[[2L]]
   version <- system2(bcftools, "--version", stdout = TRUE)[[1L]]
   for (i in seq_along(outputs)) {
     duckhts_bench_validate_identity(expected_ids[[i + 2L]], staged_outputs[[i]])
@@ -317,8 +319,10 @@ duckhts_bench_stage_genotype_phase_set <- function(bcftools = Sys.which("bcftool
     fields$value[fields$field == "cached_output"] <- outputs[[i]]
     fields <- rbind(fields, data.frame(
       field = c("source_artifact", "source_supplier_identity", "source_index_artifact",
-                "bcftools_version", "observed_sha256", names(counts)),
-      value = c(expected_ids[[1L]], source_identity, expected_ids[[2L]], version,
+                "source_index_supplier_identity", "bcftools_version", "observed_sha256",
+                names(counts)),
+      value = c(expected_ids[[1L]], source_identity, expected_ids[[2L]],
+                source_index_identity, version,
                 digest::digest(file = staged_outputs[[i]], algo = "sha256"), counts),
       stringsAsFactors = FALSE
     ))

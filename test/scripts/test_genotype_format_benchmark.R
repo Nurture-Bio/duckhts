@@ -39,6 +39,7 @@ phase_receipt <- function(format, registry=phase_registry, paths=phase_paths,
                           observations=phase_observations) {
   row <- registry[registry$id == phase_ids[[format]], , drop=FALSE]
   source <- registry[registry$id == phase_source_ids[["source"]], , drop=FALSE]
+  source_index <- registry[registry$id == phase_source_ids[["index"]], , drop=FALSE]
   counts <- as.character(observations[[format]]$counts)
   names(counts) <- names(observations[[format]]$counts)
   c(artifact_id=phase_ids[[format]], workload=row$workload, release=row$release,
@@ -46,7 +47,9 @@ phase_receipt <- function(format, registry=phase_registry, paths=phase_paths,
     supplier_identity=row$supplier_identity, cached_output=paths[[format]],
     consumer=row$consumer, source_artifact=phase_source_ids[["source"]],
     source_supplier_identity=source$supplier_identity,
-    source_index_artifact=phase_source_ids[["index"]], bcftools_version="bcftools test",
+    source_index_artifact=phase_source_ids[["index"]],
+    source_index_supplier_identity=source_index$supplier_identity,
+    bcftools_version="bcftools test",
     observed_sha256=duckhtsbench:::duckhts_bench_genotype_phase_set_sha256(
       paths[[format]]), counts)
 }
@@ -89,6 +92,15 @@ fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
   mutated_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
   phase_observations))
 
+mutated_registry <- phase_registry
+index_row <- mutated_registry$id == phase_source_ids[["index"]]
+mutated_registry$supplier_identity[index_row] <- sub(
+  "eea8fc14759cf85a67eefba7b2968eec1b3af863d3bc4d2255fbab21b7f61262",
+  strrep("0", 64L), mutated_registry$supplier_identity[index_row], fixed=TRUE)
+fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  mutated_registry, phase_ids, phase_source_ids, phase_paths, phase_receipts,
+  phase_observations))
+
 for (mutation in list(
     list(field="region", before="region=chr1", after="region=chr2"),
     list(field="ps_type", before="ps_type=Integer", after="ps_type=String"))) {
@@ -107,7 +119,8 @@ for (mutation in list(
     phase_observations))
 }
 
-for (field in c("source_artifact", "source_supplier_identity", "source_index_artifact")) {
+for (field in c("source_artifact", "source_supplier_identity", "source_index_artifact",
+                "source_index_supplier_identity")) {
   mutated_receipts <- phase_receipts
   mutated_receipts[["VCF"]][[field]] <- paste0(mutated_receipts[["VCF"]][[field]], "-wrong")
   fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(

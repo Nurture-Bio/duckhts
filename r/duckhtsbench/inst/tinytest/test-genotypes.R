@@ -81,6 +81,13 @@ test_genotype_staging <- function() {
   expect_equal(duckhtsbench:::duckhts_bench_genotype_phase_counts(phase_outputs[["bcf"]], bcftools),
                c(records = 2, samples = 2, calls = 4, allele_slots = 7, nonnull_ps = 1))
   expect_true(all(file.exists(paste0(phase_outputs, ".provenance.tsv"))))
+  phase_receipts <- lapply(paste0(phase_outputs, ".provenance.tsv"), function(path) {
+    receipt <- utils::read.delim(path, colClasses = "character", check.names = FALSE)
+    stats::setNames(receipt$value, receipt$field)
+  })
+  expect_true(all(vapply(phase_receipts, function(receipt) {
+    identical(receipt[["source_index_supplier_identity"]], mini$supplier_identity[[2L]])
+  }, logical(1L))))
   bundle <- c(phase_outputs, paste0(phase_outputs, ".provenance.tsv"))
   bundle_hashes <- tools::md5sum(bundle)
   mini$supplier_identity[mini$id == phase_ids[[4L]]] <- sub(

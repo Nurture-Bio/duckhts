@@ -180,7 +180,7 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   `FORMAT/PS` values, exact GT/PS multiset comparisons and mutation controls;
   the derived VCF.gz and BCF must declare the same semantic workload identity,
   and report publication rechecks their observed region, PS type, denominators
-  and source provenance against that identity.
+  and source/index identities against that provenance.
   FastVEP staging can now derive its GFF3 from the exact DuckVEP transcript
   inventory and records bidirectional transcript, exon and CDS geometry proofs
   before constructing a cache; reuse recomputes those counts, digests and six
