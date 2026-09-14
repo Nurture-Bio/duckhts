@@ -33,6 +33,10 @@ https://github.com/RGenomicsETL/duckhts/issues/218.
 
 ## DuckVEP independent-event annotation
 
+- Fuse consequence annotation with typed transcript projection for complete
+  field exports. This removes the intermediate annotation table and second
+  projection pass while preserving the existing 17-field and VEP-CSQ output
+  contracts.
 - Add `duckvep_transcript_projection()` for typed transcript/CDS/protein ranges,
   exon/intron ordinals, transcript distance, quality flags and codon/amino-acid
   display from existing annotations and prepared models. Selected transcripts
