@@ -181,6 +181,10 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   FastVEP staging can now derive its GFF3 from the exact DuckVEP transcript
   inventory and records bidirectional transcript, exon and CDS geometry proofs
   before constructing a cache; the declared logical model hash is enforced.
+  The source-bound whole-GIAB campaign retains three one- and four-core runs for
+  each declared output contract, with all 4,095,611 eligible source ALT alleles
+  covered. Complete-field timings expose the current materialized SQL projection
+  path separately from the faster compact annotation path.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
