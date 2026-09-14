@@ -177,7 +177,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   those same cells without changing the alleles or model. Independent-event HGVS
   gaps remain tracked in https://github.com/RGenomicsETL/duckhts/issues/223.
 - Add registered, network-free benchmark inputs with real non-null integer
-  `FORMAT/PS` values, exact GT/PS multiset comparisons and mutation controls.
+  `FORMAT/PS` values, exact GT/PS multiset comparisons and mutation controls;
+  the derived VCF.gz and BCF must declare the same semantic workload identity.
   FastVEP staging can now derive its GFF3 from the exact DuckVEP transcript
   inventory and records bidirectional transcript, exon and CDS geometry proofs
   before constructing a cache; the declared logical model hash is enforced.

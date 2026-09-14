@@ -146,11 +146,17 @@ duckhts_bench_stage_genotype_phase_set <- function(bcftools = Sys.which("bcftool
   )
   staged_outputs <- duckhts_bench_genotype_staging_paths(outputs, "genotype-phase-set")
   on.exit(unlink(dirname(staged_outputs[[1L]]), recursive = TRUE), add = TRUE)
-  identity <- duckhts_bench_identity_fields(plan$supplier_identity[[3L]])
-  required <- c("region", "records", "samples", "calls", "allele_slots", "nonnull_ps")
-  if (!all(required %in% names(identity))) {
-    stop("phase-set derived artifact lacks its workload denominators", call. = FALSE)
+  identities <- lapply(plan$supplier_identity[3:4], duckhts_bench_identity_fields)
+  required <- c("region", "all_samples", "genotypes_removed", "ps_type",
+                "records", "samples", "calls", "allele_slots", "nonnull_ps")
+  if (!all(vapply(identities, function(identity) all(required %in% names(identity)),
+                  logical(1L)))) {
+    stop("phase-set derived artifact lacks required workload identity fields", call. = FALSE)
   }
+  if (!identical(identities[[1L]][required], identities[[2L]][required])) {
+    stop("phase-set VCF.gz and BCF registry identities differ", call. = FALSE)
+  }
+  identity <- identities[[1L]]
   staged <- duckhts_bench_genotype_pair(source, identity[["region"]], staged_outputs, bcftools)
   counts <- duckhts_bench_genotype_phase_counts(staged_outputs[["vcf"]], bcftools)
   expected <- as.numeric(identity[c("records", "samples", "calls", "allele_slots", "nonnull_ps")])

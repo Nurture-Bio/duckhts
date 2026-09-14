@@ -63,8 +63,10 @@ test_genotype_staging <- function() {
     supplier_identity = c(
       paste0("bytes=", file.info(compressed)$size),
       paste0("bytes=", file.info(paste0(compressed, ".tbi"))$size),
-      "region=chr22:1-20;records=2;samples=2;calls=4;allele_slots=7;nonnull_ps=1",
-      "region=chr22:1-20;records=2;samples=2;calls=4;allele_slots=7;nonnull_ps=1"
+      paste0("region=chr22:1-20;all_samples=true;genotypes_removed=false;ps_type=Integer;",
+             "records=2;samples=2;calls=4;allele_slots=7;nonnull_ps=1"),
+      paste0("region=chr22:1-20;all_samples=true;genotypes_removed=false;ps_type=Integer;",
+             "records=2;samples=2;calls=4;allele_slots=7;nonnull_ps=1")
     ), stringsAsFactors = FALSE
   )
   mini <- mini[names(registry)]
@@ -81,6 +83,17 @@ test_genotype_staging <- function() {
   expect_true(all(file.exists(paste0(phase_outputs, ".provenance.tsv"))))
   bundle <- c(phase_outputs, paste0(phase_outputs, ".provenance.tsv"))
   bundle_hashes <- tools::md5sum(bundle)
+  mini$supplier_identity[mini$id == phase_ids[[4L]]] <- sub(
+    "nonnull_ps=1", "nonnull_ps=0",
+    mini$supplier_identity[mini$id == phase_ids[[4L]]], fixed = TRUE
+  )
+  utils::write.table(mini, mini_registry, sep = "\t", row.names = FALSE, quote = FALSE)
+  expect_error(duckhts_bench_stage_genotype_phase_set(bcftools), "registry identities differ")
+  expect_equal(tools::md5sum(bundle), bundle_hashes)
+  mini$supplier_identity[mini$id == phase_ids[[4L]]] <- sub(
+    "nonnull_ps=0", "nonnull_ps=1",
+    mini$supplier_identity[mini$id == phase_ids[[4L]]], fixed = TRUE
+  )
   mini$supplier_identity[mini$id %in% phase_ids[3:4]] <- sub(
     "records=2", "records=3", mini$supplier_identity[mini$id %in% phase_ids[3:4]], fixed = TRUE
   )
