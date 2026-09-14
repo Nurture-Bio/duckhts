@@ -40,7 +40,7 @@ duckhts_bench_publish_genotype_bundle <- function(staged, outputs) {
   duckhts_bench_publish_files(temporary, targets)
 }
 
-duckhts_bench_genotype_phase_counts <- function(path, bcftools) {
+duckhts_bench_genotype_phase_observation <- function(path, bcftools) {
   query <- function(args) {
     result <- system2(bcftools, shQuote(args), stdout = TRUE)
     if (!is.null(attr(result, "status"))) {
@@ -58,7 +58,9 @@ duckhts_bench_genotype_phase_counts <- function(path, bcftools) {
   samples <- query(c("query", "-l", path))
   records <- query(c("query", "-f", "%CHROM\\n", path))
   calls <- query(c("query", "-f", "[%GT\\t%PS\\n]", path))
-  if (!length(samples) || length(calls) != length(records) * length(samples)) {
+  regions <- unique(records)
+  if (!length(samples) || length(regions) != 1L ||
+      length(calls) != length(records) * length(samples)) {
     stop("phase-set benchmark record/sample cardinality is inconsistent", call. = FALSE)
   }
   fields <- strsplit(calls, "\t", fixed = TRUE)
@@ -67,9 +69,146 @@ duckhts_bench_genotype_phase_counts <- function(path, bcftools) {
   }
   gt <- vapply(fields, `[[`, character(1L), 1L)
   ps <- vapply(fields, `[[`, character(1L), 2L)
-  c(records = length(records), samples = length(samples), calls = length(calls),
-    allele_slots = sum(nchar(gsub("[^|/]", "", gt)) + 1L),
-    nonnull_ps = sum(ps != "."))
+  list(
+    region = regions, ps_type = "Integer", samples = samples, calls = calls,
+    counts = c(records = length(records), samples = length(samples), calls = length(calls),
+      allele_slots = sum(nchar(gsub("[^|/]", "", gt)) + 1L),
+      nonnull_ps = sum(ps != "."))
+  )
+}
+
+duckhts_bench_genotype_phase_counts <- function(path, bcftools) {
+  duckhts_bench_genotype_phase_observation(path, bcftools)$counts
+}
+
+duckhts_bench_genotype_phase_set_sha256 <- function(path) {
+  digest::digest(file = path, algo = "sha256")
+}
+
+duckhts_bench_read_genotype_phase_set_receipt <- function(path) {
+  receipt <- utils::read.delim(path, colClasses = "character", check.names = FALSE,
+                               stringsAsFactors = FALSE)
+  if (!identical(names(receipt), c("field", "value")) || !nrow(receipt) ||
+      anyNA(receipt$field) || anyNA(receipt$value) ||
+      any(!nzchar(receipt$field)) || any(!nzchar(receipt$value)) ||
+      anyDuplicated(receipt$field)) {
+    stop("phase-set provenance receipt is malformed", call. = FALSE)
+  }
+  stats::setNames(receipt$value, receipt$field)
+}
+
+duckhts_bench_validate_genotype_phase_set_evidence <- function(
+    registry, ids, source_ids, paths, receipts, observations) {
+  formats <- c("VCF", "BCF")
+  semantic_fields <- c("region", "all_samples", "genotypes_removed", "ps_type",
+                       "records", "samples", "calls", "allele_slots", "nonnull_ps")
+  count_fields <- c("records", "samples", "calls", "allele_slots", "nonnull_ps")
+  registry_fields <- c("workload", "release", "locator", "access", "transform",
+                       "supplier_identity", "consumer")
+  if (!identical(names(ids), formats) || !identical(names(paths), formats) ||
+      !identical(names(receipts), formats) || !identical(names(observations), formats) ||
+      !identical(names(source_ids), c("source", "index"))) {
+    stop("phase-set evidence inputs must use the declared names", call. = FALSE)
+  }
+  required_ids <- c(unname(source_ids), unname(ids))
+  if (anyDuplicated(required_ids) ||
+      any(vapply(required_ids, function(id) sum(registry$id == id) != 1L, logical(1L)))) {
+    stop("phase-set registry closure is incomplete or non-unique", call. = FALSE)
+  }
+  rows <- lapply(required_ids, function(id) registry[registry$id == id, , drop = FALSE])
+  names(rows) <- required_ids
+  if (!all(registry_fields %in% names(registry))) {
+    stop("phase-set registry lacks provenance fields", call. = FALSE)
+  }
+  derived <- lapply(ids, function(id) rows[[id]])
+  source <- rows[[source_ids[["source"]]]]
+  source_index <- rows[[source_ids[["index"]]]]
+  closure <- c(list(source, source_index), derived)
+  if (!all(vapply(closure, function(row)
+      identical(as.character(row$workload), "genotype-phase-set"), logical(1L))) ||
+      !identical(as.character(derived[["VCF"]]$locator),
+                 paste0("artifact:", source_ids[["source"]], ";artifact:",
+                        source_ids[["index"]])) ||
+      !identical(as.character(derived[["BCF"]]$locator),
+                 paste0("artifact:", ids[["VCF"]])) ||
+      length(unique(vapply(closure, function(row)
+        as.character(row$release), character(1L)))) != 1L) {
+    stop("phase-set registry dependency or release contract is inconsistent", call. = FALSE)
+  }
+
+  identities <- lapply(derived, function(row)
+    duckhts_bench_identity_fields(row$supplier_identity))
+  if (!all(vapply(identities, function(identity)
+      setequal(names(identity), semantic_fields), logical(1L)))) {
+    stop("phase-set registry identity has an incomplete semantic contract", call. = FALSE)
+  }
+  identities <- lapply(identities, function(identity) identity[semantic_fields])
+  if (!identical(identities[["VCF"]], identities[["BCF"]]) ||
+      !identical(unname(identities[["VCF"]][c("all_samples", "genotypes_removed")]),
+                 c("true", "false"))) {
+    stop("phase-set registry identities disagree", call. = FALSE)
+  }
+  expected_identity <- identities[["VCF"]]
+  expected_counts <- suppressWarnings(as.numeric(expected_identity[count_fields]))
+  if (anyNA(expected_counts) || any(!is.finite(expected_counts)) ||
+      any(expected_counts < 0) || any(expected_counts != floor(expected_counts))) {
+    stop("phase-set registry denominators are invalid", call. = FALSE)
+  }
+  names(expected_counts) <- count_fields
+
+  for (format in formats) {
+    row <- derived[[format]]
+    receipt <- receipts[[format]]
+    observation <- observations[[format]]
+    required_receipt <- c("artifact_id", "workload", "release", "source_locator",
+                          "access", "transform", "supplier_identity", "cached_output",
+                          "consumer", "source_artifact", "source_supplier_identity",
+                          "source_index_artifact", "bcftools_version", "observed_sha256",
+                          count_fields)
+    if (!is.character(receipt) || is.null(names(receipt)) ||
+        !all(required_receipt %in% names(receipt)) ||
+        any(vapply(receipt[required_receipt], length, integer(1L)) != 1L)) {
+      stop("phase-set provenance receipt lacks required fields", call. = FALSE)
+    }
+    expected_receipt <- c(
+      artifact_id = ids[[format]], workload = as.character(row$workload),
+      release = as.character(row$release), source_locator = as.character(row$locator),
+      access = as.character(row$access), transform = as.character(row$transform),
+      supplier_identity = as.character(row$supplier_identity), cached_output = paths[[format]],
+      consumer = as.character(row$consumer), source_artifact = source_ids[["source"]],
+      source_supplier_identity = as.character(source$supplier_identity),
+      source_index_artifact = source_ids[["index"]]
+    )
+    if (!identical(unname(receipt[names(expected_receipt)]), unname(expected_receipt)) ||
+        !identical(receipt[["observed_sha256"]],
+                   duckhts_bench_genotype_phase_set_sha256(paths[[format]])) ||
+        length(receipt[["bcftools_version"]]) != 1L ||
+        !nzchar(receipt[["bcftools_version"]])) {
+      stop("phase-set provenance does not match the registry or artifact", call. = FALSE)
+    }
+    if (!is.list(observation) ||
+        !all(c("region", "ps_type", "counts") %in% names(observation)) ||
+        length(observation$region) != 1L || length(observation$ps_type) != 1L ||
+        !identical(names(observation$counts), count_fields)) {
+      stop("phase-set observation is incomplete", call. = FALSE)
+    }
+    if (!identical(as.character(observation$region), expected_identity[["region"]]) ||
+        !identical(as.character(observation$ps_type), expected_identity[["ps_type"]]) ||
+        !identical(as.numeric(observation$counts), unname(expected_counts)) ||
+        !identical(unname(receipt[count_fields]), unname(expected_identity[count_fields]))) {
+      stop("phase-set observation or receipt disagrees with the registry", call. = FALSE)
+    }
+  }
+  if (!identical(receipts[["VCF"]][["bcftools_version"]],
+                 receipts[["BCF"]][["bcftools_version"]])) {
+    stop("phase-set encodings were not produced by the same bcftools version", call. = FALSE)
+  }
+  identity <- do.call(rbind, lapply(formats, function(format) data.frame(
+    format = format, artifact = ids[[format]], bytes = file.info(paths[[format]])$size,
+    sha256 = receipts[[format]][["observed_sha256"]],
+    source = receipts[[format]][["source_artifact"]], stringsAsFactors = FALSE)))
+  rownames(identity) <- NULL
+  identity
 }
 
 #' Stage a Real Cohort for Genotype Reader Benchmarks

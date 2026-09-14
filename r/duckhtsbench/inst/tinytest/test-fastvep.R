@@ -228,6 +228,50 @@ local({
     duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]]))
   expect_identical(stage(model, source, output), result)
 
+  output_connection <- file(output, "rb")
+  original_output <- readBin(output_connection, "raw", n = file.info(output)$size)
+  close(output_connection)
+  original_receipt <- readLines(result[["receipt"]], warn = FALSE)
+  forge_receipt <- function(fields, values) {
+    forged <- utils::read.delim(result[["receipt"]], colClasses = "character", quote = "",
+      comment.char = "", check.names = FALSE)
+    forged$value[match(fields, forged$field)] <- values
+    utils::write.table(forged, result[["receipt"]], sep = "\t", quote = FALSE, row.names = FALSE)
+    output_before <- duckhtsbench:::duckhts_bench_duckvep_sha256_file(output)
+    receipt_before <- duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]])
+    expect_error(stage(model, source, output), "existing matched FastVEP GFF3")
+    expect_identical(duckhtsbench:::duckhts_bench_duckvep_sha256_file(output), output_before)
+    expect_identical(duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]]),
+      receipt_before)
+    writeLines(original_receipt, result[["receipt"]], useBytes = TRUE)
+  }
+  forge_receipt(c("transcript_count", "gene_count", "exon_count", "cds_segment_count"),
+    c("3", "3", "4", "2"))
+  forge_receipt(c("transcript_inventory_sha256", "exon_geometry_sha256", "cds_geometry_sha256"),
+    c(strrep("b", 64L), strrep("c", 64L), strrep("d", 64L)))
+
+  changed <- expected
+  changed[[5L]] <- sub("ensembl_phase=-1", "ensembl_phase=0", changed[[5L]], fixed = TRUE)
+  changed_connection <- gzfile(output, "wt")
+  writeLines(changed, changed_connection, useBytes = TRUE)
+  close(changed_connection)
+  forged <- utils::read.delim(result[["receipt"]], colClasses = "character", quote = "",
+    comment.char = "", check.names = FALSE)
+  forged$value[forged$field == "filtered_gff3_sha256"] <-
+    duckhtsbench:::duckhts_bench_duckvep_sha256_file(output)
+  utils::write.table(forged, result[["receipt"]], sep = "\t", quote = FALSE, row.names = FALSE)
+  output_before <- duckhtsbench:::duckhts_bench_duckvep_sha256_file(output)
+  receipt_before <- duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]])
+  expect_error(stage(model, source, output), "cannot be revalidated.*exons geometry")
+  expect_identical(duckhtsbench:::duckhts_bench_duckvep_sha256_file(output), output_before)
+  expect_identical(duckhtsbench:::duckhts_bench_duckvep_sha256_file(result[["receipt"]]),
+    receipt_before)
+  output_connection <- file(output, "wb")
+  writeBin(original_output, output_connection)
+  close(output_connection)
+  writeLines(original_receipt, result[["receipt"]], useBytes = TRUE)
+  expect_identical(stage(model, source, output), result)
+
   model_identity <- strrep("a", 64L)
   matched_registry <- data.frame(id = "matched_gff", supplier_identity = paste0(
     "schema=duckvep_fastvep_matched_gff_v1;model_sha256=", model_identity,

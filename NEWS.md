@@ -178,10 +178,13 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   gaps remain tracked in https://github.com/RGenomicsETL/duckhts/issues/223.
 - Add registered, network-free benchmark inputs with real non-null integer
   `FORMAT/PS` values, exact GT/PS multiset comparisons and mutation controls;
-  the derived VCF.gz and BCF must declare the same semantic workload identity.
+  the derived VCF.gz and BCF must declare the same semantic workload identity,
+  and report publication rechecks their observed region, PS type, denominators
+  and source provenance against that identity.
   FastVEP staging can now derive its GFF3 from the exact DuckVEP transcript
   inventory and records bidirectional transcript, exon and CDS geometry proofs
-  before constructing a cache; the declared logical model hash is enforced.
+  before constructing a cache; reuse recomputes those counts, digests and six
+  bidirectional comparisons instead of trusting the retained receipt.
   The source-bound whole-GIAB campaign retains three one- and four-core runs for
   each declared output contract, with all 4,095,611 eligible source ALT alleles
   covered. Complete-field timings expose the current materialized SQL projection

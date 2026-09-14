@@ -15,6 +15,117 @@ for (cut in 1:3) {
     genotype_format_counts(lines[seq.int(cut + 1L, length(lines))]), expected))
 }
 fails <- function(expr) stopifnot(inherits(tryCatch({force(expr); NULL}, error=identity), "error"))
+
+phase_registry <- read.delim("r/duckhtsbench/inst/benchmark_registry.tsv",
+                             stringsAsFactors=FALSE, check.names=FALSE)
+phase_ids <- c(VCF="geno_giab_phased_chr1_vcfgz", BCF="geno_giab_phased_chr1_bcf")
+phase_source_ids <- c(source="geno_giab_phased_source", index="geno_giab_phased_source_tbi")
+phase_directory <- tempfile("genotype-phase-report-gate-")
+dir.create(phase_directory)
+phase_paths <- c(VCF=file.path(phase_directory, "input.vcf.gz"),
+                 BCF=file.path(phase_directory, "input.bcf"))
+writeBin(charToRaw("registered VCF encoding"), phase_paths[["VCF"]])
+writeBin(charToRaw("registered BCF encoding"), phase_paths[["BCF"]])
+phase_row <- function(id, registry=phase_registry) registry[registry$id == id, , drop=FALSE]
+phase_identity_fields <- getFromNamespace("duckhts_bench_identity_fields", "duckhtsbench")
+phase_semantics <- phase_identity_fields(phase_row(phase_ids[["VCF"]])$supplier_identity)
+phase_count_fields <- c("records", "samples", "calls", "allele_slots", "nonnull_ps")
+phase_counts <- as.numeric(phase_semantics[phase_count_fields])
+names(phase_counts) <- phase_count_fields
+phase_observations <- setNames(lapply(names(phase_ids), function(format) list(
+  region=phase_semantics[["region"]], ps_type=phase_semantics[["ps_type"]],
+  counts=phase_counts)), names(phase_ids))
+phase_receipt <- function(format, registry=phase_registry, paths=phase_paths,
+                          observations=phase_observations) {
+  row <- registry[registry$id == phase_ids[[format]], , drop=FALSE]
+  source <- registry[registry$id == phase_source_ids[["source"]], , drop=FALSE]
+  counts <- as.character(observations[[format]]$counts)
+  names(counts) <- names(observations[[format]]$counts)
+  c(artifact_id=phase_ids[[format]], workload=row$workload, release=row$release,
+    source_locator=row$locator, access=row$access, transform=row$transform,
+    supplier_identity=row$supplier_identity, cached_output=paths[[format]],
+    consumer=row$consumer, source_artifact=phase_source_ids[["source"]],
+    source_supplier_identity=source$supplier_identity,
+    source_index_artifact=phase_source_ids[["index"]], bcftools_version="bcftools test",
+    observed_sha256=duckhtsbench:::duckhts_bench_genotype_phase_set_sha256(
+      paths[[format]]), counts)
+}
+phase_receipts <- setNames(lapply(names(phase_ids), phase_receipt), names(phase_ids))
+phase_evidence <- duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, phase_paths, phase_receipts,
+  phase_observations)
+stopifnot(identical(phase_evidence$artifact, unname(phase_ids)),
+          identical(phase_evidence$source, rep(unname(phase_source_ids[["source"]]), 2L)))
+
+# A different internally agreeing pair remains rejected after all observed hashes
+# and counts are resealed because its live denominators do not match the registry.
+replacement_directory <- tempfile("genotype-phase-report-replacement-")
+dir.create(replacement_directory)
+replacement_paths <- c(VCF=file.path(replacement_directory, "input.vcf.gz"),
+                       BCF=file.path(replacement_directory, "input.bcf"))
+writeBin(charToRaw("different matching VCF encoding"), replacement_paths[["VCF"]])
+writeBin(charToRaw("different matching BCF encoding"), replacement_paths[["BCF"]])
+replacement_observations <- phase_observations
+for (format in names(replacement_observations)) {
+  replacement_observations[[format]]$counts[c("records", "calls", "allele_slots")] <-
+    replacement_observations[[format]]$counts[c("records", "calls", "allele_slots")] +
+    c(1, 1, 2)
+}
+replacement_receipts <- setNames(lapply(names(phase_ids), phase_receipt,
+  paths=replacement_paths, observations=replacement_observations), names(phase_ids))
+fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, replacement_paths,
+  replacement_receipts, replacement_observations))
+
+mutated_registry <- phase_registry
+bcf_row <- mutated_registry$id == phase_ids[["BCF"]]
+mutated_registry$supplier_identity[bcf_row] <- sub(
+  "nonnull_ps=142838", "nonnull_ps=142837",
+  mutated_registry$supplier_identity[bcf_row], fixed=TRUE)
+mutated_receipts <- phase_receipts
+mutated_receipts[["BCF"]][["supplier_identity"]] <-
+  mutated_registry$supplier_identity[bcf_row]
+fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  mutated_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
+  phase_observations))
+
+for (mutation in list(
+    list(field="region", before="region=chr1", after="region=chr2"),
+    list(field="ps_type", before="ps_type=Integer", after="ps_type=String"))) {
+  mutated_registry <- phase_registry
+  derived_rows <- mutated_registry$id %in% unname(phase_ids)
+  mutated_registry$supplier_identity[derived_rows] <- sub(
+    mutation$before, mutation$after,
+    mutated_registry$supplier_identity[derived_rows], fixed=TRUE)
+  mutated_receipts <- phase_receipts
+  for (format in names(mutated_receipts)) {
+    mutated_receipts[[format]][["supplier_identity"]] <-
+      phase_row(phase_ids[[format]], mutated_registry)$supplier_identity
+  }
+  fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+    mutated_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
+    phase_observations))
+}
+
+for (field in c("source_artifact", "source_supplier_identity", "source_index_artifact")) {
+  mutated_receipts <- phase_receipts
+  mutated_receipts[["VCF"]][[field]] <- paste0(mutated_receipts[["VCF"]][[field]], "-wrong")
+  fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+    phase_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
+    phase_observations))
+}
+mutated_receipts <- phase_receipts
+mutated_receipts[["VCF"]][["observed_sha256"]] <- strrep("0", 64L)
+fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
+  phase_observations))
+mutated_receipts <- phase_receipts
+mutated_receipts[["VCF"]] <- mutated_receipts[["VCF"]][
+  names(mutated_receipts[["VCF"]]) != "source_artifact"]
+fails(duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, phase_paths, mutated_receipts,
+  phase_observations))
+unlink(c(phase_directory, replacement_directory), recursive=TRUE)
 fails(genotype_format_counts(paste0(lines, "\textra_sample")))
 fails(genotype_format_counts(sub("./.", "|0/1", lines[1], fixed=TRUE)))
 raw_lines <- c(lines, sub("./.", "|0/1", lines[1], fixed=TRUE),

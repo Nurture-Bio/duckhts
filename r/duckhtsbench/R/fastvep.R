@@ -462,6 +462,7 @@ duckhts_bench_fastvep_validate_model_gff <- function(connection, output) {
   ))
   differences <- character()
   relations <- c(transcript = "transcripts", exon = "exons", cds = "cds")
+  first_mismatch <- NULL
   for (label in names(relations)) {
     name <- relations[[label]]
     model_only <- DBI::dbGetQuery(connection, sprintf(
@@ -474,9 +475,11 @@ duckhts_bench_fastvep_validate_model_gff <- function(connection, output) {
     ))$n[[1L]]
     differences[[paste0(label, "_model_only")]] <- as.character(model_only)
     differences[[paste0(label, "_source_only")]] <- as.character(source_only)
-    if (model_only != 0 || source_only != 0) {
-      stop("filtered FastVEP GFF3 differs from DuckVEP ", name, " geometry", call. = FALSE)
-    }
+    if (is.null(first_mismatch) && (model_only != 0 || source_only != 0)) first_mismatch <- name
+  }
+  if (!is.null(first_mismatch)) {
+    stop("filtered FastVEP GFF3 differs from DuckVEP ", first_mismatch, " geometry",
+      call. = FALSE)
   }
   differences
 }
@@ -507,28 +510,38 @@ duckhts_bench_stage_fastvep_model_gff <- function(model, source, output, artifac
   identity <- c(schema = "duckvep_fastvep_matched_gff_v1",
     source_gff3_sha256 = hash(source), model_sha256 = model_receipt$model_sha256[[1L]],
     proof = proof)
+  geometry <- duckhts_bench_fastvep_model_geometry(connection)
   if (file.exists(output) || file.exists(paste0(output, ".provenance.tsv"))) {
     receipt <- duckhts_bench_fastvep_model_gff_receipt(output)
     counts <- c("transcript_count", "gene_count", "exon_count", "cds_segment_count")
     digests <- c("transcript_inventory_sha256", "exon_geometry_sha256", "cds_geometry_sha256")
-    differences <- c("transcript_model_only", "transcript_source_only", "exon_model_only",
+    difference_names <- c("transcript_model_only", "transcript_source_only", "exon_model_only",
       "exon_source_only", "cds_model_only", "cds_source_only")
     provenance <- if (is.null(artifact_id)) NULL else
       duckhts_bench_provenance_fields(artifact_id, output)
     if (!identical(unname(receipt[names(identity)]), unname(identity)) ||
         any(!grepl("^[1-9][0-9]*$", receipt[counts])) ||
         any(!grepl("^[0-9a-f]{64}$", receipt[digests])) ||
-        any(receipt[differences] != "0") ||
+        any(receipt[difference_names] != "0") ||
         !identical(receipt[["filtered_gff3_sha256"]], hash(output)) ||
         (!is.null(provenance) &&
           !identical(unname(receipt[provenance$field]), unname(provenance$value)))) {
       stop("existing matched FastVEP GFF3 differs from its model or source", call. = FALSE)
     }
+    differences <- tryCatch(
+      duckhts_bench_fastvep_validate_model_gff(connection, output),
+      error = function(error) stop("existing matched FastVEP GFF3 cannot be revalidated: ",
+        conditionMessage(error), call. = FALSE)
+    )
+    recomputed <- c(unlist(geometry, use.names = TRUE), differences)
+    if (!identical(unname(receipt[names(recomputed)]), unname(recomputed))) {
+      stop("existing matched FastVEP GFF3 differs from its recomputed geometry proof",
+        call. = FALSE)
+    }
     receipt_path <- paste0(output, ".provenance.tsv")
     return(c(gff3 = output, receipt = receipt_path, receipt_sha256 = hash(receipt_path)))
   }
 
-  geometry <- duckhts_bench_fastvep_model_geometry(connection)
   expected <- c(identity, unlist(geometry, use.names = TRUE))
   inventory <- DBI::dbGetQuery(connection, paste(
     "SELECT transcript_stable_id AS transcript_id, CAST(transcript_version AS VARCHAR) AS version,",

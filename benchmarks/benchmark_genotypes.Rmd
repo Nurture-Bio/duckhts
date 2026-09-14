@@ -196,43 +196,20 @@ throughput or phased annotation correctness.
 
 ```{r phase-set-measurement, include=FALSE}
 phase_ids <- c(VCF="geno_giab_phased_chr1_vcfgz", BCF="geno_giab_phased_chr1_bcf")
+phase_source_ids <- c(source="geno_giab_phased_source",
+                      index="geno_giab_phased_source_tbi")
 phase_paths <- vapply(phase_ids, duckhts_bench_artifact_path, character(1L))
-phase_identity <- list()
-for (format in names(phase_paths)) {
-  id <- phase_ids[[format]]
-  path <- phase_paths[[format]]
-  duckhts_bench_validate_identity(id, path)
+phase_receipts <- lapply(phase_paths, function(path) {
   receipt_path <- paste0(path, ".provenance.tsv")
   stopifnot(file.exists(receipt_path))
-  receipt <- read.delim(receipt_path, colClasses="character", check.names=FALSE)
-  receipt <- setNames(receipt$value, receipt$field)
-  stopifnot(all(c("source_artifact", "source_supplier_identity", "source_index_artifact",
-                  "bcftools_version", "observed_sha256", "records", "samples", "calls",
-                  "allele_slots", "nonnull_ps") %in% names(receipt)))
-  observed_sha256 <- strsplit(system2("sha256sum", shQuote(path), stdout=TRUE),
-                              "[[:space:]]+")[[1L]][[1L]]
-  stopifnot(identical(observed_sha256, receipt[["observed_sha256"]]))
-  phase_identity[[format]] <- data.frame(
-    format, artifact=id, bytes=file.info(path)$size, sha256=observed_sha256,
-    source=receipt[["source_artifact"]], stringsAsFactors=FALSE)
-}
-phase_identity <- do.call(rbind, phase_identity)
-rownames(phase_identity) <- NULL
+  duckhtsbench:::duckhts_bench_read_genotype_phase_set_receipt(receipt_path)
+})
 
-phase_oracle <- function(path) {
-  samples <- bcftools(c("query", "-l", path))
-  records <- bcftools(c("query", "-f", "%CHROM\\n", path))
-  calls <- bcftools(c("query", "-f", "[%GT\\t%PS\\n]", path))
-  stopifnot(length(samples) > 0L, length(calls) == length(records) * length(samples))
-  fields <- strsplit(calls, "\t", fixed=TRUE)
-  stopifnot(all(lengths(fields) == 2L))
-  gt <- vapply(fields, `[[`, character(1L), 1L)
-  ps <- vapply(fields, `[[`, character(1L), 2L)
-  list(samples=samples, calls=calls, counts=c(
-    records=length(records), samples=length(samples), calls=length(calls),
-    allele_slots=sum(nchar(gsub("[^|/]", "", gt)) + 1L), nonnull_ps=sum(ps != ".")))
-}
-phase_oracles <- lapply(phase_paths, phase_oracle)
+phase_oracles <- lapply(phase_paths,
+  duckhtsbench:::duckhts_bench_genotype_phase_observation, bcftools=Sys.which("bcftools"))
+phase_registry <- duckhts_bench_registry()
+phase_identity <- duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, phase_paths, phase_receipts, phase_oracles)
 stopifnot(identical(phase_oracles[["VCF"]]$samples, phase_oracles[["BCF"]]$samples),
           identical(phase_oracles[["VCF"]]$calls, phase_oracles[["BCF"]]$calls),
           identical(phase_oracles[["VCF"]]$counts, phase_oracles[["BCF"]]$counts),
@@ -323,6 +300,9 @@ The pinned GIAB HG002 v4.2.1 phased benchmark supplies an integer `FORMAT/PS`
 oracle that the existing HPRC cohort and unphased GIAB input do not. Staging
 retains every chr1 record and the original single sample, then encodes those
 same records as VCF.gz and BCF. It does not generate phase sets or filter calls.
+Rendering rejects either encoding unless its live region, PS header type and
+counts match both registered identities and its receipt binds the file hash and
+original source/index provenance.
 
 Stage the registered source and derived inputs explicitly before rendering:
 
