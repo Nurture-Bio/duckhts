@@ -21,9 +21,20 @@ local({
     CARGO_BUILD_RUSTFLAGS = "-C linker=/poison/build-linker",
     CARGO_BUILD_TARGET_DIR = "poison-build-target", CARGO_BUILD_BUILD_DIR = "poison-intermediates",
     CARGO_BUILD_JOBS = "17", CARGO_BUILD_INCREMENTAL = "true", CARGO_INCREMENTAL = "1")
+  native_controls <- unlist(lapply(c("CC", "CXX", "AR", "RANLIB", "CFLAGS", "CXXFLAGS",
+    "ARFLAGS", "RANLIBFLAGS", "CXXSTDLIB"), function(name) {
+      c(name, paste0(c("HOST_", "TARGET_"), name),
+        paste0(name, c("_x86_64-unknown-linux-gnu", "_x86_64_unknown_linux_gnu",
+          "_thumbv8m.main-none-eabi", "_thumbv8m_main_none_eabi")))
+    }), use.names = FALSE)
+  native_controls <- c(native_controls, "CC_KNOWN_WRAPPER_CUSTOM", "CC_ENABLE_DEBUG_OUTPUT",
+    "CC_SHELL_ESCAPED_FLAGS", "CC_FORCE_DISABLE", "CRATE_CC_NO_DEFAULTS", "CROSS_COMPILE",
+    "RUSTC_LINKER", "ZSTD_SYS_USE_PKG_CONFIG", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+    "LIBRARY_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX", "GCC_COMPARE_DEBUG",
+    "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
   controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
-    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls))
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls), native_controls)
   previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "CARGO_HOME", "FASTVEP_BUILD_TEST_FAIL",
     "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG",
     "FASTVEP_BUILD_TEST_SOURCE_MUTATION", controls),
@@ -88,6 +99,8 @@ local({
     "test -z \"${CARGO_INCREMENTAL+x}\"",
     "if env | grep -Eq '^CARGO_(TARGET_|BUILD_|PROFILE_)'; then",
     "  echo 'inherited Cargo build configuration' >&2; exit 8", "fi",
+    "if env | grep -Eq '^((HOST|TARGET)_)?(CC|CXX|AR|RANLIB|CFLAGS|CXXFLAGS|ARFLAGS|RANLIBFLAGS|CXXSTDLIB)(_|=)'; then",
+    "  echo 'inherited native compiler configuration' >&2; exit 8", "fi",
     "test -f \"$CARGO_HOME/offline-cache-fixture\"",
     "\"$RUSTC\" -vV", "target=", "manifest=", "verbose=", "offline=", "while [ $# -gt 0 ]; do",
     "  if [ \"$1\" = --verbose ]; then verbose=1; fi",
@@ -153,12 +166,20 @@ local({
     c("/.cargo/config", "/.cargo/config.toml", "/cargo-home/config", "/cargo-home/config.toml"))
   expect_error(config_paths("/fixture/work", "", ""), "set CARGO_HOME")
   build <- duckhtsbench:::duckhts_bench_build_fastvep
-  # Only config discovery is fixture-local; the builder's rejecting predicate,
-  # build, receipt and environment-restoration checks run unchanged.
+  # Config discovery is fixture-local; subprocess observation also checks keys
+  # containing hyphens or dots before a shell can discard them.
   environment(build) <- new.env(parent = environment(build))
   environment(build)$duckhts_bench_fastvep_cargo_config_paths <- function() {
     candidates <- config_paths()
     candidates[startsWith(candidates, paste0(directory, "/"))]
+  }
+  native_build_observations <- 0L
+  environment(build)$system2 <- function(command, args = character(), ...) {
+    if (identical(command, "cargo") && shQuote("build") %in% args) {
+      native_build_observations <<- native_build_observations + 1L
+      expect_true(all(is.na(Sys.getenv(native_controls, unset = NA_character_))))
+    }
+    base::system2(command, args, ...)
   }
   read_build <- duckhtsbench:::duckhts_bench_read_fastvep_build
   hash <- duckhtsbench:::duckhts_bench_duckvep_sha256_file
@@ -168,6 +189,7 @@ local({
   Sys.chmod(stale, "0755")
   output <- file.path(directory, "build")
   product <- build(checkout, output)
+  expect_identical(native_build_observations, 1L)
   expect_identical(Sys.getenv(controls, unset = NA_character_), poisoned)
   expect_true("compiler controls verified" %in% readLines(product[["log"]]))
   expect_false(file.exists(file.path(output, "target")))

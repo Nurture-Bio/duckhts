@@ -263,7 +263,16 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
     "--release", "--locked", "--offline", "--verbose", "--jobs", jobs, "--target-dir", target,
     "-p", "fastvep-cli", "--bin", "fastvep")
   build_controls <- grep("^CARGO_(TARGET_|BUILD_|PROFILE_)", names(Sys.getenv()), value = TRUE)
-  unset <- c("CARGO_ENCODED_RUSTFLAGS", "CARGO_INCREMENTAL", build_controls)
+  # cc-rs reads base, HOST_/TARGET_ and target-suffixed tool/flag variables.
+  # Host tools remain PATH-selected; CARGO_HOME retains the offline dependency cache.
+  native_tools <- "CC|CXX|AR|RANLIB|CFLAGS|CXXFLAGS|ARFLAGS|RANLIBFLAGS|CXXSTDLIB"
+  native_controls <- grep(paste0("^((HOST|TARGET)_)?(", native_tools, ")($|_)"),
+    names(Sys.getenv()), value = TRUE)
+  unset <- c("CARGO_ENCODED_RUSTFLAGS", "CARGO_INCREMENTAL", build_controls, native_controls,
+    "CRATE_CC_NO_DEFAULTS", "CROSS_COMPILE", "RUSTC_LINKER", "ZSTD_SYS_USE_PKG_CONFIG",
+    "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "COMPILER_PATH",
+    "GCC_EXEC_PREFIX", "GCC_COMPARE_DEBUG", "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES",
+    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
   previous <- Sys.getenv(c("RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", unset),
     unset = NA_character_)
   on.exit(for (name in names(previous)) {
