@@ -96,6 +96,8 @@ local({
   stage <- function(...) duckhts_bench_stage_fastvep(repo, checkout, executable, ...)
   output <- duckhts_bench_artifact_path("fastvep_ensembl116_cache")
   expect_error(stage(threads = 0), "positive integer")
+  expect_error(stage(cache_id = "fastvep_ensembl116_duckvep_matched_cache"),
+    "extension is required")
   for (mode in c("oldversion", "failure", "empty", "corrupt", "fallback", "count",
       "prep_failure", "prep_warning", "mutate_native", "mutate_hgvs",
       "mutate_native_second", "mutate_hgvs_second", "index_mutation")) {

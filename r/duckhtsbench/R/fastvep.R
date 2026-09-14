@@ -681,10 +681,12 @@ duckhts_bench_stage_fastvep_model_gff <- function(model, source, output, artifac
 #' @param executable FastVEP executable path.
 #' @param threads Positive integer Rayon worker count for preparation and probes.
 #' @param cache_id Registered full-source or DuckVEP-model-matched cache artifact.
+#' @param extension Built DuckHTS extension used to verify a matched DuckVEP
+#'   model. Required only for a DuckVEP-model-matched cache.
 #' @return Named cache, receipt, preparation and validation log paths.
 #' @export
 duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L,
-    cache_id = "fastvep_ensembl116_cache") {
+    cache_id = "fastvep_ensembl116_cache", extension = NULL) {
   if (length(threads) != 1L || is.na(threads) || !is.numeric(threads) ||
       !is.finite(threads) || threads < 1 || threads > .Machine$integer.max ||
       threads != floor(threads)) {
@@ -702,6 +704,13 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
   id <- cache_id
   row <- registry[registry$id == id, , drop = FALSE]
   matched <- identical(id, "fastvep_ensembl116_duckvep_matched_cache")
+  if (matched) {
+    if (length(extension) != 1L || is.na(extension) || !nzchar(extension)) {
+      stop("extension is required for a DuckVEP-model-matched FastVEP cache",
+        call. = FALSE)
+    }
+    extension <- normalizePath(extension, mustWork = TRUE)
+  }
   expected_transform <- if (matched) "build_fastvep_duckvep_matched_transcript_cache" else
     "build_fastvep_transcript_cache"
   expected_preparation <- if (matched) "duckvep_model_matched_hgvs" else "full_gff_hgvs"
@@ -743,6 +752,20 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
       }
     }
     duckhts_bench_validate_identity(source_id, source_path)
+    model_row <- registry[registry$id == model_id, , drop = FALSE]
+    model_identity <- if (nrow(model_row) == 1L) {
+      duckhts_bench_duckvep_identity(model_row$supplier_identity)
+    } else character()
+    if (!"source_manifest_sha256" %in% names(model_identity) ||
+        !grepl("^[0-9a-f]{64}$", model_identity[["source_manifest_sha256"]])) {
+      stop("registered DuckVEP model lacks its source-manifest identity", call. = FALSE)
+    }
+    validate_model <- function() {
+      duckhts_bench_validate_duckvep_ensembl116_model(
+        model_path, extension, model_identity[["source_manifest_sha256"]]
+      )
+    }
+    validate_model()
     matched_gff <- duckhts_bench_stage_fastvep_model_gff(
       model_path, source_path, duckhts_bench_artifact_path(inputs[["gff3"]]), inputs[["gff3"]]
     )
@@ -879,6 +902,7 @@ duckhts_bench_stage_fastvep <- function(repo, checkout, executable, threads = 1L
     }
   }
   if (matched) {
+    validate_model()
     duckhts_bench_stage_fastvep_model_gff(
       model_path, source_path, paths[["gff3"]], inputs[["gff3"]]
     )

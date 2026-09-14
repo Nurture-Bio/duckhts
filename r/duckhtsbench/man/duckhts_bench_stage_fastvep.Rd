@@ -7,7 +7,8 @@ duckhts_bench_stage_fastvep(
   checkout,
   executable,
   threads = 1L,
-  cache_id = "fastvep_ensembl116_cache"
+  cache_id = "fastvep_ensembl116_cache",
+  extension = NULL
 )
 }
 \arguments{
@@ -17,6 +18,9 @@ duckhts_bench_stage_fastvep(
 \item{threads}{Positive integer Rayon worker count for preparation and probes.}
 
 \item{cache_id}{Registered full-source or DuckVEP-model-matched cache artifact.}
+
+\item{extension}{Built DuckHTS extension used to verify a matched DuckVEP
+model. Required only for a DuckVEP-model-matched cache.}
 }
 \value{Named cache, receipt, preparation and validation log paths.}
 \description{
