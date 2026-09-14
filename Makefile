@@ -289,7 +289,7 @@ test-cache-paths:
 	bash test/scripts/test_liftover_registry_batch.sh
 	bash test/scripts/test_conformance_plugin_cache.sh
 
-test-benchmark-registry: test-variantkey-provider-staging test-duckvep-corpus-staging
+test-benchmark-registry: release test-variantkey-provider-staging test-duckvep-corpus-staging
 	Rscript test/scripts/test_genotype_format_benchmark.R
 	Rscript test/scripts/test_hgvs_cis_codon.R
 	Rscript test/scripts/test_ambiguous_codon.R
@@ -301,12 +301,19 @@ test-benchmark-registry: test-variantkey-provider-staging test-duckvep-corpus-st
 	Rscript test/scripts/test_haplotype_phase_history.R
 	Rscript test/scripts/test_haplotype_model_history.R
 	Rscript test/scripts/test_fastvep_receipt.R
+	Rscript test/scripts/test_fastvep_field_compare.R
+	Rscript test/scripts/test_fastvep_field_extract.R
+	Rscript test/scripts/test_fastvep_source_coverage.R
+	Rscript test/scripts/test_fastvep_field_projection.R
+	Rscript test/scripts/test_fastvep_field_report.R
+	Rscript test/scripts/test_fastvep_field_publish.R
+	Rscript test/scripts/test_fastvep_field_replay.R
 	Rscript test/scripts/test_vep_cache_staging.R
 	Rscript test/scripts/test_duckvep_model_relations.R
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	(cd "$$tmp" && R CMD build --no-build-vignettes --no-manual "$(PROJ_DIR)r/duckhtsbench"); \
 	R CMD INSTALL -l "$$tmp" "$$tmp"/duckhtsbench_*.tar.gz; \
-	Rscript -e '.libPaths(c("'"$$tmp"'", .libPaths())); tinytest::test_package("duckhtsbench", testdir = "tinytest")'
+	DUCKHTS_REPO="$(PROJ_DIR)" Rscript -e '.libPaths(c("'"$$tmp"'", .libPaths())); tinytest::test_package("duckhtsbench", testdir = "tinytest")'
 
 test-variantkey-provider-staging:
 	bash test/scripts/test_variantkey_provider_staging.sh

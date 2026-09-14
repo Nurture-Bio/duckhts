@@ -35,7 +35,8 @@ https://github.com/RGenomicsETL/duckhts/issues/218.
 
 - Add `duckvep_transcript_projection()` for typed transcript/CDS/protein ranges,
   exon/intron ordinals, transcript distance, quality flags and codon/amino-acid
-  display from existing annotations and prepared models.
+  display from existing annotations and prepared models. Selected transcripts
+  share decoded sequences; per-event codon display uses local sequence spans.
 - Correct SNV, MNV and indel consequences around phase-padded CDS starts,
   exon/CDS transitions, partial terminal codons and transcript ends. Physical
   REF validation remains distinct from VEP feature coordinates; unavailable
@@ -162,6 +163,15 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   conformance publication verifies retained observations and rejects altered
   comparison inputs. Existing Python tooling remains where required; new
   statistical/benchmark drivers are R-native.
+- The [DuckVEP/FastVEP benchmark](benchmarks/benchmark_duckvep_fastvep.md)
+  distinguishes compact, native-tab and common-CSQ workloads, with repeated
+  one-/four-core timings, explicit memory limits and complete source-ALT checks.
+  Pinned-source builds verify Git objects and clear inherited compiler overrides,
+  including case-insensitive Windows environment names.
+  Registered caches accompany the measurements.
+  Field comparisons preserve every discrepancy; isolated-record replay checks
+  those same cells without changing the alleles or model. Independent-event HGVS
+  gaps remain tracked in https://github.com/RGenomicsETL/duckhts/issues/223.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build

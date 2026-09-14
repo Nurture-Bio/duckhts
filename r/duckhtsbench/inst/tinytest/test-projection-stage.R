@@ -26,10 +26,65 @@ for (workload in c("duckvep-projection", "duckvep-haplotypes")) local({
   paths <- duckhts_bench_stage_repository_fixtures(directory, workload)
   expect_equal(unname(tools::md5sum(paths)), unname(tools::md5sum(sources)))
   expect_true(all(file.exists(paste0(paths, ".provenance.tsv"))))
+  staged <- c(unname(paths), paste0(paths, ".provenance.tsv"))
+  timestamp <- as.POSIXct("2000-01-01", tz = "UTC")
+  Sys.setFileTime(staged, timestamp)
+  cache_state <- function() list(md5 = tools::md5sum(staged),
+    metadata = file.info(staged)[, c("size", "mtime")])
+  original <- cache_state()
+  for (iteration in seq_len(3L)) {
+    expect_identical(duckhts_bench_stage_repository_fixtures(directory, workload), paths)
+    expect_identical(cache_state(), original)
+  }
+  for (receipt in paste0(paths, ".provenance.tsv")) {
+    content <- readLines(receipt)
+    unlink(receipt)
+    missing <- cache_state()
+    expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
+      pattern = "provenance is missing")
+    expect_identical(cache_state(), missing)
+    writeLines(content, receipt)
+    Sys.setFileTime(receipt, timestamp)
+  }
+  receipt <- paste0(paths[[1L]], ".provenance.tsv")
+  content <- readLines(receipt)
+  fields <- utils::read.delim(receipt, colClasses = "character", quote = "", comment.char = "")
+  for (field in fields$field) {
+    stale <- fields
+    stale$value[stale$field == field] <- paste0(stale$value[stale$field == field], "-stale")
+    utils::write.table(stale, receipt, sep = "\t", row.names = FALSE, quote = FALSE)
+    Sys.setFileTime(receipt, timestamp)
+    corrupted <- cache_state()
+    expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
+      pattern = "provenance does not match current registry")
+    expect_identical(cache_state(), corrupted)
+  }
+  writeLines(content, receipt)
+  Sys.setFileTime(receipt, timestamp)
+  updated <- plan
+  updated$release[[1L]] <- paste0(updated$release[[1L]], "-updated")
+  utils::write.table(updated, registry, sep = "\t", row.names = FALSE, quote = FALSE)
+  expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
+    pattern = "provenance does not match current registry")
+  expect_identical(cache_state(), original)
+  utils::write.table(plan, registry, sep = "\t", row.names = FALSE, quote = FALSE)
   writeLines("bad source", sources[[1]])
   expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
     pattern = "identity does not match")
+  expect_identical(cache_state(), original)
+  writeLines("fixture 1", sources[[1]])
+  for (i in seq_along(paths)) {
+    writeLines("corrupted cached fixture", paths[[i]])
+    Sys.setFileTime(paths[[i]], timestamp)
+    corrupted <- cache_state()
+    expect_error(duckhts_bench_stage_repository_fixtures(directory, workload),
+      pattern = "identity does not match")
+    expect_identical(cache_state(), corrupted)
+    stopifnot(file.copy(sources[[i]], paths[[i]], overwrite = TRUE))
+    Sys.setFileTime(paths[[i]], timestamp)
+  }
   plan$locator[[1]] <- "repo:test/data/../outside"
   utils::write.table(plan, registry, sep = "\t", row.names = FALSE, quote = FALSE)
   expect_error(duckhts_bench_stage_repository_fixtures(directory, workload))
+  expect_identical(cache_state(), original)
 })
