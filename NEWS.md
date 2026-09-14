@@ -166,7 +166,8 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
 - The [DuckVEP/FastVEP benchmark](benchmarks/benchmark_duckvep_fastvep.md)
   distinguishes compact, native-tab and common-CSQ workloads, with repeated
   one-/four-core timings, explicit memory limits and complete source-ALT checks.
-  Pinned-source builds verify Git objects and clear inherited compiler overrides.
+  Pinned-source builds verify Git objects and clear inherited compiler overrides,
+  including case-insensitive Windows environment names.
   Registered caches accompany the measurements.
   Field comparisons preserve every discrepancy; isolated-record replay checks
   those same cells without changing the alleles or model. Independent-event HGVS

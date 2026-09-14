@@ -191,6 +191,19 @@ duckhts_bench_fastvep_cargo_config_paths <- function(directory = getwd(),
     c("config", "config.toml"))
 }
 
+duckhts_bench_fastvep_build_control_names <- function(environment_names) {
+  native_tools <- "CC|CXX|AR|RANLIB|CFLAGS|CXXFLAGS|ARFLAGS|RANLIBFLAGS|CXXSTDLIB"
+  pattern <- paste0("^CARGO_(TARGET_|BUILD_|PROFILE_)|^((HOST|TARGET)_)?(", native_tools, ")($|_)")
+  fixed <- c("RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_ENCODED_RUSTFLAGS", "CARGO_INCREMENTAL", "CRATE_CC_NO_DEFAULTS", "CROSS_COMPILE",
+    "RUSTC_LINKER", "ZSTD_SYS_USE_PKG_CONFIG", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+    "LIBRARY_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX", "GCC_COMPARE_DEBUG",
+    "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
+  # Windows names are case-insensitive; retain their spelling for restoration.
+  environment_names[grepl(pattern, environment_names, ignore.case = TRUE) |
+    toupper(environment_names) %in% fixed]
+}
+
 # Build the pinned Git tree with an empty Cargo target directory. Local untracked
 # or ignored files cannot supply build scripts, source, assets or an executable.
 duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
@@ -262,23 +275,14 @@ duckhts_bench_build_fastvep <- function(checkout, output, toolchain = "1.98.1",
   args <- c(paste0("+", toolchain), "build", "--manifest-path", file.path(source, "Cargo.toml"),
     "--release", "--locked", "--offline", "--verbose", "--jobs", jobs, "--target-dir", target,
     "-p", "fastvep-cli", "--bin", "fastvep")
-  build_controls <- grep("^CARGO_(TARGET_|BUILD_|PROFILE_)", names(Sys.getenv()), value = TRUE)
-  # cc-rs reads base, HOST_/TARGET_ and target-suffixed tool/flag variables.
   # Host tools remain PATH-selected; CARGO_HOME retains the offline dependency cache.
-  native_tools <- "CC|CXX|AR|RANLIB|CFLAGS|CXXFLAGS|ARFLAGS|RANLIBFLAGS|CXXSTDLIB"
-  native_controls <- grep(paste0("^((HOST|TARGET)_)?(", native_tools, ")($|_)"),
-    names(Sys.getenv()), value = TRUE)
-  unset <- c("CARGO_ENCODED_RUSTFLAGS", "CARGO_INCREMENTAL", build_controls, native_controls,
-    "CRATE_CC_NO_DEFAULTS", "CROSS_COMPILE", "RUSTC_LINKER", "ZSTD_SYS_USE_PKG_CONFIG",
-    "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "COMPILER_PATH",
-    "GCC_EXEC_PREFIX", "GCC_COMPARE_DEBUG", "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES",
-    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
-  previous <- Sys.getenv(c("RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", unset),
-    unset = NA_character_)
-  on.exit(for (name in names(previous)) {
-    if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
+  controls <- duckhts_bench_fastvep_build_control_names(names(Sys.getenv()))
+  previous <- if (length(controls)) Sys.getenv(controls, names = TRUE) else character()
+  on.exit({
+    Sys.unsetenv(c(controls, "RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"))
+    if (length(previous)) do.call(Sys.setenv, as.list(previous))
   }, add = TRUE)
-  Sys.unsetenv(unset)
+  Sys.unsetenv(controls)
   # Empty wrapper values also disable wrappers configured in Cargo config files.
   Sys.setenv(RUSTFLAGS = rustflags, RUSTC = compiler, RUSTC_WRAPPER = "",
     RUSTC_WORKSPACE_WRAPPER = "")

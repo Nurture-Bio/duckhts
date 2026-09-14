@@ -1,6 +1,17 @@
 library(tinytest)
 
 local({
+  controls <- duckhtsbench:::duckhts_bench_fastvep_build_control_names
+  mixed <- c("Cflags", "target_cc", "Host_Ar", "cc_x86_64-unknown-linux-gnu",
+    "Cargo_Build_Target", "cargo_profile_release_opt_level", "RustFlags", "Rustc_Wrapper",
+    "zstd_sys_use_pkg_config", "cpath", "sDkRoOt", "macosx_deployment_target")
+  expect_identical(controls(c("PATH", mixed, "CARGO_HOME", "UNRELATED")), mixed)
+  expect_identical(controls(c("CFLAGS", "Cflags")), c("CFLAGS", "Cflags"))
+  expect_identical(controls(character()), character())
+  expect_identical(controls(c("PATH", "CARGO_HOME", "ARBITRARY", "CARGO_TERM_COLOR")), character())
+})
+
+local({
   if (.Platform$OS.type != "unix" || !nzchar(Sys.which("git"))) return(invisible(NULL))
   directory <- tempfile("fastvep-build-test-")
   dir.create(directory)
@@ -31,10 +42,14 @@ local({
     "CC_SHELL_ESCAPED_FLAGS", "CC_FORCE_DISABLE", "CRATE_CC_NO_DEFAULTS", "CROSS_COMPILE",
     "RUSTC_LINKER", "ZSTD_SYS_USE_PKG_CONFIG", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
     "LIBRARY_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX", "GCC_COMPARE_DEBUG",
-    "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
-  controls <- c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
+    "DEPENDENCIES_OUTPUT", "SUNPRO_DEPENDENCIES", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET",
+    "Cflags", "target_cc", "Host_Ar", "cc_x86_64-unknown-linux-gnu", "Cargo_Build_Target",
+    "RustFlags", "zstd_sys_use_pkg_config", "sDkRoOt")
+  find_controls <- duckhtsbench:::duckhts_bench_fastvep_build_control_names
+  controls <- unique(c("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
-    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls), native_controls)
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", names(configuration_controls), native_controls,
+    find_controls(names(Sys.getenv()))))
   previous <- Sys.getenv(c("PATH", "DUCKHTSBENCH_REGISTRY", "CARGO_HOME", "FASTVEP_BUILD_TEST_FAIL",
     "FASTVEP_BUILD_TEST_CARGO_MARKER", "FASTVEP_BUILD_TEST_CONFIG",
     "FASTVEP_BUILD_TEST_SOURCE_MUTATION", controls),
@@ -431,9 +446,13 @@ local({
   expect_identical(tools::md5sum(extras), extra_hashes)
   expect_identical(file.info(extras)[, c("size", "mtime")], extra_metadata)
   expect_true("compiler controls verified" %in% readLines(file.path(failed, "build.log")))
-  for (state in c("unset", "empty")) {
-    if (state == "unset") Sys.unsetenv(controls) else {
+  for (state in c("unset", "empty", "single-value", "single-empty")) {
+    Sys.unsetenv(controls)
+    if (state == "empty") {
       do.call(Sys.setenv, as.list(stats::setNames(rep("", length(controls)), controls)))
+    } else if (startsWith(state, "single-")) {
+      Sys.setenv(Cflags = if (state == "single-value") "-O0" else "")
+      expect_identical(find_controls(names(Sys.getenv())), "Cflags")
     }
     expected <- Sys.getenv(controls, unset = NA_character_)
     for (failure in c(FALSE, TRUE)) {
