@@ -98,13 +98,13 @@ result oracle. A single `K/P` point is not a memory-scaling proof.
 
 | item                         | value                                                            |
 |:-----------------------------|:-----------------------------------------------------------------|
-| checkout revision            | 5ad0768d5c3e0343b17ef237c78cd6ae074fea9b                         |
-| checkout src/ tree           | 457e4a5c4c745214bf04180287307026c0aa8ae0                         |
+| checkout revision            | f153bcefd11e489ad14bc7b1f0ddca4ba8489ffb                         |
+| checkout src/ tree           | c481004dfe8e99568a4a3941a7f38c911fa91f0e                         |
 | binary/checkout binding      | verified release receipt: htslib_distclean_make_release          |
-| extension SHA-256            | 3b478536938c9ae84b56b64f8aececcf82cc35795546c3670b83a2fcf436d365 |
+| extension SHA-256            | 15b3296efc2d6a8100ce613f144057d15167a930d22b1c80a2fcb133128e1387 |
 | extension path               | /root/duckhts/build/release/duckhts.duckdb_extension             |
-| build receipt path           | /tmp/duckhts-somalier-5ad0768.tsv                                |
-| build receipt SHA-256        | 76bcd5ab7387e29f34255db532ad3bf1fdb992b0b6f8d83eb79e5ad9e98af6da |
+| build receipt path           | /tmp/duckhts-somalier-f153bce.tsv                                |
+| build receipt SHA-256        | d24503ce17e1c29017576de196640d378a4c6dcc023f2d121d6ca3a4f2926e87 |
 | samples                      | 250                                                              |
 | panel sites                  | 17000                                                            |
 | count-evidence rows          | 4250000                                                          |
@@ -153,14 +153,14 @@ across many distinct depths.
 
 | workload         | median_seconds | repetitions | result_rows | persisted_output_rows | persisted_output_bytes | median_process_peak_rss_kib | median_peak_increase_kib |
 |:-----------------|---------------:|------------:|------------:|----------------------:|-----------------------:|----------------------------:|-------------------------:|
-| panel_hash       |          0.032 |           3 |           1 |                     0 |                      0 |                      345012 |                       NA |
-| sketches         |          0.214 |           3 |         250 |                     0 |                      0 |                      345580 |                       NA |
-| related_selected |          0.004 |           3 |           2 |                     0 |                      0 |                      463400 |                       NA |
-| related_all      |          1.175 |           3 |       31125 |                     0 |                      0 |                      343836 |                       NA |
-| charr            |          0.480 |           3 |         250 |                     0 |                      0 |                      343832 |                       NA |
-| matched_anchor   |          0.332 |           3 |           2 |                     0 |                      0 |                      454352 |                       NA |
-| matched_memory   |          0.344 |           3 |           2 |                     0 |                      0 |                      214756 |                    84800 |
-| end_to_end       |          2.360 |           3 |       31629 |                 31629 |                 377300 |                      512204 |                       NA |
+| panel_hash       |          0.032 |           3 |           1 |                     0 |                      0 |                      343572 |                       NA |
+| sketches         |          0.214 |           3 |         250 |                     0 |                      0 |                      343296 |                       NA |
+| related_selected |          0.005 |           3 |           2 |                     0 |                      0 |                      448720 |                       NA |
+| related_all      |          1.179 |           3 |       31125 |                     0 |                      0 |                      344760 |                       NA |
+| charr            |          0.480 |           3 |         250 |                     0 |                      0 |                      343312 |                       NA |
+| matched_anchor   |          0.336 |           3 |           2 |                     0 |                      0 |                      453088 |                       NA |
+| matched_memory   |          0.355 |           3 |           2 |                     0 |                      0 |                      216512 |                    87200 |
+| end_to_end       |          2.308 |           3 |       31629 |                 31629 |                 377300 |                      513640 |                       NA |
 
 |     | case             | related_selected_pairs | related_all_pairs | related_selected_joint_sites | related_all_joint_sites |
 |:----|:-----------------|-----------------------:|------------------:|-----------------------------:|------------------------:|
@@ -189,9 +189,9 @@ across many distinct depths.
 
 |     | repetition | seconds | baseline_peak_rss_kib | measured_peak_rss_kib | peak_increase_kib |
 |:----|-----------:|--------:|----------------------:|----------------------:|------------------:|
-| 7   |          1 |   0.325 |                129956 |                214756 |             84800 |
-| 10  |          2 |   0.344 |                129796 |                213956 |             84160 |
-| 23  |          3 |   0.384 |                129536 |                217376 |             87840 |
+| 7   |          1 |   0.373 |                129784 |                214744 |             84960 |
+| 10  |          2 |   0.328 |                129744 |                216944 |             87200 |
+| 23  |          3 |   0.355 |                129312 |                216512 |             87200 |
 
 The runner checks 266 words in each of the three prepared masks.
 Selected-pair `jointly_called`, `ibs0`, and `ibs2` integers are compared
