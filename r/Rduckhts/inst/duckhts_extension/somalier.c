@@ -736,9 +736,7 @@ static int binomial_survival_recurrence(uint64_t depth, uint64_t k,
 }
 
 static int binomial_tail_at_least(double survival, double tail_alpha) {
-    return survival >= tail_alpha ||
-        tail_alpha - survival <= 64.0 * DBL_EPSILON *
-            fmax(tail_alpha, survival);
+    return survival >= tail_alpha;
 }
 
 duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(

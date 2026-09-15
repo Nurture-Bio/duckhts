@@ -713,11 +713,11 @@ static void somalier_sketch_finalize(duckdb_function_info info,
         ((uint64_t *)duckdb_vector_get_data(fields[SKETCH_SITE_COUNT]))[row] =
             state->masks.site_count;
         ((uint64_t *)duckdb_vector_get_data(fields[SKETCH_MIN_DEPTH]))[row] =
-            state->settings.min_depth;
+            state->masks.identity.min_depth;
         ((double *)duckdb_vector_get_data(fields[SKETCH_MIN_HET_BALANCE]))[row] =
-            state->settings.min_het_balance;
+            state->masks.identity.min_het_balance;
         ((double *)duckdb_vector_get_data(fields[SKETCH_HOM_BALANCE_CUTOFF]))[row] =
-            state->settings.hom_balance_cutoff;
+            state->masks.identity.hom_balance_cutoff;
         ((uint64_t *)duckdb_vector_get_data(fields[SKETCH_MIDDLING_COUNT]))[row] =
             state->masks.middling_balance_count;
         ((uint64_t *)duckdb_vector_get_data(fields[SKETCH_UNAVAILABLE_COUNT]))[row] =

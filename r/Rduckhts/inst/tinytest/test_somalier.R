@@ -103,6 +103,21 @@ test_somalier_relatedness_wrappers <- function() {
     ))$valid
   }
   expect_true(sketch_receipt(evidence_name))
+  negative_zero_sketches <- "somalier negative zero sketches"
+  dbExecute(con, sprintf(paste0(
+    "CREATE TEMP TABLE %s AS SELECT * FROM ",
+    "duckhts_somalier_prepare_sketches(%s, %s, 7, 0.3, -0.0::DOUBLE, ",
+    "max_sites := 8)"), qid(negative_zero_sketches), qstr(evidence_name),
+    qstr(panel_name)))
+  negative_zero_check <- dbGetQuery(con, sprintf(paste0(
+    "SELECT duckhts_somalier_verify_sketches(%s, %s, %s, 8) AS valid, ",
+    "count(*) FILTER (WHERE signbit(sketch.hom_balance_cutoff)) AS negative ",
+    "FROM %s"), qstr(evidence_name), qstr(panel_name),
+    qstr(negative_zero_sketches), qid(negative_zero_sketches)))
+  expect_equal(negative_zero_check, data.frame(valid = TRUE, negative = 0))
+  expect_equal(nrow(rduckhts_somalier_relatedness(
+    con, sketches_table = negative_zero_sketches, max_sites = 8
+  )), 6L)
   invalid_settings <- "somalier invalid sketch settings"
   dbExecute(con, sprintf(paste(
     "CREATE TEMP VIEW %s AS SELECT struct_update(",

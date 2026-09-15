@@ -58,6 +58,11 @@ run_native <- function(mode, input, expected_columns) {
 # qbinom supplies a candidate; exact pbinom survival checks decide the
 # discrete maximum. This does not copy the kernel's beta implementation.
 survival <- function(depth, minor_rate, k) {
+  # This small rational witness has an exact binary64 tail. Keep it independent
+  # of pbinom so adjacent representable cutoffs test the strict comparison.
+  if (depth == 3 && minor_rate == 0.25) {
+    return(c(1, 0.578125, 0.15625, 0.015625, 0)[pmin(pmax(k, 0), 4) + 1])
+  }
   stats::pbinom(k - 1, size = depth, prob = minor_rate, lower.tail = FALSE)
 }
 binomial_expected <- function(depth, minor_rate, tail_alpha, max_depth) {
@@ -88,13 +93,17 @@ binomial_random <- data.frame(
   tail_alpha = exp(stats::runif(160L, log(1e-8), log(0.95))))
 adjacent <- data.frame(depth = integer(), minor_rate = numeric(),
   tail_alpha = numeric())
+adjacent <- rbind(adjacent, data.frame(
+  depth = rep(3L, 3L), minor_rate = rep(0.25, 3L),
+  tail_alpha = 0.578125 + c(-.Machine$double.eps / 2, 0,
+    .Machine$double.eps / 2)))
 for (depth in c(15, 100, 1000, 6000, 100000, 1000000)) {
   for (rate in c(0.05, 0.12, 0.49)) {
     k <- max(1, min(depth, round(depth * rate)))
     target <- survival(depth, rate, k)
-    adjacent <- rbind(adjacent, data.frame(depth = rep(depth, 3L),
-      minor_rate = rep(rate, 3L),
-      tail_alpha = target * c(1 - 1e-8, 1, 1 + 1e-8)))
+    adjacent <- rbind(adjacent, data.frame(depth = rep(depth, 4L),
+      minor_rate = rep(rate, 4L),
+      tail_alpha = target * c(1 - 1e-8, 1 - 1e-12, 1 + 1e-12, 1 + 1e-8)))
   }
 }
 binomial_invalid <- data.frame(depth = c(1000001, 101, 100, 100, 100, 100),
@@ -217,7 +226,16 @@ eligibility_controls <- data.frame(
                      0.12, 0.12, 0.12, 0.49),
   hom_tail_alpha = c(0.002, 0.002, 0.002, 0.002, 0.002,
                      0.002, 0.002, 0.002, 0.95))
-eligibility_cases <- rbind(eligibility_cases, eligibility_controls)
+eligibility_exact_tail <- data.frame(
+  allele_a = rep(2, 3), allele_b = rep(1, 3), other = rep(0, 3),
+  available = rep(1, 3), population_b_af = rep(0.25, 3),
+  min_depth = rep(1, 3), max_depth = rep(1000000, 3),
+  hom_minor_rate = rep(0.25, 3),
+  hom_tail_alpha = 0.578125 + c(-.Machine$double.eps / 2, 0,
+    .Machine$double.eps / 2)
+)
+eligibility_cases <- rbind(eligibility_cases, eligibility_controls,
+  eligibility_exact_tail)
 eligibility_cases$case_id <- sprintf("elig_%04d", seq_len(nrow(eligibility_cases)))
 eligibility_input <- eligibility_cases[c("case_id", "allele_a", "allele_b",
   "other", "available", "population_b_af", "min_depth", "max_depth",

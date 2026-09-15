@@ -26,6 +26,8 @@ below describe implemented package behavior, not a completed release submission.
   are stable across parallel aggregate reduction order.
 - Bound sample and assembly identities retained by bundled sketch and CHARR
   aggregate states to 1,024 bytes.
+- Preserve strict binomial-tail cutoffs at adjacent binary64 thresholds and
+  round-trip sketches constructed with IEEE negative-zero balance settings.
 - The bundled estimators use stable high-depth CHARR tail evaluation and a
   full-grid matched search. Their documented numerical counterexamples can
   differ from Somalier v0.3.4 output; they are not bitwise CLI replicas.

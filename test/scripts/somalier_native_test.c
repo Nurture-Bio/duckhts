@@ -576,6 +576,7 @@ static void test_mask_shapes(void) {
 
 static void test_binomial_and_charr(void) {
     duckhts_somalier_contamination_settings_t settings;
+    duckhts_somalier_genotype_t genotype;
     uint64_t threshold;
     duckhts_somalier_counts_t one;
     double af;
@@ -585,6 +586,28 @@ static void test_binomial_and_charr(void) {
     CHECK(duckhts_somalier_binomial_max_minor(1u, 0.05, 0.05, 1000000u, &threshold) ==
           DUCKHTS_SOMALIER_OK);
     CHECK(threshold == 1u);
+    CHECK(duckhts_somalier_binomial_max_minor(
+          3u, 0.25, nextafter(0.578125, 0.0), 1000000u, &threshold) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(threshold == 1u);
+    CHECK(duckhts_somalier_binomial_max_minor(
+          3u, 0.25, 0.578125, 1000000u, &threshold) == DUCKHTS_SOMALIER_OK);
+    CHECK(threshold == 1u);
+    CHECK(duckhts_somalier_binomial_max_minor(
+          3u, 0.25, nextafter(0.578125, 1.0), 1000000u, &threshold) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(threshold == 0u);
+    settings.min_depth = 1u;
+    settings.hom_minor_rate = 0.25;
+    settings.hom_tail_alpha = nextafter(0.578125, 1.0);
+    one = (duckhts_somalier_counts_t){2u, 1u, 0u, 1u};
+    CHECK(duckhts_somalier_classify_contamination(&one, &settings, &genotype) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(genotype == DUCKHTS_SOMALIER_UNKNOWN);
+    settings.hom_tail_alpha = 0.578125;
+    CHECK(duckhts_somalier_classify_contamination(&one, &settings, &genotype) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(genotype == DUCKHTS_SOMALIER_HOM_A);
     CHECK(duckhts_somalier_binomial_max_minor(
           1000000u, 0.0, 0.002, 1000000u, &threshold) == DUCKHTS_SOMALIER_OK);
     CHECK(threshold == 0u);

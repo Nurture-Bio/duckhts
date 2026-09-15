@@ -173,6 +173,26 @@ SELECT * FROM duckhts_somalier_prepare_sketches(
   'somalier_evidence', 'somalier_panel_base',
   7, 0.3, 0.01, max_sites := 8);
 
+# Persist the normalized settings used by the sealed identity. IEEE negative
+# zero must not make a freshly constructed sketch fail its own digest check.
+statement ok
+CREATE TEMP TABLE somalier_negative_zero_sketches AS
+SELECT * FROM duckhts_somalier_prepare_sketches(
+  'somalier_evidence', 'somalier_panel_base',
+  7, 0.3, -0.0::DOUBLE, max_sites := 8);
+
+query III
+SELECT duckhts_somalier_verify_sketches(
+         'somalier_evidence', 'somalier_panel_base',
+         'somalier_negative_zero_sketches', 8),
+       count(*),
+       sum(signbit(a.sketch.hom_balance_cutoff)::INTEGER)
+FROM somalier_negative_zero_sketches a, somalier_negative_zero_sketches b
+WHERE a.sketch.sample_id < b.sketch.sample_id
+  AND duckhts_somalier_relatedness(a.sketch, b.sketch, 8).status IS NOT NULL;
+----
+1	6	0
+
 query I
 SELECT duckhts_somalier_verify_sketches(
   'somalier_evidence', 'somalier_panel_base', 'somalier_sketches', 8);
