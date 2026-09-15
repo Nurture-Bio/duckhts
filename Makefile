@@ -144,7 +144,7 @@ endif
 test: test_debug
 test_debug test_release: test-function-catalog
 test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
-test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-somalier-r-release test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
+test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
 test_release: test-reference-cache
 ifneq ($(filter linux_%,$(or $(DUCKDB_PLATFORM),$(shell sed -n '1p' configure/platform.txt 2>/dev/null))),)
 test_release: test-reader-alloc
@@ -199,11 +199,7 @@ test-somalier-native-ubsan:
 	$(call run_somalier_native_test,-O1 -fsanitize=undefined -fno-omit-frame-pointer,UBSAN_OPTIONS=print_stacktrace=1)
 
 test-somalier-r-release:
-	@if command -v Rscript >/dev/null 2>&1; then \
-		scripts/test_somalier_release_campaigns.sh; \
-	else \
-		echo "Rscript unavailable: R-only Somalier campaigns run in R-CMD-check.yaml"; \
-	fi
+	scripts/test_somalier_release_campaigns.sh
 
 define compile_somalier_campaign_test
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
