@@ -98,13 +98,13 @@ result oracle. A single `K/P` point is not a memory-scaling proof.
 
 | item                      | value                                                            |
 |:--------------------------|:-----------------------------------------------------------------|
-| checkout revision         | 990d43e9dae20b8e17930d14e3b4bedadd99a686                         |
-| checkout src/ tree        | 28c653e48e7bd0d9bd1d07e742b31be966ee56c6                         |
+| checkout revision         | 694aa80b05b0f8ac8cb4ce0c2f46e99a040ee47c                         |
+| checkout src/ tree        | f3005a567bf51a2bd1703881c8ca86ad616c8ad2                         |
 | binary/checkout binding   | verified release receipt: htslib_distclean_make_release          |
-| extension SHA-256         | 7efe57006bda7de2299d031e9116fcb94e39e1c557993f302c0091d22cd2d94f |
+| extension SHA-256         | 8a7c88d33f171862c9ba1dcbca6e268495609791ff35c61bb5f234a7b8827f2d |
 | extension path            | /root/duckhts/build/release/duckhts.duckdb_extension             |
-| build receipt path        | /tmp/somalier-extension-990d43e.tsv                              |
-| build receipt SHA-256     | b70a9f2cf16b67c5c1d60411ac83bc26619e9d3c6e968bc50dbc22458342bf98 |
+| build receipt path        | /tmp/duckhts-somalier-694aa80.tsv                                |
+| build receipt SHA-256     | 7575005e56664b2c491041a824035094b74051f5ea09cf366f41077be27395ff |
 | samples                   | 250                                                              |
 | panel sites               | 17000                                                            |
 | count-evidence rows       | 4250000                                                          |
@@ -148,14 +148,14 @@ requests spanning `K` selected sample IDs.
 
 | workload         | median_seconds | repetitions | result_rows | persisted_output_rows | persisted_output_bytes | median_process_peak_rss_kib | median_peak_increase_kib |
 |:-----------------|---------------:|------------:|------------:|----------------------:|-----------------------:|----------------------------:|-------------------------:|
-| panel_hash       |          0.025 |           3 |           1 |                     0 |                      0 |                      344644 |                       NA |
-| sketches         |          0.171 |           3 |         250 |                     0 |                      0 |                      344360 |                       NA |
-| related_selected |          0.004 |           3 |           2 |                     0 |                      0 |                      450168 |                       NA |
-| related_all      |          1.096 |           3 |       31125 |                     0 |                      0 |                      342276 |                       NA |
-| charr            |          1.097 |           3 |         250 |                     0 |                      0 |                      342344 |                       NA |
-| matched_anchor   |          0.275 |           3 |           2 |                     0 |                      0 |                      445864 |                       NA |
-| matched_memory   |          0.277 |           3 |           2 |                     0 |                      0 |                      201488 |                    71680 |
-| end_to_end       |          2.713 |           3 |       31629 |                 31629 |                 376901 |                      508712 |                       NA |
+| panel_hash       |          0.029 |           3 |           1 |                     0 |                      0 |                      341276 |                       NA |
+| sketches         |          0.212 |           3 |         250 |                     0 |                      0 |                      341968 |                       NA |
+| related_selected |          0.004 |           3 |           2 |                     0 |                      0 |                      450200 |                       NA |
+| related_all      |          1.174 |           3 |       31125 |                     0 |                      0 |                      341852 |                       NA |
+| charr            |          0.288 |           3 |         250 |                     0 |                      0 |                      343304 |                       NA |
+| matched_anchor   |          0.449 |           3 |           2 |                     0 |                      0 |                      449040 |                       NA |
+| matched_memory   |          0.448 |           3 |           2 |                     0 |                      0 |                      201232 |                    71840 |
+| end_to_end       |          2.231 |           3 |       31629 |                 31629 |                 376901 |                      509400 |                       NA |
 
 |     | case             | related_selected_pairs | related_all_pairs | related_selected_joint_sites | related_all_joint_sites |
 |:----|:-----------------|-----------------------:|------------------:|-----------------------------:|------------------------:|
@@ -184,9 +184,9 @@ requests spanning `K` selected sample IDs.
 
 |     | repetition | seconds | baseline_peak_rss_kib | measured_peak_rss_kib | peak_increase_kib |
 |:----|-----------:|--------:|----------------------:|----------------------:|------------------:|
-| 7   |          1 |   0.277 |                129808 |                201488 |             71680 |
-| 10  |          2 |   0.274 |                129784 |                201464 |             71680 |
-| 23  |          3 |   0.285 |                129116 |                203036 |             73920 |
+| 7   |          1 |   0.440 |                129292 |                198732 |             69440 |
+| 10  |          2 |   0.458 |                129392 |                201232 |             71840 |
+| 23  |          3 |   0.448 |                129628 |                202108 |             72480 |
 
 The runner checks 266 words in each of the three prepared masks.
 Selected-pair `jointly_called`, `ibs0`, and `ibs2` integers are compared
