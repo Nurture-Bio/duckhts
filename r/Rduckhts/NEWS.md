@@ -15,7 +15,8 @@ below describe implemented package behavior, not a completed release submission.
   metrics and nullable numerical status.
 - Bundled SQL `duckhts_somalier_verify_sketches()` rebuilds sketches from
   retained evidence and detects raw-count or availability changes even when
-  the classified genotype is unchanged.
+  the classified genotype is unchanged. Invalid retained classification
+  settings return false instead of becoming rebuild-aggregate settings.
 - Add `rduckhts_somalier_charr()` and
   `rduckhts_somalier_matched_contamination()` over measured count channels and
   aligned population-B allele frequencies. They retain numerical status and

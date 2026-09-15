@@ -179,6 +179,18 @@ SELECT duckhts_somalier_verify_sketches(
 ----
 1
 
+# Invalid persisted settings are corruption, not aggregate settings.
+statement ok
+CREATE TEMP VIEW somalier_invalid_settings AS
+SELECT struct_update(sketch, min_depth := 0::UBIGINT) AS sketch
+FROM somalier_sketches;
+
+query I
+SELECT duckhts_somalier_verify_sketches(
+  'somalier_evidence', 'somalier_panel_base', 'somalier_invalid_settings', 8);
+----
+0
+
 # The count receipt binds raw evidence even when the genotype mask is unchanged.
 statement ok
 CREATE TEMP VIEW somalier_changed_count AS

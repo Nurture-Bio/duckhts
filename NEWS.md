@@ -16,7 +16,9 @@ the same extension release; publication remains pending.
   metrics or status-dependent NULL values.
 - Add `duckhts_somalier_verify_sketches()` to rebuild persisted sketches from
   retained count evidence. Raw-count receipts distinguish unavailable from
-  measured zero and detect count changes that preserve the genotype mask.
+  measured zero and detect count changes that preserve the genotype mask;
+  invalid retained classification settings return false instead of reaching
+  the rebuild aggregate as settings.
 - Add distinct per-sample CHARR and directional matched-anchor contamination
   methods over measured A/B/other counts and panel-aligned population frequency.
   Both retain usable-site denominators, filter/search settings and numerical

@@ -103,6 +103,16 @@ test_somalier_relatedness_wrappers <- function() {
     ))$valid
   }
   expect_true(sketch_receipt(evidence_name))
+  invalid_settings <- "somalier invalid sketch settings"
+  dbExecute(con, sprintf(paste(
+    "CREATE TEMP VIEW %s AS SELECT struct_update(",
+    "sketch, min_depth := 0::UBIGINT) AS sketch FROM %s"
+  ), qid(invalid_settings), qid(receipt_sketches)))
+  invalid_receipt <- dbGetQuery(con, sprintf(
+    "SELECT duckhts_somalier_verify_sketches(%s, %s, %s, 8) AS valid",
+    qstr(evidence_name), qstr(panel_name), qstr(invalid_settings)
+  ))$valid
+  expect_false(invalid_receipt)
   changed_evidence <- "somalier changed raw count"
   dbExecute(con, sprintf(paste(
     "CREATE TEMP VIEW %s AS SELECT * REPLACE(",

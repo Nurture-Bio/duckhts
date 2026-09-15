@@ -1708,11 +1708,11 @@ BOOLEAN
 
 ### Integrity
 
-Rebuilds every sample through the panel and count-validation path using the persisted classification settings, then compares its complete typed sketch. It returns false for changed A/B/other counts, changed availability, altered masks or receipts, and missing, extra or duplicate sample sketches. Invalid panel/evidence geometry and incomplete or duplicate site ordinals error.
+Checks persisted classification settings before using them as rebuild parameters. With valid settings, it rebuilds every sample through the panel and count-validation path and compares the complete typed sketch. It returns false for invalid retained settings, changed A/B/other counts, changed availability, altered masks or receipts, and missing, extra or duplicate sample sketches. Invalid panel/evidence geometry and incomplete or duplicate site ordinals error.
 
 ### Scope
 
-evidence_table must contain exactly the samples represented by sketches_table. max_sites is a positive panel-site limit at most 100,000,000. The unkeyed receipts detect accidental or independently changed persisted data; coordinated replacement of evidence and sketches requires an external trusted checksum or signature.
+evidence_table must contain exactly the samples represented by sketches_table. max_sites is a positive panel-site limit at most 100,000,000. Receipts detect accidental divergence between persisted evidence and sketches; they are not an authenticity mechanism.
 
 ### Examples
 
