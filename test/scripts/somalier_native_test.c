@@ -683,6 +683,62 @@ static void test_binomial_and_charr(void) {
         CHECK(result.status == DUCKHTS_SOMALIER_INVALID_ARGUMENT);
         CHECK(isnan(result.estimate) && result.usable_sites == 0u);
     }
+    {
+        duckhts_somalier_charr_accumulator_t cached = {0};
+        duckhts_somalier_charr_accumulator_t collision = {0};
+        duckhts_somalier_charr_accumulator_t combined;
+        duckhts_somalier_charr_accumulator_t copied;
+        duckhts_somalier_counts_t depth_200 = {170u, 30u, 0u, 1u};
+        duckhts_somalier_counts_t depth_264 = {263u, 1u, 0u, 1u};
+        unsigned slot = 200u % DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE;
+        uint64_t expected;
+
+        duckhts_somalier_charr_settings_default(&settings);
+        CHECK(duckhts_somalier_charr_observe(&cached, &depth_200, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(cached.usable_sites == 1u);
+        CHECK((cached.threshold_cache_valid & (UINT64_C(1) << slot)) != 0u);
+        CHECK(cached.threshold_cache_depth[slot] == 200u);
+        CHECK(duckhts_somalier_binomial_max_minor(200u,
+              settings.hom_minor_rate, settings.hom_tail_alpha,
+              settings.max_depth, &expected) == DUCKHTS_SOMALIER_OK);
+        CHECK(cached.threshold_cache_value[slot] == expected);
+        CHECK(expected >= depth_200.allele_b);
+
+        CHECK(duckhts_somalier_charr_observe(&collision, &depth_264, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(collision.threshold_cache_depth[slot] == 264u);
+        combined = cached;
+        CHECK(duckhts_somalier_charr_combine(&combined, &collision) ==
+              DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe(&combined, &depth_264, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(combined.threshold_cache_depth[slot] == 264u);
+        CHECK(duckhts_somalier_charr_observe(&combined, &depth_200, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(combined.usable_sites == 4u);
+        CHECK(combined.threshold_cache_depth[slot] == 200u);
+
+        settings.hom_tail_alpha = 0.5;
+        CHECK(duckhts_somalier_classify_contamination(&depth_200, &settings,
+              &genotype) == DUCKHTS_SOMALIER_OK);
+        CHECK(genotype == DUCKHTS_SOMALIER_UNKNOWN);
+        CHECK(duckhts_somalier_charr_observe(&combined, &depth_200, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(combined.usable_sites == 4u);
+        CHECK(combined.threshold_cache_valid == (UINT64_C(1) << slot));
+        CHECK(combined.threshold_cache_tail_alpha == 0.5);
+        CHECK(combined.threshold_cache_depth[slot] == 200u);
+        CHECK(duckhts_somalier_binomial_max_minor(200u,
+              settings.hom_minor_rate, settings.hom_tail_alpha,
+              settings.max_depth, &expected) == DUCKHTS_SOMALIER_OK);
+        CHECK(combined.threshold_cache_value[slot] == expected);
+        CHECK(expected < depth_200.allele_b);
+        copied = combined;
+        CHECK(duckhts_somalier_charr_observe(&copied, &depth_200, 0.25,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(copied.usable_sites == combined.usable_sites);
+    }
 }
 
 static uint64_t reference_binomial_max_minor(unsigned depth, double probability,

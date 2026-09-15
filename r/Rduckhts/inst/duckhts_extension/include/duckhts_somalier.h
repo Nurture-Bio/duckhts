@@ -16,6 +16,7 @@ extern "C" {
 #define DUCKHTS_SOMALIER_CONTAMINATION_MAX_OTHER_FRACTION 0.04
 #define DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH UINT64_C(1000000)
 #define DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES UINT32_C(1024)
+#define DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE 64u
 
 typedef enum duckhts_somalier_status {
     DUCKHTS_SOMALIER_OK = 0,
@@ -229,6 +230,13 @@ typedef struct duckhts_somalier_charr_accumulator {
     uint64_t usable_sites;
     uint64_t usable_hom_a;
     uint64_t usable_hom_b;
+    /* Direct-mapped, fixed-size reuse of certified depth thresholds. */
+    uint64_t threshold_cache_valid;
+    uint64_t threshold_cache_max_depth;
+    double threshold_cache_minor_rate;
+    double threshold_cache_tail_alpha;
+    uint32_t threshold_cache_depth[DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE];
+    uint32_t threshold_cache_value[DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE];
 } duckhts_somalier_charr_accumulator_t;
 
 duckhts_somalier_status_t duckhts_somalier_charr_observe(

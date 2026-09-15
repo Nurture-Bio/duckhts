@@ -790,6 +790,11 @@ static bool read_sketch(duckdb_vector input, idx_t row, uint64_t max_sites,
         *error = "duckhts_somalier_relatedness: invalid sample, assembly, or panel digest";
         return false;
     }
+    if (duckdb_string_t_length(*sketch->sample_id) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES ||
+        duckdb_string_t_length(*sketch->assembly) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) {
+        *error = "duckhts_somalier_relatedness: persisted sample_id and assembly must be at most 1024 bytes";
+        return false;
+    }
     sites = ((uint64_t *)duckdb_vector_get_data(fields[SKETCH_SITE_COUNT]))[row];
     if (sites > max_sites || sites > SIZE_MAX) {
         *error = "duckhts_somalier_relatedness: site_count exceeds max_sites";

@@ -605,6 +605,16 @@ SELECT __duckhts_somalier_sketch(
 ----
 sample_id and assembly must be at most 1024 bytes
 
+# Persisted structs are untrusted input and obey the same identity bound as
+# aggregate construction.
+statement error
+SELECT duckhts_somalier_relatedness(
+  struct_update(a.sketch, sample_id := repeat('s', 1025)), b.sketch, 8)
+FROM somalier_sketches a, somalier_sketches b
+WHERE a.sketch.sample_id = 'A' AND b.sketch.sample_id = 'B';
+----
+persisted sample_id and assembly must be at most 1024 bytes
+
 # Final mask word counts at the 64-bit transition, with a called last site.
 statement ok
 CREATE TEMP TABLE somalier_word_panel_all AS

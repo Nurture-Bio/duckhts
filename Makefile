@@ -125,16 +125,20 @@ release: build_extension_library_release build_extension_with_metadata_release
 # injects setTempRet0/getTempRet0 shims. duckdb-wasm uses native i64/BigInt imports,
 # so the legalized ABI also mismatches at extension load time. Override the CI-tools
 # link step to preserve the same EH + BigInt ABI as duckdb-wasm itself.
+#
+# SIDE_MODULE links leave compiler builtins unresolved unless their archive is
+# explicit. Pull it into the side module so long-double arithmetic uses the
+# same implementation instead of incompatible main-module imports.
 ifneq ($(DUCKDB_WASM_PLATFORM),)
 link_wasm_debug:
 	@WASM_LINK_RSP=""; \
 	if [ -f "$(EXTENSION_BUILD_PATH)/debug/wasm_link_inputs.rsp" ]; then WASM_LINK_RSP="@$(EXTENSION_BUILD_PATH)/debug/wasm_link_inputs.rsp"; fi; \
-	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP "$$(emcc --print-file-name=libcompiler_rt.a)" -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
 
 link_wasm_release:
 	@WASM_LINK_RSP=""; \
 	if [ -f "$(EXTENSION_BUILD_PATH)/release/wasm_link_inputs.rsp" ]; then WASM_LINK_RSP="@$(EXTENSION_BUILD_PATH)/release/wasm_link_inputs.rsp"; fi; \
-	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP "$$(emcc --print-file-name=libcompiler_rt.a)" -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
 endif
 
 # -----------------------------------------------------------------------------

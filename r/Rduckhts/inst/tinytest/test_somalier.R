@@ -271,6 +271,18 @@ test_somalier_relatedness_wrappers <- function() {
     ),
     "sample_id and assembly must be at most 1024 bytes"
   )
+  oversized_sketches <- "somalier_oversized_persisted_identity"
+  dbExecute(con, sprintf(paste(
+    "CREATE TEMP VIEW %s AS SELECT struct_update(sketch,",
+    "sample_id := CASE WHEN sketch.sample_id = 'A' THEN repeat('s', 1025)",
+    "ELSE sketch.sample_id END) AS sketch FROM %s"
+  ), qid(oversized_sketches), qid(sketches_name)))
+  expect_error(
+    rduckhts_somalier_relatedness(
+      con, sketches_table = oversized_sketches, max_sites = 8
+    ),
+    "persisted sample_id and assembly must be at most 1024 bytes"
+  )
 
   # Word-count transitions exercise the public preparation wrapper, not a
   # hand-constructed mask.

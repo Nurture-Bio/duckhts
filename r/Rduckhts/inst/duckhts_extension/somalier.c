@@ -22,9 +22,17 @@ _Static_assert(FLT_RADIX == 2, "Somalier numerical kernels require binary floati
 _Static_assert(DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "Somalier content digest requires IEEE binary64 semantics");
 
+static int somalier_double_isfinite(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & UINT64_C(0x7ff0000000000000)) !=
+        UINT64_C(0x7ff0000000000000);
+}
+
 static int relatedness_settings_valid(const duckhts_somalier_relatedness_settings_t *settings) {
     return settings != NULL && settings->min_depth > 0u && settings->max_sites > 0u &&
-        isfinite(settings->min_het_balance) && isfinite(settings->hom_balance_cutoff) &&
+        somalier_double_isfinite(settings->min_het_balance) &&
+        somalier_double_isfinite(settings->hom_balance_cutoff) &&
         settings->hom_balance_cutoff >= 0.0 &&
         settings->hom_balance_cutoff <= settings->min_het_balance &&
         settings->min_het_balance <= 0.5;
@@ -34,23 +42,29 @@ static int contamination_settings_valid(
     const duckhts_somalier_contamination_settings_t *settings) {
     return settings != NULL && settings->min_depth > 0u &&
         settings->max_depth >= settings->min_depth && settings->max_sites > 0u &&
-        isfinite(settings->hom_minor_rate) && settings->hom_minor_rate > 0.0 &&
-        settings->hom_minor_rate < 0.5 && isfinite(settings->hom_tail_alpha) &&
+        somalier_double_isfinite(settings->hom_minor_rate) &&
+        settings->hom_minor_rate > 0.0 && settings->hom_minor_rate < 0.5 &&
+        somalier_double_isfinite(settings->hom_tail_alpha) &&
         settings->hom_tail_alpha > 0.0 && settings->hom_tail_alpha < 1.0;
 }
 
 static int matched_settings_valid(const duckhts_somalier_matched_settings_t *settings) {
     return settings != NULL && settings->max_depth > 0u && settings->max_sites > 0u &&
-        settings->max_evaluations > 0u && isfinite(settings->error_rate) &&
+        settings->max_evaluations > 0u &&
+        somalier_double_isfinite(settings->error_rate) &&
         settings->error_rate >= 0.0 && settings->error_rate < 0.5 &&
-        isfinite(settings->min_probability) && settings->min_probability > 0.0 &&
-        settings->min_probability < 0.5 && isfinite(settings->min_prior_frequency) &&
+        somalier_double_isfinite(settings->min_probability) &&
+        settings->min_probability > 0.0 && settings->min_probability < 0.5 &&
+        somalier_double_isfinite(settings->min_prior_frequency) &&
         settings->min_prior_frequency > 0.0 && settings->min_prior_frequency < 0.5 &&
-        isfinite(settings->alpha_min) && isfinite(settings->alpha_max) &&
+        somalier_double_isfinite(settings->alpha_min) &&
+        somalier_double_isfinite(settings->alpha_max) &&
         settings->alpha_min >= 0.0 && settings->alpha_max <= 1.0 &&
-        settings->alpha_min < settings->alpha_max && isfinite(settings->grid_step) &&
+        settings->alpha_min < settings->alpha_max &&
+        somalier_double_isfinite(settings->grid_step) &&
         settings->grid_step > 0.0 && settings->grid_step <= 1.0 &&
-        isfinite(settings->refine_tolerance) && settings->refine_tolerance > 0.0;
+        somalier_double_isfinite(settings->refine_tolerance) &&
+        settings->refine_tolerance > 0.0;
 }
 
 static uint64_t counts_depth(const duckhts_somalier_counts_t *counts) {
@@ -244,8 +258,8 @@ static duckhts_somalier_status_t mask_shape(const duckhts_somalier_masks_t *mask
 
 static int sketch_identity_valid(const duckhts_somalier_sketch_identity_t *identity) {
     return identity != NULL && identity->min_depth > 0u &&
-        isfinite(identity->min_het_balance) &&
-        isfinite(identity->hom_balance_cutoff) &&
+        somalier_double_isfinite(identity->min_het_balance) &&
+        somalier_double_isfinite(identity->hom_balance_cutoff) &&
         identity->hom_balance_cutoff >= 0.0 &&
         identity->hom_balance_cutoff <= identity->min_het_balance &&
         identity->min_het_balance <= 0.5;
@@ -611,7 +625,7 @@ static int beta_fraction(double a, double b, double x, double *value) {
         d = 1.0 / d;
         delta = d * c;
         h *= delta;
-        if (!isfinite(h)) return 0;
+        if (!somalier_double_isfinite(h)) return 0;
         if (fabs(delta - 1.0) <= SOMALIER_BETA_EPSILON) {
             *value = h;
             return 1;
@@ -633,7 +647,7 @@ static int regularized_beta(double x, double a, double b, double *value) {
     }
     front = exp(lgamma(a + b) - lgamma(a) - lgamma(b) +
                 a * log(x) + b * log1p(-x));
-    if (!isfinite(front)) return 0;
+    if (!somalier_double_isfinite(front)) return 0;
     if (x < (a + 1.0) / (a + b + 2.0)) {
         if (!beta_fraction(a, b, x, &fraction)) return 0;
         *value = front * fraction / a;
@@ -643,7 +657,7 @@ static int regularized_beta(double x, double a, double b, double *value) {
     }
     if (*value < 0.0 && *value > -32.0 * DBL_EPSILON) *value = 0.0;
     if (*value > 1.0 && *value < 1.0 + 32.0 * DBL_EPSILON) *value = 1.0;
-    return isfinite(*value) && *value >= 0.0 && *value <= 1.0;
+    return somalier_double_isfinite(*value) && *value >= 0.0 && *value <= 1.0;
 }
 
 static int binomial_survival(uint64_t depth, uint64_t k, double probability,
@@ -664,15 +678,67 @@ typedef struct binomial_interval {
     long double upper;
 } binomial_interval_t;
 
+/* Emscripten's SIDE_MODULE ABI imports libc's nextafterl with a signature that
+ * duckdb-wasm cannot satisfy. Its binary128 representation is little-endian,
+ * and positive finite encodings are ordered integers, so stepping that integer
+ * is exactly nextafterl toward zero or positive infinity. Compiler-rt supplies
+ * the remaining binary128 arithmetic inside the side module. */
+#if defined(__EMSCRIPTEN__)
+_Static_assert(LDBL_MANT_DIG == 113 && LDBL_MAX_EXP == 16384,
+               "Emscripten Somalier intervals require IEEE binary128");
+_Static_assert(sizeof(long double) == 2u * sizeof(uint64_t),
+               "Emscripten binary128 storage must occupy two uint64 words");
+_Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+               "Emscripten binary128 stepping requires little-endian storage");
+
+static long double binomial_step_positive(long double value, int upward) {
+    uint64_t words[2];
+    memcpy(words, &value, sizeof(value));
+    if ((words[1] & UINT64_C(0x7fff000000000000)) ==
+        UINT64_C(0x7fff000000000000)) {
+        return value;
+    }
+    if (upward) {
+        words[0]++;
+        if (words[0] == 0u) words[1]++;
+    } else if (words[0] == 0u) {
+        words[1]--;
+    } else {
+        words[0]--;
+    }
+    memcpy(&value, words, sizeof(value));
+    return value;
+}
+
+static int binomial_long_double_isfinite(long double value) {
+    uint64_t words[2];
+    memcpy(words, &value, sizeof(value));
+    return (words[1] & UINT64_C(0x7fff000000000000)) !=
+        UINT64_C(0x7fff000000000000);
+}
+#else
+static int binomial_long_double_isfinite(long double value) {
+    return isfinite(value);
+}
+#endif
+
 static long double binomial_round_down(long double value) {
     volatile long double rounded = value;
     if (rounded <= 0.0L) return 0.0L;
+#if defined(__EMSCRIPTEN__)
+    return binomial_step_positive(rounded, 0);
+#else
     return nextafterl(rounded, 0.0L);
+#endif
 }
 
 static long double binomial_round_up(long double value) {
     volatile long double rounded = value;
+#if defined(__EMSCRIPTEN__)
+    return binomial_step_positive(rounded, 1);
+#else
     return nextafterl(rounded, INFINITY);
+#endif
 }
 
 static binomial_interval_t binomial_interval_add(binomial_interval_t left,
@@ -698,7 +764,8 @@ static int binomial_interval_divide(binomial_interval_t numerator,
     if (result == NULL || denominator.lower <= 0.0) return 0;
     result->lower = binomial_round_down(numerator.lower / denominator.upper);
     result->upper = binomial_round_up(numerator.upper / denominator.lower);
-    return isfinite(result->lower) && isfinite(result->upper) &&
+    return binomial_long_double_isfinite(result->lower) &&
+        binomial_long_double_isfinite(result->upper) &&
         result->lower >= 0.0 && result->upper >= result->lower;
 }
 
@@ -716,7 +783,7 @@ static int binomial_interval_remainder_upper(
     denominator = binomial_round_down(1.0L - next_ratio.upper);
     if (denominator <= 0.0L) return 0;
     *upper = binomial_round_up(numerator / denominator);
-    return isfinite(*upper) && *upper >= 0.0;
+    return binomial_long_double_isfinite(*upper) && *upper >= 0.0;
 }
 
 static unsigned binomial_trailing_zeroes(uint64_t value) {
@@ -737,7 +804,7 @@ static int binomial_binary_fraction(double value, uint64_t *numerator,
     unsigned trailing;
 
     if (numerator == NULL || denominator_power == NULL ||
-        !isfinite(value) || value <= 0.0 || value >= 1.0) {
+        !somalier_double_isfinite(value) || value <= 0.0 || value >= 1.0) {
         return 0;
     }
     fraction = frexp(value, &exponent);
@@ -791,7 +858,7 @@ static int binomial_tail_exact_small(uint64_t depth, uint64_t k,
 
 /* Enclose the exact tail using outward-rounded floating-point operations. The
  * incomplete beta locates a candidate only; this comparison certifies the
- * final k/k+1 decision or reports that binary64 intervals cannot decide it. */
+ * final k/k+1 decision or reports that the interval cannot decide it. */
 static int binomial_tail_interval(uint64_t depth, uint64_t k,
                                   double probability,
                                   binomial_interval_t *survival) {
@@ -957,8 +1024,10 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
 
     if (max_minor == NULL || max_depth == 0u || depth > max_depth ||
         depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
-        !isfinite(minor_rate) || minor_rate < 0.0 || minor_rate > 1.0 ||
-        !isfinite(tail_alpha) || tail_alpha <= 0.0 || tail_alpha >= 1.0) {
+        !somalier_double_isfinite(minor_rate) ||
+        minor_rate < 0.0 || minor_rate > 1.0 ||
+        !somalier_double_isfinite(tail_alpha) ||
+        tail_alpha <= 0.0 || tail_alpha >= 1.0) {
         return (depth > max_depth || depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH) &&
             max_minor != NULL
             ? DUCKHTS_SOMALIER_LIMIT_EXCEEDED
@@ -1000,9 +1069,47 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
     return DUCKHTS_SOMALIER_OK;
 }
 
-duckhts_somalier_status_t duckhts_somalier_classify_contamination(
+static duckhts_somalier_status_t contamination_threshold(
+    duckhts_somalier_charr_accumulator_t *accumulator,
+    uint64_t depth,
+    const duckhts_somalier_contamination_settings_t *settings,
+    uint64_t *threshold) {
+    duckhts_somalier_status_t status;
+    unsigned slot;
+    uint64_t bit;
+
+    if (accumulator == NULL) {
+        return duckhts_somalier_binomial_max_minor(depth, settings->hom_minor_rate,
+            settings->hom_tail_alpha, settings->max_depth, threshold);
+    }
+    if (accumulator->threshold_cache_max_depth != settings->max_depth ||
+        accumulator->threshold_cache_minor_rate != settings->hom_minor_rate ||
+        accumulator->threshold_cache_tail_alpha != settings->hom_tail_alpha) {
+        accumulator->threshold_cache_valid = 0u;
+        accumulator->threshold_cache_max_depth = settings->max_depth;
+        accumulator->threshold_cache_minor_rate = settings->hom_minor_rate;
+        accumulator->threshold_cache_tail_alpha = settings->hom_tail_alpha;
+    }
+    slot = (unsigned)(depth % DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE);
+    bit = UINT64_C(1) << slot;
+    if ((accumulator->threshold_cache_valid & bit) != 0u &&
+        accumulator->threshold_cache_depth[slot] == depth) {
+        *threshold = accumulator->threshold_cache_value[slot];
+        return DUCKHTS_SOMALIER_OK;
+    }
+    status = duckhts_somalier_binomial_max_minor(depth, settings->hom_minor_rate,
+        settings->hom_tail_alpha, settings->max_depth, threshold);
+    if (status != DUCKHTS_SOMALIER_OK) return status;
+    accumulator->threshold_cache_depth[slot] = (uint32_t)depth;
+    accumulator->threshold_cache_value[slot] = (uint32_t)*threshold;
+    accumulator->threshold_cache_valid |= bit;
+    return DUCKHTS_SOMALIER_OK;
+}
+
+static duckhts_somalier_status_t classify_contamination(
     const duckhts_somalier_counts_t *counts,
     const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_charr_accumulator_t *accumulator,
     duckhts_somalier_genotype_t *genotype) {
     duckhts_somalier_status_t status;
     uint64_t depth;
@@ -1020,8 +1127,7 @@ duckhts_somalier_status_t duckhts_somalier_classify_contamination(
     if (depth < settings->min_depth || contamination_other_is_high(counts)) {
         return DUCKHTS_SOMALIER_OK;
     }
-    status = duckhts_somalier_binomial_max_minor(depth, settings->hom_minor_rate,
-        settings->hom_tail_alpha, settings->max_depth, &threshold);
+    status = contamination_threshold(accumulator, depth, settings, &threshold);
     if (status != DUCKHTS_SOMALIER_OK) return status;
     minor = counts->allele_a < counts->allele_b ? counts->allele_a : counts->allele_b;
     if (minor > threshold || counts->allele_a == counts->allele_b) {
@@ -1031,6 +1137,13 @@ duckhts_somalier_status_t duckhts_somalier_classify_contamination(
         ? DUCKHTS_SOMALIER_HOM_A
         : DUCKHTS_SOMALIER_HOM_B;
     return DUCKHTS_SOMALIER_OK;
+}
+
+duckhts_somalier_status_t duckhts_somalier_classify_contamination(
+    const duckhts_somalier_counts_t *counts,
+    const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_genotype_t *genotype) {
+    return classify_contamination(counts, settings, NULL, genotype);
 }
 
 duckhts_somalier_status_t duckhts_somalier_contamination_usable(
@@ -1062,12 +1175,13 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     double infiltrating;
     double contribution;
 
-    if (accumulator == NULL || !isfinite(population_b_frequency) ||
+    if (accumulator == NULL ||
+        !somalier_double_isfinite(population_b_frequency) ||
         population_b_frequency < 0.0 ||
         population_b_frequency > 1.0) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
-    status = duckhts_somalier_classify_contamination(counts, settings, &genotype);
+    status = classify_contamination(counts, settings, accumulator, &genotype);
     if (status != DUCKHTS_SOMALIER_OK) return status;
     if (genotype == DUCKHTS_SOMALIER_UNKNOWN) return DUCKHTS_SOMALIER_OK;
     if (accumulator->usable_sites == UINT64_MAX ||
@@ -1101,7 +1215,8 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
          * 1e8 accepted sites fit in 119 bits. Two limbs make aggregate
          * combination independent of DuckDB's parallel reduction order. */
         fraction = frexp(contribution, &exponent);
-        if (!isfinite(contribution) || exponent < -19 || exponent > 20) {
+        if (!somalier_double_isfinite(contribution) ||
+            exponent < -19 || exponent > 20) {
             return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
         }
         significand = (uint64_t)ldexp(fraction, 53);
@@ -1171,7 +1286,9 @@ duckhts_somalier_status_t duckhts_somalier_charr_finish(
     }
     contribution_sum = ldexp((double)accumulator->contribution_scaled_high, -8) +
         ldexp((double)accumulator->contribution_scaled_low, -72);
-    if (!isfinite(contribution_sum)) return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+    if (!somalier_double_isfinite(contribution_sum)) {
+        return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+    }
     memset(result, 0, sizeof(*result));
     result->estimate = NAN;
     if (accumulator->usable_sites == 0u) {
@@ -1265,7 +1382,8 @@ static duckhts_somalier_status_t matched_view_valid(
                 ? DUCKHTS_SOMALIER_LIMIT_EXCEEDED
                 : DUCKHTS_SOMALIER_INVALID_ARGUMENT;
         }
-        if (!isfinite(frequency) || frequency < 0.0 || frequency > 1.0) {
+        if (!somalier_double_isfinite(frequency) ||
+            frequency < 0.0 || frequency > 1.0) {
             return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
         }
         if (view->receiver_usable[i] &&
@@ -1330,7 +1448,9 @@ static duckhts_somalier_status_t matched_log_likelihood_unchecked(
                 (double)view->receiver_a[i] * log1p(-observed_b);
         }
         total += logsumexp3(terms);
-        if (!isfinite(total)) return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+        if (!somalier_double_isfinite(total)) {
+            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+        }
     }
     *log_likelihood = total;
     return DUCKHTS_SOMALIER_OK;
@@ -1343,7 +1463,7 @@ duckhts_somalier_status_t duckhts_somalier_matched_log_likelihood(
     double *log_likelihood) {
     duckhts_somalier_status_t status;
     uint64_t usable_sites;
-    if (log_likelihood == NULL || !isfinite(alpha)) {
+    if (log_likelihood == NULL || !somalier_double_isfinite(alpha)) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
     status = matched_view_valid(view, settings, &usable_sites);
@@ -1414,7 +1534,7 @@ duckhts_somalier_status_t duckhts_somalier_matched_anchor(
     result->usable_sites = usable_sites;
     range = settings->alpha_max - settings->alpha_min;
     ratio = floor(range / settings->grid_step);
-    if (!isfinite(ratio) || ratio >= (double)SIZE_MAX) {
+    if (!somalier_double_isfinite(ratio) || ratio >= (double)SIZE_MAX) {
         result->status = DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
         return result->status;
     }

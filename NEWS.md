@@ -25,11 +25,13 @@ the same extension release; publication remains pending.
   status; no usable evidence is not reported as zero contamination. CHARR uses
   an exact fixed-size scaled accumulator so parallel reduction order does not
   change its estimate or persisted result.
-- Bound retained Somalier sample and assembly identities to 1,024 bytes before
-  aggregate-state allocation, including parallel sketch and CHARR reductions.
+- Bound Somalier sample and assembly identities to 1,024 bytes before
+  aggregate-state allocation and when reading persisted sketches, including
+  parallel sketch and CHARR reductions.
 - Preserve strict binomial-tail cutoffs with exact small binary-rational cases
-  and an outward-rounded final comparison; persist the normalized
-  classification settings used to seal each sketch.
+  and outward-rounded comparisons. CHARR reuses rigorously decided thresholds
+  from a fixed-size per-accumulator depth cache; sketches persist their
+  normalized classification settings.
 - Preserve the pinned Somalier v0.3.4 numerical counterexamples: stable
   high-depth CHARR tail evaluation and a full-grid matched search can differ
   from upstream's underflow-prone threshold and fixed search sequence. The
