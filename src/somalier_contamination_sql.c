@@ -183,11 +183,6 @@ static void certify_thresholds_scalar(duckdb_function_info info,
                 "duckhts_somalier_certify_thresholds: depth list length or offset is invalid");
             return;
         }
-        if (depths.length > max_sites) {
-            duckdb_scalar_function_set_error(info,
-                "duckhts_somalier_certify_thresholds: depth list exceeds max_sites");
-            return;
-        }
         for (idx_t i = 0u; i < depths.length; i++) {
             if (!row_valid(depth_list, depths.offset + i)) {
                 duckdb_scalar_function_set_error(info,

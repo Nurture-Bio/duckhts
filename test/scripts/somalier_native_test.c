@@ -822,12 +822,6 @@ static void test_threshold_certification(void) {
               too_deep, 1u, &settings, &work, thresholds) ==
               DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
         CHECK(work.used == used);
-        settings.max_sites = 1u;
-        CHECK(duckhts_somalier_certify_thresholds(
-              descending, 2u, &settings, &work, thresholds) ==
-              DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
-        CHECK(work.used == used);
-        settings.max_sites = 100000000u;
         CHECK(duckhts_somalier_certify_thresholds(
               &single, (size_t)DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH + 2u,
               &settings, &work, thresholds) == DUCKHTS_SOMALIER_LIMIT_EXCEEDED);

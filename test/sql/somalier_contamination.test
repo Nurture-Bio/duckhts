@@ -87,6 +87,36 @@ FROM duckhts_somalier_charr(
 ----
 ok	1	1	0	1	1	0.02
 
+# max_sites bounds panel width, not the number of distinct A+B depths across
+# samples. A one-site panel can therefore prepare multiple query-wide depths.
+statement ok
+CREATE TEMP TABLE contam_one_multi_depth_evidence AS
+SELECT * FROM contam_one_evidence
+UNION ALL
+SELECT * REPLACE('Two' AS sample_id, 9::UBIGINT AS a, 1::UBIGINT AS b)
+FROM contam_one_evidence;
+
+statement ok
+CREATE TEMP TABLE contam_one_multi_depth_pairs AS
+SELECT * FROM (VALUES ('One', 'Two')) p(receiver_id, anchor_id);
+
+query I
+SELECT count(*) FROM duckhts_somalier_charr(
+  'contam_one_multi_depth_evidence', 'contam_one_panel',
+  'contam_one_frequency', min_depth := 7, hom_minor_rate := 0.1,
+  hom_tail_alpha := 0.001, max_sites := 1);
+----
+2
+
+query I
+SELECT count(*) FROM duckhts_somalier_matched_contamination(
+  'contam_one_multi_depth_evidence', 'contam_one_panel',
+  'contam_one_frequency', 'contam_one_multi_depth_pairs',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_sites := 1);
+----
+1
+
 statement ok
 CREATE TEMP VIEW contam_charr_evidence AS
 SELECT * FROM contam_evidence WHERE sample_id IN ('D', 'E', 'U', 'X', 'L');
@@ -222,13 +252,6 @@ SELECT * FROM duckhts_somalier_charr(
   max_threshold_work := 220, max_sites := 2);
 ----
 binomial threshold certification exceeded max_threshold_work
-
-statement error
-SELECT __duckhts_somalier_certify_thresholds(
-  [6::UBIGINT, 200::UBIGINT], 7::UBIGINT, 1000000::UBIGINT,
-  0.1::DOUBLE, 0.001::DOUBLE, 1::UBIGINT, 16000000::UBIGINT);
-----
-depth list exceeds max_sites
 
 query TIIIII
 SELECT contamination.status, contamination.observed_sites,

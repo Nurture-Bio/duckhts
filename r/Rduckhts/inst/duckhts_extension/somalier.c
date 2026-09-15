@@ -1188,9 +1188,6 @@ duckhts_somalier_status_t duckhts_somalier_certify_thresholds(
         (depth_count > 0u && (depths == NULL || thresholds == NULL))) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
-    if (depth_count > settings->max_sites) {
-        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
-    }
     if (depth_count > 0u &&
         (uint64_t)(depth_count - 1u) > settings->max_depth) {
         return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
