@@ -69,7 +69,7 @@ duckvep_evidence_write_extension_receipt(
 
 ``` sh
 BENCHMARK_RMD=benchmark_somalier.Rmd \
-BENCHMARK_REPORT=benchmark_somalier_reviewed.md \
+BENCHMARK_REPORT=benchmark_somalier_local_snapshot.md \
 SOMALIER_BENCHMARK_EXTENSION_RECEIPT=/tmp/somalier-extension.tsv \
 SOMALIER_BENCHMARK_SAMPLES=250 \
 SOMALIER_BENCHMARK_SELECTED_SAMPLES=3 \
@@ -98,13 +98,13 @@ result oracle. A single `K/P` point is not a memory-scaling proof.
 
 | item                         | value                                                            |
 |:-----------------------------|:-----------------------------------------------------------------|
-| checkout revision            | f153bcefd11e489ad14bc7b1f0ddca4ba8489ffb                         |
+| checkout revision            | 6dfe9006fa47d8f0fd31e04ed2841c6673d05e6f                         |
 | checkout src/ tree           | c481004dfe8e99568a4a3941a7f38c911fa91f0e                         |
 | binary/checkout binding      | verified release receipt: htslib_distclean_make_release          |
 | extension SHA-256            | 15b3296efc2d6a8100ce613f144057d15167a930d22b1c80a2fcb133128e1387 |
 | extension path               | /root/duckhts/build/release/duckhts.duckdb_extension             |
-| build receipt path           | /tmp/duckhts-somalier-f153bce.tsv                                |
-| build receipt SHA-256        | d24503ce17e1c29017576de196640d378a4c6dcc023f2d121d6ca3a4f2926e87 |
+| build receipt path           | /tmp/duckhts-somalier-6dfe900.tsv                                |
+| build receipt SHA-256        | 7e3db4ff555f8a87a58fd4d0a1b54a57e9af4d10176da465a30afb127d446220 |
 | samples                      | 250                                                              |
 | panel sites                  | 17000                                                            |
 | count-evidence rows          | 4250000                                                          |
@@ -123,7 +123,7 @@ result oracle. A single `K/P` point is not a memory-scaling proof.
 
 | source                                     | sha256                                                           |
 |:-------------------------------------------|:-----------------------------------------------------------------|
-| benchmarks/benchmark_somalier.Rmd          | 387877ea049009437f4f166cb74a6bc1c4eb6167f67b76328db042e569990e90 |
+| benchmarks/benchmark_somalier.Rmd          | f80ea34657047a2dd2ad41ee6c8006f704c3d4578dc07722b9a9cf290ce856ab |
 | benchmarks/benchmark_somalier_run.R        | 1dae454f620c02477258f9b1b502e3bbad8952d9504c47271f2cf2364579a47d |
 | r/duckhtsbench/R/registry.R                | 5b31fdc8be1e3336cc2a160da0c95082ee6f91af900b61bd5bdaf24e0a8b6030 |
 | r/duckhtsbench/R/stage.R                   | 08b8d41c23e6eb27790a360f5490445270c49be2844c0180ee834a1bc86e4934 |
@@ -153,14 +153,14 @@ across many distinct depths.
 
 | workload         | median_seconds | repetitions | result_rows | persisted_output_rows | persisted_output_bytes | median_process_peak_rss_kib | median_peak_increase_kib |
 |:-----------------|---------------:|------------:|------------:|----------------------:|-----------------------:|----------------------------:|-------------------------:|
-| panel_hash       |          0.032 |           3 |           1 |                     0 |                      0 |                      343572 |                       NA |
-| sketches         |          0.214 |           3 |         250 |                     0 |                      0 |                      343296 |                       NA |
-| related_selected |          0.005 |           3 |           2 |                     0 |                      0 |                      448720 |                       NA |
-| related_all      |          1.179 |           3 |       31125 |                     0 |                      0 |                      344760 |                       NA |
-| charr            |          0.480 |           3 |         250 |                     0 |                      0 |                      343312 |                       NA |
-| matched_anchor   |          0.336 |           3 |           2 |                     0 |                      0 |                      453088 |                       NA |
-| matched_memory   |          0.355 |           3 |           2 |                     0 |                      0 |                      216512 |                    87200 |
-| end_to_end       |          2.308 |           3 |       31629 |                 31629 |                 377300 |                      513640 |                       NA |
+| panel_hash       |          0.033 |           3 |           1 |                     0 |                      0 |                      344596 |                       NA |
+| sketches         |          0.223 |           3 |         250 |                     0 |                      0 |                      343932 |                       NA |
+| related_selected |          0.005 |           3 |           2 |                     0 |                      0 |                      450580 |                       NA |
+| related_all      |          1.173 |           3 |       31125 |                     0 |                      0 |                      343368 |                       NA |
+| charr            |          0.485 |           3 |         250 |                     0 |                      0 |                      343368 |                       NA |
+| matched_anchor   |          0.332 |           3 |           2 |                     0 |                      0 |                      455036 |                       NA |
+| matched_memory   |          0.338 |           3 |           2 |                     0 |                      0 |                      215716 |                    86080 |
+| end_to_end       |          2.316 |           3 |       31629 |                 31629 |                 377300 |                      510660 |                       NA |
 
 |     | case             | related_selected_pairs | related_all_pairs | related_selected_joint_sites | related_all_joint_sites |
 |:----|:-----------------|-----------------------:|------------------:|-----------------------------:|------------------------:|
@@ -189,9 +189,33 @@ across many distinct depths.
 
 |     | repetition | seconds | baseline_peak_rss_kib | measured_peak_rss_kib | peak_increase_kib |
 |:----|-----------:|--------:|----------------------:|----------------------:|------------------:|
-| 7   |          1 |   0.373 |                129784 |                214744 |             84960 |
-| 10  |          2 |   0.328 |                129744 |                216944 |             87200 |
-| 23  |          3 |   0.355 |                129312 |                216512 |             87200 |
+| 7   |          1 |   0.381 |                129316 |                215716 |             86400 |
+| 10  |          2 |   0.336 |                129640 |                215720 |             86080 |
+| 23  |          3 |   0.338 |                129608 |                214408 |             84800 |
+
+## Identical-workload comparison
+
+| workload         | baseline_seconds | current_seconds | change_percent |
+|:-----------------|-----------------:|----------------:|---------------:|
+| panel_hash       |            0.030 |           0.033 |           10.0 |
+| sketches         |            0.209 |           0.223 |            6.7 |
+| related_selected |            0.004 |           0.005 |           25.0 |
+| related_all      |            1.206 |           1.173 |           -2.7 |
+| charr            |            0.284 |           0.485 |           70.8 |
+| matched_anchor   |            0.434 |           0.332 |          -23.5 |
+| matched_memory   |            0.451 |           0.338 |          -25.1 |
+| end_to_end       |            2.192 |           2.316 |            5.7 |
+
+The comparison baseline is
+benchmarks/benchmark_somalier_identity_bound.md at revision
+c3bd4ced6e049d4ebc5290037bb3684f9e555267, with the same 250 samples,
+17,000 sites, K=3, P=2, four threads, output denominators, warmup, and
+repetition count. CHARR changed by +70.8%; the query-wide distinct-depth
+preparation adds a pass over count evidence before the aggregate.
+Matched-anchor changed by -23.5%, all-pair relatedness by -2.7%, and
+end-to-end execution by +5.7%. These are observed timings on this host,
+not generalized improvement claims. The current and baseline reports
+retain the same result-row and biological-work denominators.
 
 The runner checks 266 words in each of the three prepared masks.
 Selected-pair `jointly_called`, `ibs0`, and `ibs2` integers are compared
