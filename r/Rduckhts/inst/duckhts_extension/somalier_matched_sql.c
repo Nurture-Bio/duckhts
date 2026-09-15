@@ -433,6 +433,13 @@ static bool read_profile(duckdb_vector input, idx_t row, uint64_t max_sites,
         field[PROFILE_OBSERVED]))[row];
     profile->unavailable_sites = ((uint64_t *)duckdb_vector_get_data(
         field[PROFILE_UNAVAILABLE]))[row];
+    if (duckdb_string_t_length(*profile->sample) >
+            DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES ||
+        duckdb_string_t_length(*profile->assembly) >
+            DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) {
+        *error = "duckhts_somalier_matched_contamination: sample_id and assembly must be at most 1024 bytes";
+        return false;
+    }
     if (!duckdb_string_t_length(*profile->sample) ||
         !duckdb_string_t_length(*profile->assembly) ||
         !lowercase_sha256(profile->panel) || profile->site_count == 0u ||
@@ -493,6 +500,11 @@ static bool read_frequency(duckdb_vector input, idx_t row, uint64_t max_sites,
         field[FREQUENCY_IDENTITY]))[row];
     frequency->site_count = ((uint64_t *)duckdb_vector_get_data(
         field[FREQUENCY_SITE_COUNT]))[row];
+    if (duckdb_string_t_length(*frequency->assembly) >
+        DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) {
+        *error = "duckhts_somalier_matched_contamination: sample_id and assembly must be at most 1024 bytes";
+        return false;
+    }
     if (!duckdb_string_t_length(*frequency->assembly) ||
         !lowercase_sha256(frequency->panel) ||
         !lowercase_sha256(frequency->identity) ||

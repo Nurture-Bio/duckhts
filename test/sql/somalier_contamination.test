@@ -365,6 +365,63 @@ SELECT __duckhts_somalier_charr(
 ----
 sample_id and assembly must be at most 1024 bytes
 
+# Persisted matched profiles obey the same identity bound as their aggregate
+# builders, including the frequency profile's assembly.
+statement ok
+CREATE TEMP VIEW contam_direct_profile AS
+SELECT struct_pack(
+  sample_id := 'R'::VARCHAR, assembly := 'GRCh38'::VARCHAR,
+  panel_sha256 := repeat('a', 64)::VARCHAR, site_count := 1::UBIGINT,
+  observed_sites := 1::UBIGINT, unavailable_sites := 0::UBIGINT,
+  min_depth := 7::UBIGINT, max_depth := 1000000::UBIGINT,
+  hom_minor_rate := 0.1::DOUBLE, hom_tail_alpha := 0.001::DOUBLE,
+  receiver_a := [199::UINTEGER], receiver_b := [1::UINTEGER],
+  receiver_usable := [1::UTINYINT], anchor_genotype := [1::TINYINT]
+) AS profile;
+
+statement ok
+CREATE TEMP VIEW contam_direct_frequency AS
+SELECT struct_pack(
+  assembly := 'GRCh38'::VARCHAR, panel_sha256 := repeat('a', 64)::VARCHAR,
+  frequency_sha256 := repeat('b', 64)::VARCHAR, site_count := 1::UBIGINT,
+  population_b_af := [0.25::DOUBLE]
+) AS profile;
+
+statement ok
+SELECT __duckhts_somalier_matched_profiles(
+  struct_update(p.profile, sample_id := repeat('r', 1024),
+                assembly := repeat('g', 1024)),
+  struct_update(p.profile, sample_id := repeat('a', 1024),
+                assembly := repeat('g', 1024)),
+  struct_update(f.profile, assembly := repeat('g', 1024)),
+  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+FROM contam_direct_profile p, contam_direct_frequency f;
+
+statement error
+SELECT __duckhts_somalier_matched_profiles(
+  struct_update(p.profile, sample_id := repeat('s', 1025)), p.profile,
+  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+FROM contam_direct_profile p, contam_direct_frequency f;
+----
+sample_id and assembly must be at most 1024 bytes
+
+statement error
+SELECT __duckhts_somalier_matched_profiles(
+  p.profile, struct_update(p.profile, assembly := repeat('g', 1025)),
+  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+FROM contam_direct_profile p, contam_direct_frequency f;
+----
+sample_id and assembly must be at most 1024 bytes
+
+statement error
+SELECT __duckhts_somalier_matched_profiles(
+  p.profile, p.profile,
+  struct_update(f.profile, assembly := repeat('g', 1025)),
+  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+FROM contam_direct_profile p, contam_direct_frequency f;
+----
+sample_id and assembly must be at most 1024 bytes
+
 # The public macros derive this identity, while the checked aggregate refuses
 # rows that attempt to change it inside one reduction group.
 statement ok

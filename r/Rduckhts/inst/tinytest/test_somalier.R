@@ -427,6 +427,26 @@ test_somalier_contamination_wrappers <- function() {
   expect_true(is.na(reverse$alpha))
   expect_true(is.na(reverse$relative_log_likelihood))
 
+  oversized_matched_evidence <- "oversized matched evidence"
+  oversized_matched_pairs <- "oversized matched pairs"
+  dbExecute(con, sprintf(paste(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(",
+    "CASE WHEN sample_id = 'R' THEN repeat('r', 1025)",
+    "ELSE sample_id END AS sample_id) FROM %s"
+  ), qid(oversized_matched_evidence), qid(evidence_name)))
+  dbExecute(con, sprintf(paste(
+    "CREATE TEMP VIEW %s AS SELECT repeat('r', 1025)::VARCHAR AS receiver_id,",
+    "'K'::VARCHAR AS anchor_id"
+  ), qid(oversized_matched_pairs)))
+  expect_error(
+    rduckhts_somalier_matched_contamination(
+      con, evidence_table = oversized_matched_evidence,
+      panel_table = panel_name, frequency_table = match_frequency_name,
+      pairs_table = oversized_matched_pairs, max_sites = 2
+    ),
+    "sample_id and assembly must be at most 1024 bytes"
+  )
+
   # Every contamination relation can be ordinary Parquet. Identity digests and
   # numerical results remain unchanged after the round trip.
   paths <- setNames(

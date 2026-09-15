@@ -1846,6 +1846,10 @@ The struct retains ordered sample, panel and frequency identities, method/status
 
 The query prepares one bounded site profile per distinct selected sample and one panel-aligned frequency profile before joining requested ordered pairs. The pair scalar borrows those DuckDB-owned lists and allocates no per-pair workspace. Panel and evidence cardinalities are checked before profile-list construction; max_sites is a per-call panel limit.
 
+### Limits
+
+sample_id and assembly are each limited to 1,024 bytes, including when prepared profiles are persisted and supplied directly. A+B depth must not exceed max_depth, max_sites is at most 100,000,000, and max_evaluations must fit the declared search workspace.
+
 ### Numerical difference
 
 DuckHTS searches a full 0.01 grid and refines a feasible local optimum rather than reproducing Somalier v0.3.4's fixed coarse/high-refinement sequence. The retained two-site witness fits alpha about 0.39759 versus upstream 0.440983. Both likelihoods and settings are retained in the differential test; results are not guaranteed bitwise identical to the CLI.

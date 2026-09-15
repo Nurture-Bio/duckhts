@@ -24,8 +24,8 @@ below describe implemented package behavior, not a completed release submission.
   matched method preserves receiver/anchor direction and evaluates only
   requested ordered pairs without a pair-sized native workspace. CHARR results
   are stable across parallel aggregate reduction order.
-- Bound sample and assembly identities retained by bundled sketch and CHARR
-  aggregate states to 1,024 bytes, and reject oversized persisted sketches.
+- Bound sample and assembly identities retained by bundled sketch, CHARR, and
+  matched-contamination states to 1,024 bytes, including persisted inputs.
 - Preserve strict binomial-tail cutoffs with outward-rounded comparisons and a
   fixed-size CHARR depth-threshold cache, and round-trip sketches constructed
   with IEEE negative-zero balance settings.

@@ -99,6 +99,9 @@ uncontaminated receiver genotype and is not interpreted as the contaminating
 donor. Reversing a pair is therefore a different analysis.
 }
 \details{
+Sample identifiers and assembly strings are limited to 1,024 bytes,
+including when prepared profiles are persisted and supplied directly.
+
 The returned score omits alpha-independent binomial coefficients. It compares
 alpha candidates for the same observed receiver/anchor pair and is not an
 absolute likelihood comparable between pairs. No usable evidence yields
