@@ -125,16 +125,20 @@ release: build_extension_library_release build_extension_with_metadata_release
 # injects setTempRet0/getTempRet0 shims. duckdb-wasm uses native i64/BigInt imports,
 # so the legalized ABI also mismatches at extension load time. Override the CI-tools
 # link step to preserve the same EH + BigInt ABI as duckdb-wasm itself.
+#
+# SIDE_MODULE links leave compiler builtins unresolved unless their archive is
+# explicit. Pull it into the side module so long-double arithmetic uses the
+# same implementation instead of incompatible main-module imports.
 ifneq ($(DUCKDB_WASM_PLATFORM),)
 link_wasm_debug:
 	@WASM_LINK_RSP=""; \
 	if [ -f "$(EXTENSION_BUILD_PATH)/debug/wasm_link_inputs.rsp" ]; then WASM_LINK_RSP="@$(EXTENSION_BUILD_PATH)/debug/wasm_link_inputs.rsp"; fi; \
-	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP "$$(emcc --print-file-name=libcompiler_rt.a)" -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
 
 link_wasm_release:
 	@WASM_LINK_RSP=""; \
 	if [ -f "$(EXTENSION_BUILD_PATH)/release/wasm_link_inputs.rsp" ]; then WASM_LINK_RSP="@$(EXTENSION_BUILD_PATH)/release/wasm_link_inputs.rsp"; fi; \
-	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) $$WASM_LINK_RSP "$$(emcc --print-file-name=libcompiler_rt.a)" -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -fwasm-exceptions -sWASM_BIGINT -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
 endif
 
 # -----------------------------------------------------------------------------
@@ -144,7 +148,7 @@ endif
 test: test_debug
 test_debug test_release: test-function-catalog
 test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
-test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
+test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
 test_release: test-reference-cache
 ifneq ($(filter linux_%,$(or $(DUCKDB_PLATFORM),$(shell sed -n '1p' configure/platform.txt 2>/dev/null))),)
 test_release: test-reader-alloc
@@ -179,6 +183,47 @@ test-bam-format:
 test-region-list:
 	cmake --build cmake_build/release --target duckhts_region_list_test
 	./cmake_build/release/duckhts_region_list_test
+
+.PHONY: test-somalier-native test-somalier-native-asan test-somalier-native-ubsan test-somalier-pinned-helper test-somalier-statistical test-somalier-upstream-source test-somalier-upstream-staging test-somalier-r-release
+define run_somalier_native_test
+	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pedantic $(1) \
+			-Isrc/include src/somalier.c test/scripts/somalier_native_test.c \
+			-lm -o "$$tmp/somalier_native_test"; \
+		$(2) "$$tmp/somalier_native_test"
+endef
+
+test-somalier-native:
+	$(call run_somalier_native_test,,)
+
+test-somalier-native-asan:
+	$(call run_somalier_native_test,-O1 -fsanitize=address -fno-omit-frame-pointer,ASAN_OPTIONS=detect_leaks=1)
+
+test-somalier-native-ubsan:
+	$(call run_somalier_native_test,-O1 -fsanitize=undefined -fno-omit-frame-pointer,UBSAN_OPTIONS=print_stacktrace=1)
+
+test-somalier-r-release:
+	scripts/test_somalier_release_campaigns.sh
+
+define compile_somalier_campaign_test
+	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pedantic \
+			-Isrc/include src/somalier.c test/scripts/somalier_native_test.c \
+			-lm -o "$$tmp/somalier_native_test"; \
+		$(1)
+endef
+
+test-somalier-pinned-helper:
+	$(call compile_somalier_campaign_test,"$$tmp/somalier_native_test" --campaign pinned > "$$tmp/pinned.tsv"; Rscript test/scripts/somalier_v034_differential.R "$$tmp/pinned.tsv")
+
+test-somalier-upstream-source:
+	Rscript test/scripts/somalier_v034_regenerate.R $(if $(SOMALIER_V034_SOURCE_ARCHIVE),"$(SOMALIER_V034_SOURCE_ARCHIVE)",)
+
+test-somalier-upstream-staging:
+	Rscript test/scripts/test_somalier_upstream_staging.R
+
+test-somalier-statistical:
+	$(call compile_somalier_campaign_test,Rscript test/scripts/somalier_statistical_campaign.R "$$tmp/somalier_native_test")
 
 .PHONY: test-bcf-scan
 test-bcf-scan:

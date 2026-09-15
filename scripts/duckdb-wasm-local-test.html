@@ -74,7 +74,7 @@
 <body>
   <main>
     <h1>duckdb-wasm Local DuckHTS Test</h1>
-    <p>This harness loads the local DuckHTS wasm extension in duckdb-wasm, requires native SIMD128 dispatch for every registered sequence kernel, and runs same-origin HTTP smoke tests.</p>
+    <p>This harness loads the local DuckHTS wasm extension in duckdb-wasm, requires native SIMD128 dispatch for every registered sequence kernel, executes a Somalier CHARR witness, and runs same-origin HTTP smoke tests.</p>
 
     <div class="controls">
       <button id="run">Run Setup + Smoke Test</button>
@@ -270,6 +270,36 @@ FROM read_fastq('http://127.0.0.1:8001/extdata/r1.fq');</textarea>
       log("  SIMD assertions passed");
     }
 
+    async function assertSomalier() {
+      log("Asserting Somalier CHARR on wasm...");
+      await conn.query(
+        "CREATE TEMP TABLE wasm_somalier_panel AS " +
+        "SELECT 'GRCh38' AS assembly, 0::UBIGINT AS site_index, " +
+        "'chr1' AS region, 101::UBIGINT AS position, 'A' AS allele_a, 'G' AS allele_b");
+      await conn.query(
+        "CREATE TEMP TABLE wasm_somalier_frequency AS " +
+        "SELECT *, 0.25::DOUBLE AS population_b_af FROM wasm_somalier_panel");
+      await conn.query(
+        "CREATE TEMP TABLE wasm_somalier_evidence AS " +
+        "SELECT 'sample' AS sample_id, *, 199::UBIGINT AS a, " +
+        "1::UBIGINT AS b, 0::UBIGINT AS other FROM wasm_somalier_panel");
+      const result = await conn.query(
+        "SELECT contamination.status AS status, " +
+        "contamination.usable_sites AS usable_sites, " +
+        "contamination.estimate AS estimate " +
+        "FROM duckhts_somalier_charr(" +
+        "'wasm_somalier_evidence', 'wasm_somalier_panel', " +
+        "'wasm_somalier_frequency', min_depth := 7, " +
+        "hom_minor_rate := 0.1, hom_tail_alpha := 0.001, max_sites := 1)");
+      const rows = result.toArray();
+      if (rows.length !== 1 || String(rows[0].status) !== "ok" ||
+          Number(rows[0].usable_sites) !== 1 ||
+          Math.abs(Number(rows[0].estimate) - 0.02) > 1e-12) {
+        throw new Error(`unexpected Somalier CHARR result: ${JSON.stringify(rows)}`);
+      }
+      log("  Somalier CHARR witness passed");
+    }
+
     async function main() {
       statusNode.textContent = "Preparing";
       runButton.disabled = true;
@@ -298,6 +328,7 @@ FROM read_fastq('http://127.0.0.1:8001/extdata/r1.fq');</textarea>
         log("Loaded extension:", extUrl);
 
         await assertSimd();
+        await assertSomalier();
 
         const fastqUrl = defaultOriginUrl("/extdata/r1.fq");
         const tabixUrl = defaultOriginUrl("/extdata/header_tabix.tsv.gz");
