@@ -18,6 +18,7 @@ rduckhts_somalier_charr(
   max_depth = 1e+06,
   hom_minor_rate = 0.12,
   hom_tail_alpha = 0.002,
+  max_threshold_work = 1.6e+07,
   max_sites = 1e+06,
   overwrite = FALSE
 )
@@ -30,7 +31,8 @@ rduckhts_somalier_charr(
 \item{evidence_parquet}{Path to an evidence Parquet file, instead of
 `evidence_table`.}
 
-\item{panel_table}{Name of the required ordered panel table or view.}
+\item{panel_table}{Name of the required ordered panel table or view. Panel
+assembly and region values are each limited to 1,024 bytes.}
 
 \item{panel_parquet}{Path to the required ordered panel Parquet file, instead
 of `panel_table`.}
@@ -54,6 +56,10 @@ homozygous-like anchors.}
 
 \item{hom_tail_alpha}{Binomial upper-tail threshold for homozygous-like
 eligibility.}
+
+\item{max_threshold_work}{Positive cumulative limit on exact binomial
+certification steps, at most 100,000,000. Distinct observed depths are
+certified once per call and shared across samples.}
 
 \item{max_sites}{Positive per-sample panel capacity, at most 100,000,000.}
 

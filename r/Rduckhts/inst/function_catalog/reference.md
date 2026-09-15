@@ -1596,7 +1596,7 @@ VARCHAR
 
 ### Panel contract
 
-panel_table has assembly, dense zero-based site_index, region, positive one-based position, allele_a and allele_b. One nonempty assembly, unique physical region/position and uppercase single-base A/C/G/T alleles in lexical A < B order are required. The pinned Somalier v0.3.4 X/Y aliases are rejected; other aliases cannot be biologically classified from a region string. The calculation assumes diploid three-state genotypes. The digest commits to this domain and every ordered site, independent of physical row order.
+panel_table has assembly, dense zero-based site_index, region, positive one-based position, allele_a and allele_b. Assembly and region are each limited to 1,024 bytes before hashing. One nonempty assembly, unique physical region/position and uppercase single-base A/C/G/T alleles in lexical A < B order are required. The pinned Somalier v0.3.4 X/Y aliases are rejected; other aliases cannot be biologically classified from a region string. The calculation assumes diploid three-state genotypes. The digest commits to this domain and every ordered site, independent of physical row order.
 
 ### Examples
 
@@ -1787,7 +1787,7 @@ Estimate per-sample contamination with a bounded Somalier-derived CHARR reductio
 Signature:
 
 ```sql
-duckhts_somalier_charr(evidence_table, panel_table, frequency_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.12, hom_tail_alpha := 0.002, max_sites := 1000000)
+duckhts_somalier_charr(evidence_table, panel_table, frequency_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.12, hom_tail_alpha := 0.002, max_threshold_work := 16000000, max_sites := 1000000)
 ```
 
 Returns:
@@ -1806,7 +1806,7 @@ The struct retains sample, panel and frequency identities, method and numerical 
 
 ### Limits
 
-A+B depth must not exceed 1,000,000. sample_id and assembly are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.
+A+B depth must not exceed 1,000,000. Distinct measured depths are certified once per call; max_threshold_work bounds their cumulative exact recurrence and continued-fraction steps and is at most 100,000,000. Exhaustion errors without publishing a partial result. sample_id, assembly and panel region are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.
 
 ### Compatibility
 
@@ -1825,7 +1825,7 @@ Estimate directional contamination for explicitly selected receiver/anchor sampl
 Signature:
 
 ```sql
-duckhts_somalier_matched_contamination(evidence_table, panel_table, frequency_table, pairs_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.05, hom_tail_alpha := 0.001, error_rate := 0.002, min_probability := 1e-10, min_prior_frequency := 1e-6, alpha_min := 0, alpha_max := 1, grid_step := 0.01, refine_tolerance := 1e-10, max_evaluations := 4096, max_sites := 1000000)
+duckhts_somalier_matched_contamination(evidence_table, panel_table, frequency_table, pairs_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.05, hom_tail_alpha := 0.001, error_rate := 0.002, min_probability := 1e-10, min_prior_frequency := 1e-6, alpha_min := 0, alpha_max := 1, grid_step := 0.01, refine_tolerance := 1e-10, max_evaluations := 4096, max_threshold_work := 16000000, max_sites := 1000000)
 ```
 
 Returns:
@@ -1844,11 +1844,11 @@ The struct retains ordered sample, panel and frequency identities, method/status
 
 ### Execution
 
-The query prepares one bounded site profile per distinct selected sample and one panel-aligned frequency profile before joining requested ordered pairs. The pair scalar borrows those DuckDB-owned lists and allocates no per-pair workspace. Panel and evidence cardinalities are checked before profile-list construction; max_sites is a per-call panel limit.
+The query certifies each distinct measured depth once, then prepares one bounded site profile per distinct selected sample and one panel-aligned frequency profile before joining requested ordered pairs. The pair scalar borrows those DuckDB-owned lists and allocates no per-pair workspace. Panel and evidence cardinalities are checked before profile-list construction; max_sites is a per-call panel limit.
 
 ### Limits
 
-sample_id and assembly are each limited to 1,024 bytes, including when prepared profiles are persisted and supplied directly. A+B depth must not exceed max_depth, max_sites is at most 100,000,000, and max_evaluations must fit the declared search workspace.
+Panel assembly and region are each limited to 1,024 bytes. Persisted profiles separately limit sample_id and assembly to 1,024 bytes. A+B depth must not exceed max_depth. max_threshold_work bounds cumulative exact binomial certification steps and is at most 100,000,000; exhaustion errors without publishing profiles. max_sites is at most 100,000,000, and max_evaluations must fit the declared search workspace.
 
 ### Numerical difference
 

@@ -686,12 +686,13 @@ static void test_binomial_and_charr(void) {
     {
         duckhts_somalier_charr_accumulator_t cached = {0};
         duckhts_somalier_charr_accumulator_t collision = {0};
-        duckhts_somalier_charr_accumulator_t combined;
         duckhts_somalier_charr_accumulator_t copied;
         duckhts_somalier_counts_t depth_200 = {170u, 30u, 0u, 1u};
         duckhts_somalier_counts_t depth_264 = {263u, 1u, 0u, 1u};
         unsigned slot = 200u % DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE;
         uint64_t expected;
+        uint64_t work_after_200;
+        uint64_t work_after_264;
 
         duckhts_somalier_charr_settings_default(&settings);
         CHECK(duckhts_somalier_charr_observe(&cached, &depth_200, 0.25,
@@ -704,40 +705,40 @@ static void test_binomial_and_charr(void) {
               settings.max_depth, &expected) == DUCKHTS_SOMALIER_OK);
         CHECK(cached.threshold_cache_value[slot] == expected);
         CHECK(expected >= depth_200.allele_b);
+        CHECK(cached.mode == DUCKHTS_SOMALIER_CHARR_DIRECT);
+        work_after_200 = cached.threshold_work.used;
+        CHECK(work_after_200 > 0u);
 
         CHECK(duckhts_somalier_charr_observe(&collision, &depth_264, 0.25,
               &settings) == DUCKHTS_SOMALIER_OK);
         CHECK(collision.threshold_cache_depth[slot] == 264u);
-        combined = cached;
-        CHECK(duckhts_somalier_charr_combine(&combined, &collision) ==
-              DUCKHTS_SOMALIER_OK);
-        CHECK(duckhts_somalier_charr_observe(&combined, &depth_264, 0.25,
+        CHECK(duckhts_somalier_charr_combine(&cached, &collision) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(cached.usable_sites == 1u);
+        CHECK(duckhts_somalier_charr_observe(&cached, &depth_264, 0.25,
               &settings) == DUCKHTS_SOMALIER_OK);
-        CHECK(combined.threshold_cache_depth[slot] == 264u);
-        CHECK(duckhts_somalier_charr_observe(&combined, &depth_200, 0.25,
+        CHECK(cached.threshold_cache_depth[slot] == 264u);
+        work_after_264 = cached.threshold_work.used;
+        CHECK(work_after_264 > work_after_200);
+        CHECK(duckhts_somalier_charr_observe(&cached, &depth_200, 0.25,
               &settings) == DUCKHTS_SOMALIER_OK);
-        CHECK(combined.usable_sites == 4u);
-        CHECK(combined.threshold_cache_depth[slot] == 200u);
+        CHECK(cached.usable_sites == 3u);
+        CHECK(cached.threshold_cache_depth[slot] == 200u);
+        CHECK(cached.threshold_work.used > work_after_264);
 
+        copied = cached;
         settings.hom_tail_alpha = 0.5;
         CHECK(duckhts_somalier_classify_contamination(&depth_200, &settings,
               &genotype) == DUCKHTS_SOMALIER_OK);
         CHECK(genotype == DUCKHTS_SOMALIER_UNKNOWN);
-        CHECK(duckhts_somalier_charr_observe(&combined, &depth_200, 0.25,
-              &settings) == DUCKHTS_SOMALIER_OK);
-        CHECK(combined.usable_sites == 4u);
-        CHECK(combined.threshold_cache_valid == (UINT64_C(1) << slot));
-        CHECK(combined.threshold_cache_tail_alpha == 0.5);
-        CHECK(combined.threshold_cache_depth[slot] == 200u);
-        CHECK(duckhts_somalier_binomial_max_minor(200u,
-              settings.hom_minor_rate, settings.hom_tail_alpha,
-              settings.max_depth, &expected) == DUCKHTS_SOMALIER_OK);
-        CHECK(combined.threshold_cache_value[slot] == expected);
-        CHECK(expected < depth_200.allele_b);
-        copied = combined;
+        CHECK(duckhts_somalier_charr_observe(&cached, &depth_200, 0.25,
+              &settings) == DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(cached.usable_sites == 3u);
+        CHECK(cached.threshold_cache_tail_alpha == 0.002);
+        settings.hom_tail_alpha = 0.002;
         CHECK(duckhts_somalier_charr_observe(&copied, &depth_200, 0.25,
               &settings) == DUCKHTS_SOMALIER_OK);
-        CHECK(copied.usable_sites == combined.usable_sites);
+        CHECK(copied.usable_sites == 4u);
     }
 }
 
@@ -778,6 +779,229 @@ static void test_random_binomial_differential(void) {
     }
 }
 
+static void test_threshold_certification(void) {
+    duckhts_somalier_contamination_settings_t settings;
+    duckhts_somalier_threshold_work_t work;
+    duckhts_somalier_certified_threshold_t thresholds[4];
+    static const uint64_t depths[] = {0u, 1u, 100u, 1000000u};
+    uint64_t direct;
+
+    duckhts_somalier_charr_settings_default(&settings);
+    CHECK(settings.max_threshold_work == DUCKHTS_SOMALIER_DEFAULT_THRESHOLD_WORK);
+    work = (duckhts_somalier_threshold_work_t){0u, settings.max_threshold_work};
+    CHECK(duckhts_somalier_certify_thresholds(
+          depths, 4u, &settings, &work, thresholds) == DUCKHTS_SOMALIER_OK);
+    CHECK(work.used <= work.limit);
+    for (size_t i = 0u; i < 4u; i++) {
+        CHECK(thresholds[i].depth == depths[i]);
+        CHECK(duckhts_somalier_binomial_max_minor(
+              depths[i], settings.hom_minor_rate, settings.hom_tail_alpha,
+              settings.max_depth, &direct) == DUCKHTS_SOMALIER_OK);
+        CHECK(thresholds[i].max_minor == direct);
+        CHECK(thresholds[i].hom_minor_rate == settings.hom_minor_rate);
+        CHECK(thresholds[i].hom_tail_alpha == settings.hom_tail_alpha);
+    }
+
+    {
+        static const uint64_t duplicate[] = {1u, 1u};
+        static const uint64_t descending[] = {2u, 1u};
+        static const uint64_t too_deep[] = {
+            DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH + 1u
+        };
+        uint64_t single = 0u;
+        uint64_t used = work.used;
+        CHECK(duckhts_somalier_certify_thresholds(
+              duplicate, 2u, &settings, &work, thresholds) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(work.used == used);
+        CHECK(duckhts_somalier_certify_thresholds(
+              descending, 2u, &settings, &work, thresholds) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(work.used == used);
+        CHECK(duckhts_somalier_certify_thresholds(
+              too_deep, 1u, &settings, &work, thresholds) ==
+              DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
+        CHECK(work.used == used);
+        settings.max_sites = 1u;
+        CHECK(duckhts_somalier_certify_thresholds(
+              descending, 2u, &settings, &work, thresholds) ==
+              DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
+        CHECK(work.used == used);
+        settings.max_sites = 100000000u;
+        CHECK(duckhts_somalier_certify_thresholds(
+              &single, (size_t)DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH + 2u,
+              &settings, &work, thresholds) == DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
+        CHECK(work.used == used);
+    }
+
+    {
+        static const uint64_t expensive[] = {53u, 100u};
+        duckhts_somalier_certified_threshold_t scratch[2] = {
+            {UINT64_MAX, UINT64_MAX, NAN, NAN},
+            {UINT64_MAX, UINT64_MAX, NAN, NAN}
+        };
+        duckhts_somalier_certified_threshold_t published = {
+            UINT64_C(77), UINT64_C(88), 0.12, 0.002
+        };
+        duckhts_somalier_status_t status;
+        settings.max_threshold_work = 1u;
+        work = (duckhts_somalier_threshold_work_t){0u, 1u};
+        status = duckhts_somalier_certify_thresholds(
+            expensive, 2u, &settings, &work, scratch);
+        if (status == DUCKHTS_SOMALIER_OK) published = scratch[1];
+        CHECK(status == DUCKHTS_SOMALIER_WORK_LIMIT_EXCEEDED);
+        CHECK(work.used <= work.limit);
+        CHECK(published.depth == 77u && published.max_minor == 88u);
+    }
+}
+
+static void test_certified_contamination_equivalence(void) {
+    duckhts_somalier_contamination_settings_t settings;
+    unsigned trial;
+    duckhts_somalier_charr_settings_default(&settings);
+    settings.min_depth = 1u;
+    for (trial = 0u; trial < 500u; trial++) {
+        uint64_t depth = next_random() % 1001u;
+        uint32_t a = (uint32_t)(next_random() % (depth + 1u));
+        duckhts_somalier_counts_t counts = {
+            a, (uint32_t)depth - a, (uint32_t)(next_random() % 11u), 1u
+        };
+        duckhts_somalier_threshold_work_t work = {
+            0u, settings.max_threshold_work
+        };
+        duckhts_somalier_certified_threshold_t threshold;
+        duckhts_somalier_genotype_t direct;
+        duckhts_somalier_genotype_t certified;
+        CHECK(duckhts_somalier_certify_thresholds(
+              &depth, 1u, &settings, &work, &threshold) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_classify_contamination(
+              &counts, &settings, &direct) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_classify_contamination_certified(
+              &counts, &settings, &threshold, &certified) == DUCKHTS_SOMALIER_OK);
+        CHECK(certified == direct);
+        threshold.depth++;
+        CHECK(duckhts_somalier_classify_contamination_certified(
+              &counts, &settings, &threshold, &certified) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+    }
+    {
+        duckhts_somalier_counts_t unavailable = {0u, 0u, 0u, 0u};
+        duckhts_somalier_genotype_t genotype;
+        CHECK(duckhts_somalier_classify_contamination_certified(
+              &unavailable, &settings, NULL, &genotype) == DUCKHTS_SOMALIER_OK);
+        CHECK(genotype == DUCKHTS_SOMALIER_UNKNOWN);
+    }
+    {
+        uint64_t depth = 200u;
+        duckhts_somalier_counts_t counts = {199u, 1u, 0u, 1u};
+        duckhts_somalier_threshold_work_t work = {
+            0u, settings.max_threshold_work
+        };
+        duckhts_somalier_certified_threshold_t threshold;
+        duckhts_somalier_certified_threshold_t mismatched;
+        duckhts_somalier_charr_accumulator_t certified = {0};
+        duckhts_somalier_charr_accumulator_t direct = {0};
+        duckhts_somalier_contamination_settings_t changed;
+        duckhts_somalier_genotype_t genotype;
+        CHECK(duckhts_somalier_certify_thresholds(
+              &depth, 1u, &settings, &work, &threshold) == DUCKHTS_SOMALIER_OK);
+        mismatched = threshold;
+        mismatched.hom_minor_rate = nextafter(settings.hom_minor_rate, 1.0);
+        CHECK(duckhts_somalier_classify_contamination_certified(
+              &counts, &settings, &mismatched, &genotype) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &certified, &counts, 0.25, &settings, &mismatched) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(certified.mode == DUCKHTS_SOMALIER_CHARR_UNOPENED);
+        mismatched = threshold;
+        mismatched.hom_tail_alpha = nextafter(settings.hom_tail_alpha, 1.0);
+        CHECK(duckhts_somalier_classify_contamination_certified(
+              &counts, &settings, &mismatched, &genotype) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &certified, &counts, 0.25, &settings, &threshold) ==
+              DUCKHTS_SOMALIER_OK);
+        CHECK(certified.mode == DUCKHTS_SOMALIER_CHARR_CERTIFIED);
+        changed = settings;
+        changed.min_depth++;
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &certified, &counts, 0.25, &changed, &threshold) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(certified.usable_sites == 1u);
+        CHECK(duckhts_somalier_charr_observe(
+              &certified, &counts, 0.25, &settings) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(duckhts_somalier_charr_observe(
+              &direct, &counts, 0.25, &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &direct, &counts, 0.25, &settings, &threshold) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+        CHECK(duckhts_somalier_charr_combine(&certified, &direct) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+    }
+}
+
+static void test_certified_charr_partition(void) {
+    enum { SITE_COUNT = 31 };
+    duckhts_somalier_contamination_settings_t settings;
+    duckhts_somalier_threshold_work_t work;
+    duckhts_somalier_certified_threshold_t thresholds[SITE_COUNT];
+    duckhts_somalier_charr_accumulator_t direct = {0};
+    duckhts_somalier_charr_accumulator_t prepared = {0};
+    duckhts_somalier_charr_accumulator_t even = {0};
+    duckhts_somalier_charr_accumulator_t odd = {0};
+    duckhts_somalier_charr_accumulator_t combined;
+    duckhts_somalier_charr_result_t results[3];
+    uint64_t depths[SITE_COUNT];
+    unsigned i;
+
+    duckhts_somalier_charr_settings_default(&settings);
+    for (i = 0u; i < SITE_COUNT; i++) depths[i] = 200u + i;
+    work = (duckhts_somalier_threshold_work_t){0u, settings.max_threshold_work};
+    CHECK(duckhts_somalier_certify_thresholds(
+          depths, SITE_COUNT, &settings, &work, thresholds) == DUCKHTS_SOMALIER_OK);
+    for (i = 0u; i < SITE_COUNT; i++) {
+        uint32_t minor = 1u + i % 3u;
+        duckhts_somalier_counts_t counts = {
+            (uint32_t)depths[i] - minor, minor, 0u, 1u
+        };
+        double frequency = (double)(10u + i) / 100.0;
+        CHECK(duckhts_somalier_charr_observe(
+              &direct, &counts, frequency, &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &prepared, &counts, frequency, &settings, &thresholds[i]) ==
+              DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              i % 2u == 0u ? &even : &odd, &counts, frequency,
+              &settings, &thresholds[i]) == DUCKHTS_SOMALIER_OK);
+    }
+    combined = even;
+    CHECK(duckhts_somalier_charr_combine(&combined, &odd) == DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&direct, &results[0]) == DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&prepared, &results[1]) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&combined, &results[2]) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(results[0].estimate == results[1].estimate);
+    CHECK(results[1].estimate == results[2].estimate);
+    CHECK(results[0].usable_sites == results[1].usable_sites);
+    CHECK(results[1].usable_sites == results[2].usable_sites);
+    CHECK(prepared.threshold_work.used == 0u && combined.threshold_work.used == 0u);
+    {
+        duckhts_somalier_contamination_settings_t changed = settings;
+        duckhts_somalier_charr_accumulator_t incompatible = {0};
+        duckhts_somalier_counts_t counts = {199u, 1u, 0u, 1u};
+        changed.min_depth++;
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &incompatible, &counts, 0.25, &changed, &thresholds[0]) ==
+              DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_combine(&prepared, &incompatible) ==
+              DUCKHTS_SOMALIER_INVALID_ARGUMENT);
+    }
+}
+
 static void test_charr_orientation(void) {
     duckhts_somalier_contamination_settings_t settings;
     duckhts_somalier_counts_t original[2] = {
@@ -805,6 +1029,8 @@ static void test_charr_orientation(void) {
 static void test_charr_reduction_order(void) {
     enum { SITE_COUNT = 31 };
     duckhts_somalier_contamination_settings_t settings;
+    duckhts_somalier_threshold_work_t work;
+    duckhts_somalier_certified_threshold_t threshold;
     duckhts_somalier_charr_accumulator_t forward = {0};
     duckhts_somalier_charr_accumulator_t reverse = {0};
     duckhts_somalier_charr_accumulator_t even = {0};
@@ -813,18 +1039,24 @@ static void test_charr_reduction_order(void) {
     duckhts_somalier_charr_accumulator_t combined_right;
     duckhts_somalier_charr_result_t result[4];
     unsigned i;
+    uint64_t depth = 200u;
 
     duckhts_somalier_charr_settings_default(&settings);
     settings.min_depth = 7u;
+    work = (duckhts_somalier_threshold_work_t){0u, settings.max_threshold_work};
+    CHECK(duckhts_somalier_certify_thresholds(
+          &depth, 1u, &settings, &work, &threshold) == DUCKHTS_SOMALIER_OK);
     for (i = 0u; i < SITE_COUNT; i++) {
         duckhts_somalier_counts_t counts = {
             199u - i % 3u, 1u + i % 3u, 0u, 1u
         };
         double frequency = (double)(10u + i) / 100.0;
-        CHECK(duckhts_somalier_charr_observe(&forward, &counts, frequency,
-              &settings) == DUCKHTS_SOMALIER_OK);
-        CHECK(duckhts_somalier_charr_observe(i % 2u == 0u ? &even : &odd,
-              &counts, frequency, &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &forward, &counts, frequency, &settings, &threshold) ==
+              DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              i % 2u == 0u ? &even : &odd, &counts, frequency,
+              &settings, &threshold) == DUCKHTS_SOMALIER_OK);
     }
     for (i = SITE_COUNT; i > 0u; i--) {
         unsigned site = i - 1u;
@@ -832,8 +1064,9 @@ static void test_charr_reduction_order(void) {
             199u - site % 3u, 1u + site % 3u, 0u, 1u
         };
         double frequency = (double)(10u + site) / 100.0;
-        CHECK(duckhts_somalier_charr_observe(&reverse, &counts, frequency,
-              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe_certified(
+              &reverse, &counts, frequency, &settings, &threshold) ==
+              DUCKHTS_SOMALIER_OK);
     }
     combined_left = even;
     combined_right = odd;
@@ -856,10 +1089,12 @@ static void test_charr_reduction_order(void) {
         CHECK(result[i].usable_hom_b == result[0].usable_hom_b);
     }
     {
-        duckhts_somalier_charr_accumulator_t maximum = {0};
-        duckhts_somalier_charr_accumulator_t one = {0};
+        duckhts_somalier_charr_accumulator_t maximum = even;
+        duckhts_somalier_charr_accumulator_t one = odd;
         maximum.contribution_scaled_high = UINT64_MAX;
+        maximum.contribution_scaled_low = 0u;
         one.contribution_scaled_high = 1u;
+        one.contribution_scaled_low = 0u;
         CHECK(duckhts_somalier_charr_combine(&maximum, &one) ==
               DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
         CHECK(maximum.contribution_scaled_high == UINT64_MAX &&
@@ -1427,6 +1662,9 @@ int main(int argc, char **argv) {
     test_mask_shapes();
     test_binomial_and_charr();
     test_random_binomial_differential();
+    test_threshold_certification();
+    test_certified_contamination_equivalence();
+    test_certified_charr_partition();
     test_charr_orientation();
     test_charr_reduction_order();
     test_matched_anchor();

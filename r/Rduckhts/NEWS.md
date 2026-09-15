@@ -26,9 +26,11 @@ below describe implemented package behavior, not a completed release submission.
   are stable across parallel aggregate reduction order.
 - Bound sample and assembly identities retained by bundled sketch, CHARR, and
   matched-contamination states to 1,024 bytes, including persisted inputs.
+  Panel assembly and region are checked before hash encoding.
 - Preserve strict binomial-tail cutoffs with outward-rounded comparisons and a
-  fixed-size CHARR depth-threshold cache, and round-trip sketches constructed
-  with IEEE negative-zero balance settings.
+  per-call `max_threshold_work` limit shared across distinct measured depths
+  for both contamination wrappers; exhaustion errors without partial results.
+  Sketches constructed with IEEE negative-zero balance settings round-trip.
 - The bundled estimators use stable high-depth CHARR tail evaluation and a
   full-grid matched search. Their documented numerical counterexamples can
   differ from Somalier v0.3.4 output; they are not bitwise CLI replicas.

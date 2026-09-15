@@ -13,8 +13,11 @@ DUCKDB_EXTENSION_EXTERN
 #define MATCHED_METHOD_VERSION "somalier-0.3.4-duckhts-1.5.2"
 
 enum filter_input {
-    FILTER_IN_A = 0, FILTER_IN_B, FILTER_IN_OTHER, FILTER_IN_MIN_DEPTH,
+    FILTER_IN_A = 0, FILTER_IN_B, FILTER_IN_OTHER,
+    FILTER_IN_CERTIFIED_DEPTH, FILTER_IN_CERTIFIED_MAX_MINOR,
+    FILTER_IN_MIN_DEPTH,
     FILTER_IN_MAX_DEPTH, FILTER_IN_HOM_MINOR_RATE, FILTER_IN_HOM_TAIL_ALPHA,
+    FILTER_IN_MAX_THRESHOLD_WORK, FILTER_IN_MAX_SITES,
     FILTER_IN_COUNT
 };
 
@@ -27,6 +30,7 @@ enum profile_field {
     PROFILE_SAMPLE = 0, PROFILE_ASSEMBLY, PROFILE_PANEL, PROFILE_SITE_COUNT,
     PROFILE_OBSERVED, PROFILE_UNAVAILABLE, PROFILE_MIN_DEPTH,
     PROFILE_MAX_DEPTH, PROFILE_HOM_MINOR_RATE, PROFILE_HOM_TAIL_ALPHA,
+    PROFILE_MAX_THRESHOLD_WORK, PROFILE_MAX_SITES,
     PROFILE_RECEIVER_A, PROFILE_RECEIVER_B, PROFILE_RECEIVER_USABLE,
     PROFILE_ANCHOR_GENOTYPE, PROFILE_FIELD_COUNT
 };
@@ -41,7 +45,8 @@ enum matched_input {
     MATCHED_IN_ERROR_RATE, MATCHED_IN_MIN_PROBABILITY,
     MATCHED_IN_MIN_PRIOR_FREQUENCY, MATCHED_IN_ALPHA_MIN,
     MATCHED_IN_ALPHA_MAX, MATCHED_IN_GRID_STEP, MATCHED_IN_REFINE_TOLERANCE,
-    MATCHED_IN_MAX_EVALUATIONS, MATCHED_IN_MAX_SITES, MATCHED_IN_COUNT
+    MATCHED_IN_MAX_EVALUATIONS, MATCHED_IN_MAX_THRESHOLD_WORK,
+    MATCHED_IN_MAX_SITES, MATCHED_IN_COUNT
 };
 
 enum matched_settings_input {
@@ -51,7 +56,8 @@ enum matched_settings_input {
     SETTINGS_IN_MIN_PRIOR_FREQUENCY, SETTINGS_IN_ALPHA_MIN,
     SETTINGS_IN_ALPHA_MAX, SETTINGS_IN_GRID_STEP,
     SETTINGS_IN_REFINE_TOLERANCE, SETTINGS_IN_MAX_EVALUATIONS,
-    SETTINGS_IN_MAX_SITES, SETTINGS_IN_COUNT
+    SETTINGS_IN_MAX_THRESHOLD_WORK, SETTINGS_IN_MAX_SITES,
+    SETTINGS_IN_COUNT
 };
 
 enum matched_output {
@@ -66,7 +72,8 @@ enum matched_output {
     MATCHED_OUT_MIN_PRIOR_FREQUENCY, MATCHED_OUT_ALPHA_MIN,
     MATCHED_OUT_ALPHA_MAX, MATCHED_OUT_GRID_STEP,
     MATCHED_OUT_REFINE_TOLERANCE, MATCHED_OUT_MAX_EVALUATIONS,
-    MATCHED_OUT_MAX_SITES, MATCHED_OUT_COUNT
+    MATCHED_OUT_MAX_THRESHOLD_WORK, MATCHED_OUT_MAX_SITES,
+    MATCHED_OUT_COUNT
 };
 
 static const char *filter_output_names[FILTER_OUT_COUNT] = {
@@ -76,8 +83,8 @@ static const char *filter_output_names[FILTER_OUT_COUNT] = {
 static const char *profile_names[PROFILE_FIELD_COUNT] = {
     "sample_id", "assembly", "panel_sha256", "site_count", "observed_sites",
     "unavailable_sites", "min_depth", "max_depth", "hom_minor_rate",
-    "hom_tail_alpha", "receiver_a", "receiver_b", "receiver_usable",
-    "anchor_genotype"
+    "hom_tail_alpha", "max_threshold_work", "max_sites", "receiver_a",
+    "receiver_b", "receiver_usable", "anchor_genotype"
 };
 
 static const char *frequency_names[FREQUENCY_FIELD_COUNT] = {
@@ -93,7 +100,8 @@ static const char *matched_output_names[MATCHED_OUT_COUNT] = {
     "relative_log_likelihood", "evaluations", "min_depth", "max_depth",
     "hom_minor_rate", "hom_tail_alpha", "error_rate", "min_probability",
     "min_prior_frequency", "alpha_min", "alpha_max", "grid_step",
-    "refine_tolerance", "max_evaluations", "max_sites"
+    "refine_tolerance", "max_evaluations", "max_threshold_work",
+    "max_sites"
 };
 
 typedef struct matched_profile_view {
@@ -180,10 +188,11 @@ static void filter_scalar(duckdb_function_info info, duckdb_data_chunk input,
     }
     for (idx_t row = 0u; row < rows; row++) {
         duckhts_somalier_contamination_settings_t settings;
+        duckhts_somalier_certified_threshold_t threshold;
+        const duckhts_somalier_certified_threshold_t *threshold_ptr = NULL;
         duckhts_somalier_counts_t counts;
         duckhts_somalier_status_t status;
-        uint64_t max_depth;
-        uint64_t max_sites = MATCHED_SQL_MAX_SITES;
+        uint64_t max_sites;
 
         for (unsigned i = FILTER_IN_MIN_DEPTH; i < FILTER_IN_COUNT; i++) {
             if (!row_valid(in[i], row)) {
@@ -198,28 +207,75 @@ static void filter_scalar(duckdb_function_info info, duckdb_data_chunk input,
                 "duckhts_somalier_matched_contamination: count tuple must be all measured or all unavailable and fit UINTEGER");
             return;
         }
-        max_depth = ((uint64_t *)duckdb_vector_get_data(in[FILTER_IN_MAX_DEPTH]))[row];
+        {
+            bool have_depth = row_valid(in[FILTER_IN_CERTIFIED_DEPTH], row);
+            bool have_max_minor = row_valid(
+                in[FILTER_IN_CERTIFIED_MAX_MINOR], row);
+            if (have_depth != have_max_minor ||
+                (counts.available && !have_depth) ||
+                (!counts.available && have_depth)) {
+                duckdb_scalar_function_set_error(info,
+                    "duckhts_somalier_matched_contamination: measured counts require one prepared threshold and unavailable counts require none");
+                return;
+            }
+            if (have_depth) {
+                uint64_t measured_depth = (uint64_t)counts.allele_a +
+                    (uint64_t)counts.allele_b;
+                threshold.depth = ((uint64_t *)duckdb_vector_get_data(
+                    in[FILTER_IN_CERTIFIED_DEPTH]))[row];
+                threshold.max_minor = ((uint64_t *)duckdb_vector_get_data(
+                    in[FILTER_IN_CERTIFIED_MAX_MINOR]))[row];
+                if (counts.available && threshold.depth != measured_depth) {
+                    duckdb_scalar_function_set_error(info,
+                        "duckhts_somalier_matched_contamination: prepared threshold does not match measured depth");
+                    return;
+                }
+                threshold_ptr = &threshold;
+            }
+        }
         duckhts_somalier_matched_anchor_settings_default(&settings);
+        max_sites = ((uint64_t *)duckdb_vector_get_data(
+            in[FILTER_IN_MAX_SITES]))[row];
+        if (max_sites == 0u || max_sites > MATCHED_SQL_MAX_SITES ||
+            max_sites > SIZE_MAX) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_matched_contamination: max_sites exceeds its limit");
+            return;
+        }
         settings.min_depth =
             ((uint64_t *)duckdb_vector_get_data(in[FILTER_IN_MIN_DEPTH]))[row];
-        settings.max_depth = max_depth;
+        settings.max_depth = ((uint64_t *)duckdb_vector_get_data(
+            in[FILTER_IN_MAX_DEPTH]))[row];
         settings.max_sites = (size_t)max_sites;
+        settings.max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+            in[FILTER_IN_MAX_THRESHOLD_WORK]))[row];
+        if (settings.max_depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
+            settings.max_threshold_work == 0u ||
+            settings.max_threshold_work > DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_matched_contamination: max_depth or max_threshold_work exceeds its limit");
+            return;
+        }
         settings.hom_minor_rate =
             ((double *)duckdb_vector_get_data(in[FILTER_IN_HOM_MINOR_RATE]))[row];
         settings.hom_tail_alpha =
             ((double *)duckdb_vector_get_data(in[FILTER_IN_HOM_TAIL_ALPHA]))[row];
+        if (threshold_ptr != NULL) {
+            threshold.hom_minor_rate = settings.hom_minor_rate;
+            threshold.hom_tail_alpha = settings.hom_tail_alpha;
+        }
         status = duckhts_somalier_contamination_usable(
             &counts, &settings, &usable[row]);
         if (status == DUCKHTS_SOMALIER_OK) {
             duckhts_somalier_genotype_t call;
-            status = duckhts_somalier_classify_contamination(
-                &counts, &settings, &call);
+            status = duckhts_somalier_classify_contamination_certified(
+                &counts, &settings, threshold_ptr, &call);
             genotype[row] = (int8_t)call;
         }
         if (status != DUCKHTS_SOMALIER_OK) {
             duckdb_scalar_function_set_error(info,
                 status == DUCKHTS_SOMALIER_LIMIT_EXCEEDED
-                    ? "duckhts_somalier_matched_contamination: a sample depth exceeds max_depth"
+                    ? "duckhts_somalier_matched_contamination: depth, site, or threshold-work limit exceeded"
                     : "duckhts_somalier_matched_contamination: invalid contamination filter settings");
             return;
         }
@@ -244,6 +300,7 @@ static void matched_settings_valid_scalar(duckdb_function_info info,
         duckhts_somalier_matched_result_t result;
         duckhts_somalier_status_t status;
         uint64_t max_evaluations;
+        uint64_t max_threshold_work;
         uint64_t max_sites;
         uint8_t usable;
         bool missing = false;
@@ -257,8 +314,12 @@ static void matched_settings_valid_scalar(duckdb_function_info info,
             in[SETTINGS_IN_MAX_EVALUATIONS]))[row];
         max_sites = ((uint64_t *)duckdb_vector_get_data(
             in[SETTINGS_IN_MAX_SITES]))[row];
+        max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+            in[SETTINGS_IN_MAX_THRESHOLD_WORK]))[row];
         if (max_evaluations > SIZE_MAX || max_sites > SIZE_MAX ||
-            max_sites > MATCHED_SQL_MAX_SITES) {
+            max_sites > MATCHED_SQL_MAX_SITES ||
+            max_threshold_work == 0u ||
+            max_threshold_work > DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK) {
             continue;
         }
 
@@ -268,6 +329,7 @@ static void matched_settings_valid_scalar(duckdb_function_info info,
         filter.max_depth = ((uint64_t *)duckdb_vector_get_data(
             in[SETTINGS_IN_MAX_DEPTH]))[row];
         filter.max_sites = (size_t)max_sites;
+        filter.max_threshold_work = max_threshold_work;
         filter.hom_minor_rate = ((double *)duckdb_vector_get_data(
             in[SETTINGS_IN_HOM_MINOR_RATE]))[row];
         filter.hom_tail_alpha = ((double *)duckdb_vector_get_data(
@@ -459,6 +521,27 @@ static bool read_profile(duckdb_vector input, idx_t row, uint64_t max_sites,
         field[PROFILE_HOM_MINOR_RATE]))[row];
     profile->filter.hom_tail_alpha = ((double *)duckdb_vector_get_data(
         field[PROFILE_HOM_TAIL_ALPHA]))[row];
+    profile->filter.max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+        field[PROFILE_MAX_THRESHOLD_WORK]))[row];
+    {
+        duckhts_somalier_counts_t unavailable = {0};
+        uint8_t usable;
+        uint64_t profile_max_sites = ((uint64_t *)duckdb_vector_get_data(
+            field[PROFILE_MAX_SITES]))[row];
+        if (profile_max_sites != max_sites ||
+            profile_max_sites > SIZE_MAX ||
+            profile->filter.max_depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
+            profile->filter.max_threshold_work == 0u ||
+            profile->filter.max_threshold_work >
+                DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK ||
+            duckhts_somalier_contamination_usable(
+                &unavailable, &profile->filter, &usable) !=
+                    DUCKHTS_SOMALIER_OK) {
+            *error = "duckhts_somalier_matched_contamination: profile resource settings mismatch or exceed their limit";
+            return false;
+        }
+        profile->filter.max_sites = (size_t)profile_max_sites;
+    }
 
     if (!list_span(field[PROFILE_RECEIVER_A], row, profile->site_count,
                    &child, &offset, error) ||
@@ -524,6 +607,8 @@ static bool filter_same(const duckhts_somalier_contamination_settings_t *left,
                         const duckhts_somalier_contamination_settings_t *right) {
     return left->min_depth == right->min_depth &&
         left->max_depth == right->max_depth &&
+        left->max_sites == right->max_sites &&
+        left->max_threshold_work == right->max_threshold_work &&
         left->hom_minor_rate == right->hom_minor_rate &&
         left->hom_tail_alpha == right->hom_tail_alpha;
 }
@@ -558,6 +643,7 @@ static void matched_scalar(duckdb_function_info info, duckdb_data_chunk input,
         duckhts_somalier_matched_result_t result;
         duckhts_somalier_status_t status;
         const char *error = NULL;
+        uint64_t max_threshold_work;
         uint64_t max_sites;
 
         for (unsigned i = MATCHED_IN_RECEIVER; i < MATCHED_IN_COUNT; i++) {
@@ -569,6 +655,14 @@ static void matched_scalar(duckdb_function_info info, duckdb_data_chunk input,
         }
         max_sites = ((uint64_t *)duckdb_vector_get_data(
             in[MATCHED_IN_MAX_SITES]))[row];
+        max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+            in[MATCHED_IN_MAX_THRESHOLD_WORK]))[row];
+        if (max_threshold_work == 0u ||
+            max_threshold_work > DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_matched_contamination: max_threshold_work exceeds its limit");
+            return;
+        }
         if (max_sites == 0u || max_sites > MATCHED_SQL_MAX_SITES ||
             !read_profile(in[MATCHED_IN_RECEIVER], row, max_sites,
                           &receiver, &error) ||
@@ -587,6 +681,7 @@ static void matched_scalar(duckdb_function_info info, duckdb_data_chunk input,
             !same_string(receiver.panel, frequency.panel) ||
             receiver.site_count != anchor.site_count ||
             receiver.site_count != frequency.site_count ||
+            receiver.filter.max_threshold_work != max_threshold_work ||
             !filter_same(&receiver.filter, &anchor.filter)) {
             duckdb_scalar_function_set_error(info,
                 "duckhts_somalier_matched_contamination: receiver, anchor, panel, frequency, or filter identity mismatch");
@@ -684,6 +779,8 @@ static void matched_scalar(duckdb_function_info info, duckdb_data_chunk input,
         WRITE_DOUBLE(MATCHED_OUT_REFINE_TOLERANCE,
                      settings.refine_tolerance);
         WRITE_U64(MATCHED_OUT_MAX_EVALUATIONS, settings.max_evaluations);
+        WRITE_U64(MATCHED_OUT_MAX_THRESHOLD_WORK,
+                  receiver.filter.max_threshold_work);
         WRITE_U64(MATCHED_OUT_MAX_SITES, settings.max_sites);
 #undef WRITE_U64
 #undef WRITE_DOUBLE
@@ -704,7 +801,8 @@ void register_duckhts_somalier_matched_functions(duckdb_connection connection) {
         "__duckhts_somalier_contamination_filter");
     for (unsigned i = 0u; i < FILTER_IN_COUNT; i++) {
         duckdb_scalar_function_add_parameter(function,
-            i >= FILTER_IN_HOM_MINOR_RATE ? real : ubigint);
+            i == FILTER_IN_HOM_MINOR_RATE || i == FILTER_IN_HOM_TAIL_ALPHA
+                ? real : ubigint);
     }
     duckdb_scalar_function_set_return_type(function, filter_result);
     duckdb_scalar_function_set_special_handling(function);
@@ -737,6 +835,7 @@ void register_duckhts_somalier_matched_functions(duckdb_connection connection) {
          i <= MATCHED_IN_REFINE_TOLERANCE; i++) {
         duckdb_scalar_function_add_parameter(function, real);
     }
+    duckdb_scalar_function_add_parameter(function, ubigint);
     duckdb_scalar_function_add_parameter(function, ubigint);
     duckdb_scalar_function_add_parameter(function, ubigint);
     duckdb_scalar_function_set_return_type(function, matched_result);

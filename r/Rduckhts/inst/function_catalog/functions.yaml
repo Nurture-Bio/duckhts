@@ -848,7 +848,7 @@
       "r_wrapper": "",
       "description": "Derive a stable SHA-256 identity for an ordered biallelic sample-fingerprinting panel.",
       "details": {
-        "Panel contract": "panel_table has assembly, dense zero-based site_index, region, positive one-based position, allele_a and allele_b. One nonempty assembly, unique physical region/position and uppercase single-base A/C/G/T alleles in lexical A < B order are required. The pinned Somalier v0.3.4 X/Y aliases are rejected; other aliases cannot be biologically classified from a region string. The calculation assumes diploid three-state genotypes. The digest commits to this domain and every ordered site, independent of physical row order."
+        "Panel contract": "panel_table has assembly, dense zero-based site_index, region, positive one-based position, allele_a and allele_b. Assembly and region are each limited to 1,024 bytes before hashing. One nonempty assembly, unique physical region/position and uppercase single-base A/C/G/T alleles in lexical A < B order are required. The pinned Somalier v0.3.4 X/Y aliases are rejected; other aliases cannot be biologically classified from a region string. The calculation assumes diploid three-state genotypes. The digest commits to this domain and every ordered site, independent of physical row order."
       },
       "examples": [
         "SELECT duckhts_somalier_panel_sha256('fingerprint_panel');"
@@ -953,14 +953,14 @@
       "name": "duckhts_somalier_charr",
       "kind": "table_macro",
       "category": "Sample Identity",
-      "signature": "duckhts_somalier_charr(evidence_table, panel_table, frequency_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.12, hom_tail_alpha := 0.002, max_sites := 1000000)",
+      "signature": "duckhts_somalier_charr(evidence_table, panel_table, frequency_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.12, hom_tail_alpha := 0.002, max_threshold_work := 16000000, max_sites := 1000000)",
       "returns": "table(contamination STRUCT)",
       "r_wrapper": "rduckhts_somalier_charr",
       "description": "Estimate per-sample contamination with a bounded Somalier-derived CHARR reduction.",
       "details": {
         "Inputs": "Count evidence and population_b_af must match the panel's full ordered site identity. CHARR uses measured counts, its own homozygous-like binomial eligibility and the pinned 4% other-read filter; relatedness genotype masks are insufficient.",
         "Results": "The struct retains sample, panel and frequency identities, method and numerical status, observed/unavailable/usable and homozygous-site denominators, estimate and every filter/limit. No usable evidence has status no_evidence and a NULL estimate, distinct from measured zero contamination.",
-        "Limits": "A+B depth must not exceed 1,000,000. sample_id and assembly are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.",
+        "Limits": "A+B depth must not exceed 1,000,000. Distinct measured depths are certified once per call; max_threshold_work bounds their cumulative exact recurrence and continued-fraction steps and is at most 100,000,000. Exhaustion errors without publishing a partial result. sample_id, assembly and panel region are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.",
         "Compatibility": "Eligibility follows Somalier 0.3.4 CHARR except that DuckHTS computes high-depth binomial tails without upstream's numerical underflow. Very deep sites can therefore have different eligibility; a pinned upstream counterexample is retained in the conformance tests."
       },
       "examples": [
@@ -971,15 +971,15 @@
       "name": "duckhts_somalier_matched_contamination",
       "kind": "table_macro",
       "category": "Sample Identity",
-      "signature": "duckhts_somalier_matched_contamination(evidence_table, panel_table, frequency_table, pairs_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.05, hom_tail_alpha := 0.001, error_rate := 0.002, min_probability := 1e-10, min_prior_frequency := 1e-6, alpha_min := 0, alpha_max := 1, grid_step := 0.01, refine_tolerance := 1e-10, max_evaluations := 4096, max_sites := 1000000)",
+      "signature": "duckhts_somalier_matched_contamination(evidence_table, panel_table, frequency_table, pairs_table, min_depth := 15, max_depth := 1000000, hom_minor_rate := 0.05, hom_tail_alpha := 0.001, error_rate := 0.002, min_probability := 1e-10, min_prior_frequency := 1e-6, alpha_min := 0, alpha_max := 1, grid_step := 0.01, refine_tolerance := 1e-10, max_evaluations := 4096, max_threshold_work := 16000000, max_sites := 1000000)",
       "returns": "table(contamination STRUCT)",
       "r_wrapper": "rduckhts_somalier_matched_contamination",
       "description": "Estimate directional contamination for explicitly selected receiver/anchor sample pairs.",
       "details": {
         "Direction": "pairs_table contains distinct receiver_id and anchor_id rows. The anchor supplies the receiver's expected uncontaminated homozygous genotype; it is not assumed to identify the contaminating donor. Reversing a pair is a different fit.",
         "Results": "The struct retains ordered sample, panel and frequency identities, method/status, observed/unavailable/usable denominators, alpha, evaluation count and every filter/search limit. No usable evidence returns NULL alpha. relative_log_likelihood omits alpha-independent binomial coefficients and is comparable only across alpha values for the same observations.",
-        "Execution": "The query prepares one bounded site profile per distinct selected sample and one panel-aligned frequency profile before joining requested ordered pairs. The pair scalar borrows those DuckDB-owned lists and allocates no per-pair workspace. Panel and evidence cardinalities are checked before profile-list construction; max_sites is a per-call panel limit.",
-        "Limits": "sample_id and assembly are each limited to 1,024 bytes, including when prepared profiles are persisted and supplied directly. A+B depth must not exceed max_depth, max_sites is at most 100,000,000, and max_evaluations must fit the declared search workspace.",
+        "Execution": "The query certifies each distinct measured depth once, then prepares one bounded site profile per distinct selected sample and one panel-aligned frequency profile before joining requested ordered pairs. The pair scalar borrows those DuckDB-owned lists and allocates no per-pair workspace. Panel and evidence cardinalities are checked before profile-list construction; max_sites is a per-call panel limit.",
+        "Limits": "Panel assembly and region are each limited to 1,024 bytes. Persisted profiles separately limit sample_id and assembly to 1,024 bytes. A+B depth must not exceed max_depth. max_threshold_work bounds cumulative exact binomial certification steps and is at most 100,000,000; exhaustion errors without publishing profiles. max_sites is at most 100,000,000, and max_evaluations must fit the declared search workspace.",
         "Numerical difference": "DuckHTS searches a full 0.01 grid and refines a feasible local optimum rather than reproducing Somalier v0.3.4's fixed coarse/high-refinement sequence. The retained two-site witness fits alpha about 0.39759 versus upstream 0.440983. Both likelihoods and settings are retained in the differential test; results are not guaranteed bitwise identical to the CLI."
       },
       "examples": [

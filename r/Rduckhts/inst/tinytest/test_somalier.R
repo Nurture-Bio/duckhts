@@ -47,6 +47,40 @@ test_somalier_relatedness_wrappers <- function() {
     sample_ids = c("A", "B's sample"), max_sites = 8
   )
   expect_equal(nrow(selected), 2L)
+
+  panel_region_limit <- "somalier panel region limit"
+  evidence_region_limit <- "somalier evidence region limit"
+  panel_region_over_limit <- "somalier panel region over limit"
+  evidence_region_over_limit <- "somalier evidence region over limit"
+  dbExecute(con, sprintf(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(repeat('é', 512) AS region) FROM %s",
+    qid(panel_region_limit), panel
+  ))
+  dbExecute(con, sprintf(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(repeat('é', 512) AS region) FROM %s",
+    qid(evidence_region_limit), evidence
+  ))
+  expect_equal(nrow(rduckhts_somalier_sketches(
+    con, evidence_table = evidence_region_limit,
+    panel_table = panel_region_limit, max_sites = 8
+  )), 4L)
+  dbExecute(con, sprintf(paste0(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(",
+    "repeat('é', 512) || 'a' AS region) FROM %s"),
+    qid(panel_region_over_limit), panel
+  ))
+  dbExecute(con, sprintf(paste0(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(",
+    "repeat('é', 512) || 'a' AS region) FROM %s"),
+    qid(evidence_region_over_limit), evidence
+  ))
+  expect_error(
+    rduckhts_somalier_sketches(
+      con, evidence_table = evidence_region_over_limit,
+      panel_table = panel_region_over_limit, max_sites = 8
+    ),
+    "panel assembly and region must be at most 1024 bytes"
+  )
   expect_error(
     rduckhts_somalier_sketches(
       con, evidence_table = evidence_name, panel_table = panel_name,
@@ -546,6 +580,20 @@ test_somalier_contamination_wrappers <- function() {
     "hom_minor_rate"
   )
   expect_error(
+    rduckhts_somalier_charr(
+      con, evidence_table = evidence_name, panel_table = panel_name,
+      frequency_table = frequency_name, max_threshold_work = 0, max_sites = 2
+    ),
+    "max_threshold_work"
+  )
+  expect_error(
+    rduckhts_somalier_charr(
+      con, evidence_table = evidence_name, panel_table = panel_name,
+      frequency_table = frequency_name, max_threshold_work = 1, max_sites = 2
+    ),
+    "binomial threshold certification exceeded max_threshold_work"
+  )
+  expect_error(
     rduckhts_somalier_matched_contamination(
       con, evidence_table = evidence_name, panel_table = panel_name,
       frequency_table = frequency_name, pairs_table = pairs_name,
@@ -576,6 +624,22 @@ test_somalier_contamination_wrappers <- function() {
       max_evaluations = 0, max_sites = 2
     ),
     "max_evaluations"
+  )
+  expect_error(
+    rduckhts_somalier_matched_contamination(
+      con, evidence_table = evidence_name, panel_table = panel_name,
+      frequency_table = frequency_name, pairs_table = pairs_name,
+      max_threshold_work = 100000001, max_sites = 2
+    ),
+    "max_threshold_work"
+  )
+  expect_error(
+    rduckhts_somalier_matched_contamination(
+      con, evidence_table = evidence_name, panel_table = panel_name,
+      frequency_table = match_frequency_name, pairs_table = pairs_name,
+      max_threshold_work = 1, max_sites = 2
+    ),
+    "binomial threshold certification exceeded max_threshold_work"
   )
   expect_error(
     rduckhts_somalier_matched_contamination(

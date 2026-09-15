@@ -196,6 +196,9 @@ for (rows in split(measurements, measurements$case)) {
             length(unique(rows$sites)) == 1L,
             length(unique(rows$samples)) == 1L,
             length(unique(rows$evidence_rows)) == 1L,
+            length(unique(rows$distinct_measured_depths)) == 1L,
+            length(unique(rows$minimum_measured_depth)) == 1L,
+            length(unique(rows$maximum_measured_depth)) == 1L,
             length(unique(rows$selected_samples)) == 1L,
             length(unique(rows$selected_pairs)) == 1L,
             length(unique(rows$result_rows)) == 1L,
@@ -263,12 +266,17 @@ provenance <- data.frame(
            "extension SHA-256", "extension path", "build receipt path",
            "build receipt SHA-256", "samples", "panel sites",
            "count-evidence rows", "measured evidence rows", "unavailable evidence rows",
+           "distinct measured A+B depths", "measured A+B depth range",
            "selected samples K", "requested ordered pairs P", "threads",
            "timed repetitions", "excluded warmups", "R", "DuckDB R package", "host"),
   value = c(source_revision, source_tree, binary_binding,
             extension_sha256, extension, receipt_path, receipt_sha256, samples, 17000,
             17000 * samples, measurements$measured_evidence_rows[[1L]],
-            measurements$unavailable_evidence_rows[[1L]], selected_samples, selected_pairs,
+            measurements$unavailable_evidence_rows[[1L]],
+            measurements$distinct_measured_depths[[1L]],
+            paste0(measurements$minimum_measured_depth[[1L]], "..",
+                   measurements$maximum_measured_depth[[1L]]),
+            selected_samples, selected_pairs,
             threads, repetitions, warmups,
             R.version.string, as.character(utils::packageVersion("duckdb")),
             paste(Sys.info()[c("sysname", "release", "machine")], collapse = " ")),
@@ -296,6 +304,9 @@ integer A/B/other counts. Independent pre-timing checks require one dense
 either three measured counts or three NULL counts. Every synthetic panel site
 has lexicographically canonical `allele_a < allele_b`. The pair relation
 contains `P` distinct ordered requests spanning `K` selected sample IDs.
+All measured rows have A+B depth 30, so threshold preparation has one distinct
+depth. This workload measures shared reuse of one threshold; it does not
+measure scaling across many distinct depths.
 
 ## Measurements
 

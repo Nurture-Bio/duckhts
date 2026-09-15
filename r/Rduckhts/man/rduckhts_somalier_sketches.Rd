@@ -27,7 +27,8 @@ rduckhts_somalier_sketches(
 \item{evidence_parquet}{Path to an evidence Parquet file, instead of
 `evidence_table`.}
 
-\item{panel_table}{Name of the required ordered panel table or view.}
+\item{panel_table}{Name of the required ordered panel table or view. Panel
+assembly and region values are each limited to 1,024 bytes.}
 
 \item{panel_parquet}{Path to the required ordered panel Parquet file, instead
 of `panel_table`.}

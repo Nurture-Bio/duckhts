@@ -27,11 +27,14 @@ the same extension release; publication remains pending.
   change its estimate or persisted result.
 - Bound Somalier sample and assembly identities to 1,024 bytes before
   aggregate-state allocation and when reading persisted sketches and matched
-  profiles, including parallel sketch and CHARR reductions.
+  profiles, including parallel sketch and CHARR reductions. Panel assembly
+  and region are checked before hash encoding can expand their bytes.
 - Preserve strict binomial-tail cutoffs with exact small binary-rational cases
-  and outward-rounded comparisons. CHARR reuses rigorously decided thresholds
-  from a fixed-size per-accumulator depth cache; sketches persist their
-  normalized classification settings.
+  and outward-rounded comparisons. CHARR and matched contamination certify
+  each distinct measured depth once per query under the per-call
+  `max_threshold_work` limit, then share prepared thresholds across samples.
+  Exhaustion errors without publishing partial results; sketches persist
+  their normalized classification settings.
 - Preserve the pinned Somalier v0.3.4 numerical counterexamples: stable
   high-depth CHARR tail evaluation and a full-grid matched search can differ
   from upstream's underflow-prone threshold and fixed search sequence. The

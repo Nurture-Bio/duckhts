@@ -127,6 +127,12 @@ somalier_benchmark_run <- function(case, extension, paths, output_dir, threads =
     (SELECT count(*) FROM evidence
       WHERE a IS NOT NULL AND b IS NOT NULL AND other IS NOT NULL)::DOUBLE
       AS measured_rows,
+    (SELECT count(DISTINCT a + b) FROM evidence
+      WHERE a IS NOT NULL AND b IS NOT NULL)::DOUBLE AS distinct_measured_depths,
+    (SELECT min(a + b) FROM evidence
+      WHERE a IS NOT NULL AND b IS NOT NULL)::DOUBLE AS minimum_measured_depth,
+    (SELECT max(a + b) FROM evidence
+      WHERE a IS NOT NULL AND b IS NOT NULL)::DOUBLE AS maximum_measured_depth,
     (SELECT count(*) FROM evidence WHERE a IS NOT NULL AND
       (a + b != 30 OR other != 0 OR
        NOT (a = 15 AND b = 15 OR least(a, b) <= 1)))::DOUBLE
@@ -148,6 +154,8 @@ somalier_benchmark_run <- function(case, extension, paths, output_dir, threads =
             input$evidence_rows == input$sites * input$samples,
             input$physical_sites == input$sites, input$sample_sites == input$evidence_rows,
             input$unavailable_rows + input$measured_rows == input$evidence_rows,
+            input$distinct_measured_depths == 1, input$minimum_measured_depth == 30,
+            input$maximum_measured_depth == 30,
             input$invalid_measured_rows == 0,
             input$invalid_panel_rows == 0, input$invalid_frequency_rows == 0,
             input$selected_samples >= 2, input$selected_samples <= input$samples,
@@ -436,6 +444,9 @@ somalier_benchmark_run <- function(case, extension, paths, output_dir, threads =
     sites = input$sites, samples = input$samples, evidence_rows = input$evidence_rows,
     unavailable_evidence_rows = input$unavailable_rows,
     measured_evidence_rows = input$measured_rows,
+    distinct_measured_depths = input$distinct_measured_depths,
+    minimum_measured_depth = input$minimum_measured_depth,
+    maximum_measured_depth = input$maximum_measured_depth,
     selected_pairs = input$selected_pairs, selected_samples = input$selected_samples,
     selected_receiver_samples = input$receiver_samples,
     selected_anchor_samples = input$anchor_samples,

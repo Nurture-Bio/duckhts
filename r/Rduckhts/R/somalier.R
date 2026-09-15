@@ -24,7 +24,8 @@
 #' @param evidence_table Name of an ordinary evidence table or view.
 #' @param evidence_parquet Path to an evidence Parquet file, instead of
 #'   `evidence_table`.
-#' @param panel_table Name of the required ordered panel table or view.
+#' @param panel_table Name of the required ordered panel table or view. Panel
+#'   assembly and region values are each limited to 1,024 bytes.
 #' @param panel_parquet Path to the required ordered panel Parquet file, instead
 #'   of `panel_table`.
 #' @param table_name Optional output table. `NULL` returns a data frame.
@@ -189,6 +190,9 @@ rduckhts_somalier_relatedness <- function(
 #'   homozygous-like anchors.
 #' @param hom_tail_alpha Binomial upper-tail threshold for homozygous-like
 #'   eligibility.
+#' @param max_threshold_work Positive cumulative limit on exact binomial
+#'   certification steps, at most 100,000,000. Distinct observed depths are
+#'   certified once per call and shared across samples.
 #' @return A data frame if `table_name` is `NULL`; otherwise invisible `TRUE`.
 #' @export
 rduckhts_somalier_charr <- function(
@@ -197,11 +201,14 @@ rduckhts_somalier_charr <- function(
   frequency_table = NULL, frequency_parquet = NULL,
   table_name = NULL, sample_ids = NULL, min_depth = 15,
   max_depth = 1000000, hom_minor_rate = 0.12, hom_tail_alpha = 0.002,
-  max_sites = 1000000, overwrite = FALSE
+  max_threshold_work = 16000000, max_sites = 1000000, overwrite = FALSE
 ) {
   .somalier_validate_output(table_name, overwrite)
   min_depth <- .somalier_whole_number(min_depth, "min_depth", 1000000)
   max_depth <- .somalier_whole_number(max_depth, "max_depth", 1000000)
+  max_threshold_work <- .somalier_whole_number(
+    max_threshold_work, "max_threshold_work", 100000000
+  )
   max_sites <- .somalier_whole_number(max_sites, "max_sites", 100000000)
   if (min_depth > max_depth) {
     stop("min_depth must be no larger than max_depth", call. = FALSE)
@@ -234,13 +241,15 @@ rduckhts_somalier_charr <- function(
   query <- sprintf(
     paste0("SELECT unnest(contamination) FROM duckhts_somalier_charr(",
            "%s, %s, %s, min_depth := %s, max_depth := %s, ",
-           "hom_minor_rate := %s, hom_tail_alpha := %s, max_sites := %s)"),
+           "hom_minor_rate := %s, hom_tail_alpha := %s, ",
+           "max_threshold_work := %s, max_sites := %s)"),
     sql_quote_string(con, evidence$name), sql_quote_string(con, panel$name),
     sql_quote_string(con, frequency$name),
     .somalier_quote_number(con, min_depth),
     .somalier_quote_number(con, max_depth),
     .somalier_quote_number(con, hom_minor_rate),
     .somalier_quote_number(con, hom_tail_alpha),
+    .somalier_quote_number(con, max_threshold_work),
     .somalier_quote_number(con, max_sites)
   )
   .somalier_publish_query(con, query, table_name, overwrite)
@@ -289,13 +298,16 @@ rduckhts_somalier_matched_contamination <- function(
   min_probability = 1e-10, min_prior_frequency = 1e-6,
   alpha_min = 0, alpha_max = 1, grid_step = 0.01,
   refine_tolerance = 1e-10, max_evaluations = 4096,
-  max_sites = 1000000, overwrite = FALSE
+  max_threshold_work = 16000000, max_sites = 1000000, overwrite = FALSE
 ) {
   .somalier_validate_output(table_name, overwrite)
   min_depth <- .somalier_whole_number(min_depth, "min_depth", 1000000)
   max_depth <- .somalier_whole_number(max_depth, "max_depth", 1000000)
   max_evaluations <- .somalier_whole_number(
     max_evaluations, "max_evaluations", .Machine$integer.max
+  )
+  max_threshold_work <- .somalier_whole_number(
+    max_threshold_work, "max_threshold_work", 100000000
   )
   max_sites <- .somalier_whole_number(max_sites, "max_sites", 100000000)
   if (min_depth > max_depth) {
@@ -349,7 +361,7 @@ rduckhts_somalier_matched_contamination <- function(
            "hom_tail_alpha := %s, error_rate := %s, min_probability := %s, ",
            "min_prior_frequency := %s, alpha_min := %s, alpha_max := %s, ",
            "grid_step := %s, refine_tolerance := %s, max_evaluations := %s, ",
-           "max_sites := %s)"),
+           "max_threshold_work := %s, max_sites := %s)"),
     sql_quote_string(con, evidence$name), sql_quote_string(con, panel$name),
     sql_quote_string(con, frequency$name), sql_quote_string(con, pairs$name),
     .somalier_quote_number(con, min_depth),
@@ -364,6 +376,7 @@ rduckhts_somalier_matched_contamination <- function(
     .somalier_quote_number(con, grid_step),
     .somalier_quote_number(con, refine_tolerance),
     .somalier_quote_number(con, max_evaluations),
+    .somalier_quote_number(con, max_threshold_work),
     .somalier_quote_number(con, max_sites)
   )
   .somalier_publish_query(con, query, table_name, overwrite)

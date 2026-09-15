@@ -42,6 +42,8 @@ static int contamination_settings_valid(
     const duckhts_somalier_contamination_settings_t *settings) {
     return settings != NULL && settings->min_depth > 0u &&
         settings->max_depth >= settings->min_depth && settings->max_sites > 0u &&
+        settings->max_threshold_work > 0u &&
+        settings->max_threshold_work <= DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK &&
         somalier_double_isfinite(settings->hom_minor_rate) &&
         settings->hom_minor_rate > 0.0 && settings->hom_minor_rate < 0.5 &&
         somalier_double_isfinite(settings->hom_tail_alpha) &&
@@ -567,6 +569,7 @@ void duckhts_somalier_charr_settings_default(
     if (settings == NULL) return;
     settings->min_depth = 15u;
     settings->max_depth = DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH;
+    settings->max_threshold_work = DUCKHTS_SOMALIER_DEFAULT_THRESHOLD_WORK;
     settings->max_sites = 100000000u;
     settings->hom_minor_rate = 0.12;
     settings->hom_tail_alpha = 0.002;
@@ -577,13 +580,31 @@ void duckhts_somalier_matched_anchor_settings_default(
     if (settings == NULL) return;
     settings->min_depth = 15u;
     settings->max_depth = DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH;
+    settings->max_threshold_work = DUCKHTS_SOMALIER_DEFAULT_THRESHOLD_WORK;
     settings->max_sites = 100000000u;
     settings->hom_minor_rate = 0.05;
     settings->hom_tail_alpha = 0.001;
 }
 
+static duckhts_somalier_status_t threshold_work_charge(
+    duckhts_somalier_threshold_work_t *work) {
+    if (work == NULL || work->used > work->limit) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (work->used == work->limit) {
+        return DUCKHTS_SOMALIER_WORK_LIMIT_EXCEEDED;
+    }
+    work->used++;
+    return DUCKHTS_SOMALIER_OK;
+}
+
 /* Modified Lentz continued fraction for the regularized incomplete beta. */
-static int beta_fraction(double a, double b, double x, double *value) {
+static duckhts_somalier_status_t beta_fraction(
+    double a,
+    double b,
+    double x,
+    duckhts_somalier_threshold_work_t *work,
+    double *value) {
     double qab = a + b;
     double qap = a + 1.0;
     double qam = a - 1.0;
@@ -598,10 +619,12 @@ static int beta_fraction(double a, double b, double x, double *value) {
     d = 1.0 / d;
     h = d;
     for (m = 1u; m <= SOMALIER_BETA_MAX_ITERATIONS; m++) {
+        duckhts_somalier_status_t status = threshold_work_charge(work);
         double m2 = 2.0 * (double)m;
         double aa = (double)m * (b - (double)m) * x /
             ((qam + m2) * (a + m2));
         double delta;
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         d = 1.0 + aa * d;
         if (fabs(d) < DBL_MIN / SOMALIER_BETA_EPSILON) {
             d = DBL_MIN / SOMALIER_BETA_EPSILON;
@@ -625,52 +648,70 @@ static int beta_fraction(double a, double b, double x, double *value) {
         d = 1.0 / d;
         delta = d * c;
         h *= delta;
-        if (!somalier_double_isfinite(h)) return 0;
+        if (!somalier_double_isfinite(h)) {
+            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+        }
         if (fabs(delta - 1.0) <= SOMALIER_BETA_EPSILON) {
             *value = h;
-            return 1;
+            return DUCKHTS_SOMALIER_OK;
         }
     }
-    return 0;
+    return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
 }
 
-static int regularized_beta(double x, double a, double b, double *value) {
+static duckhts_somalier_status_t regularized_beta(
+    double x,
+    double a,
+    double b,
+    duckhts_somalier_threshold_work_t *work,
+    double *value) {
     double fraction;
     double front;
     if (x <= 0.0) {
         *value = 0.0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (x >= 1.0) {
         *value = 1.0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     front = exp(lgamma(a + b) - lgamma(a) - lgamma(b) +
                 a * log(x) + b * log1p(-x));
-    if (!somalier_double_isfinite(front)) return 0;
+    if (!somalier_double_isfinite(front)) {
+        return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+    }
     if (x < (a + 1.0) / (a + b + 2.0)) {
-        if (!beta_fraction(a, b, x, &fraction)) return 0;
+        duckhts_somalier_status_t status = beta_fraction(a, b, x, work, &fraction);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         *value = front * fraction / a;
     } else {
-        if (!beta_fraction(b, a, 1.0 - x, &fraction)) return 0;
+        duckhts_somalier_status_t status =
+            beta_fraction(b, a, 1.0 - x, work, &fraction);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         *value = 1.0 - front * fraction / b;
     }
     if (*value < 0.0 && *value > -32.0 * DBL_EPSILON) *value = 0.0;
     if (*value > 1.0 && *value < 1.0 + 32.0 * DBL_EPSILON) *value = 1.0;
-    return somalier_double_isfinite(*value) && *value >= 0.0 && *value <= 1.0;
+    return somalier_double_isfinite(*value) && *value >= 0.0 && *value <= 1.0
+        ? DUCKHTS_SOMALIER_OK : DUCKHTS_SOMALIER_NUMERIC_FAILURE;
 }
 
-static int binomial_survival(uint64_t depth, uint64_t k, double probability,
-                             double *survival) {
+static duckhts_somalier_status_t binomial_survival(
+    uint64_t depth,
+    uint64_t k,
+    double probability,
+    duckhts_somalier_threshold_work_t *work,
+    double *survival) {
     if (k == 0u) {
         *survival = 1.0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (k > depth) {
         *survival = 0.0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
-    return regularized_beta(probability, (double)k, (double)(depth - k + 1u), survival);
+    return regularized_beta(probability, (double)k,
+                            (double)(depth - k + 1u), work, survival);
 }
 
 typedef struct binomial_interval {
@@ -786,41 +827,58 @@ static int binomial_interval_remainder_upper(
     return binomial_long_double_isfinite(*upper) && *upper >= 0.0;
 }
 
-static unsigned binomial_trailing_zeroes(uint64_t value) {
-    unsigned count = 0u;
+static duckhts_somalier_status_t binomial_trailing_zeroes(
+    uint64_t value,
+    duckhts_somalier_threshold_work_t *work,
+    unsigned *count) {
+    *count = 0u;
     while ((value & UINT64_C(1)) == 0u) {
+        duckhts_somalier_status_t status = threshold_work_charge(work);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         value >>= 1u;
-        count++;
+        (*count)++;
     }
-    return count;
+    return DUCKHTS_SOMALIER_OK;
 }
 
 /* Decode an exact binary64 probability as numerator / 2^denominator_power,
  * reduced to an odd numerator. */
-static int binomial_binary_fraction(double value, uint64_t *numerator,
-                                    unsigned *denominator_power) {
+static duckhts_somalier_status_t binomial_binary_fraction(
+    double value,
+    duckhts_somalier_threshold_work_t *work,
+    uint64_t *numerator,
+    unsigned *denominator_power) {
     double fraction;
     int exponent;
     unsigned trailing;
 
     if (numerator == NULL || denominator_power == NULL ||
         !somalier_double_isfinite(value) || value <= 0.0 || value >= 1.0) {
-        return 0;
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
     fraction = frexp(value, &exponent);
     *numerator = (uint64_t)ldexp(fraction, DBL_MANT_DIG);
     *denominator_power = (unsigned)(DBL_MANT_DIG - exponent);
-    trailing = binomial_trailing_zeroes(*numerator);
+    {
+        duckhts_somalier_status_t status =
+            binomial_trailing_zeroes(*numerator, work, &trailing);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
+    }
     *numerator >>= trailing;
     *denominator_power -= trailing;
-    return 1;
+    return DUCKHTS_SOMALIER_OK;
 }
 
 /* When the complete binomial denominator fits in binary64's significand,
  * polynomial convolution gives the exact tail using only uint64 arithmetic. */
-static int binomial_tail_exact_small(uint64_t depth, uint64_t k,
-                                     double probability, double tail_alpha,
-                                     int *at_least) {
+static duckhts_somalier_status_t binomial_tail_exact_small(
+    uint64_t depth,
+    uint64_t k,
+    double probability,
+    double tail_alpha,
+    duckhts_somalier_threshold_work_t *work,
+    int *handled,
+    int *at_least) {
     uint64_t coefficients[54] = {0u};
     uint64_t numerator;
     uint64_t denominator;
@@ -829,19 +887,30 @@ static int binomial_tail_exact_small(uint64_t depth, uint64_t k,
     uint64_t power;
     unsigned denominator_power;
 
-    if (at_least == NULL ||
-        !binomial_binary_fraction(probability, &numerator,
-                                  &denominator_power) ||
-        denominator_power == 0u || depth > 53u ||
+    duckhts_somalier_status_t status;
+
+    if (handled == NULL || at_least == NULL) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    *handled = 0;
+    if (depth == 0u || depth > 53u) return DUCKHTS_SOMALIER_OK;
+    status = binomial_binary_fraction(probability, work, &numerator,
+                                      &denominator_power);
+    if (status != DUCKHTS_SOMALIER_OK) return status;
+    if (denominator_power == 0u ||
         denominator_power > 53u / (unsigned)depth) {
-        return 0;
+        return DUCKHTS_SOMALIER_OK;
     }
     power = denominator_power * (unsigned)depth;
     denominator = UINT64_C(1) << denominator_power;
     complement = denominator - numerator;
     coefficients[0] = 1u;
     for (uint64_t trial = 0u; trial < depth; trial++) {
+        status = threshold_work_charge(work);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         for (uint64_t successes = trial + 1u; successes > 0u; successes--) {
+            status = threshold_work_charge(work);
+            if (status != DUCKHTS_SOMALIER_OK) return status;
             uint64_t from_failure = successes <= trial
                 ? coefficients[successes] * complement : 0u;
             uint64_t from_success = coefficients[successes - 1u] * numerator;
@@ -850,18 +919,24 @@ static int binomial_tail_exact_small(uint64_t depth, uint64_t k,
         coefficients[0] *= complement;
     }
     for (uint64_t successes = k; successes <= depth; successes++) {
+        status = threshold_work_charge(work);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         tail += coefficients[successes];
     }
     *at_least = ldexp((double)tail, -(int)power) >= tail_alpha;
-    return 1;
+    *handled = 1;
+    return DUCKHTS_SOMALIER_OK;
 }
 
 /* Enclose the exact tail using outward-rounded floating-point operations. The
  * incomplete beta locates a candidate only; this comparison certifies the
  * final k/k+1 decision or reports that the interval cannot decide it. */
-static int binomial_tail_interval(uint64_t depth, uint64_t k,
-                                  double probability,
-                                  binomial_interval_t *survival) {
+static duckhts_somalier_status_t binomial_tail_interval(
+    uint64_t depth,
+    uint64_t k,
+    double probability,
+    duckhts_somalier_threshold_work_t *work,
+    binomial_interval_t *survival) {
     binomial_interval_t one = {1.0L, 1.0L};
     binomial_interval_t probability_interval = {
         (long double)probability, (long double)probability
@@ -875,21 +950,23 @@ static int binomial_tail_interval(uint64_t depth, uint64_t k,
     volatile long double rounded_complement =
         1.0L - (long double)probability;
 
-    if (survival == NULL) return 0;
+    if (survival == NULL) return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     complement.lower = binomial_round_down(rounded_complement);
     complement.upper = binomial_round_up(rounded_complement);
     if (!binomial_interval_divide(complement, probability_interval,
                                   &probability_ratio)) {
-        return 0;
+        return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
     }
     mode = (uint64_t)floor(((double)depth + 1.0) * probability);
     if (mode > depth) mode = depth;
 
     for (uint64_t i = mode; i > 0u; i--) {
+        duckhts_somalier_status_t status = threshold_work_charge(work);
         binomial_interval_t integer_ratio = {
             (long double)i / (long double)(depth - i + 1u),
             (long double)i / (long double)(depth - i + 1u)
         };
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         integer_ratio.lower = binomial_round_down(integer_ratio.lower);
         integer_ratio.upper = binomial_round_up(integer_ratio.upper);
         weight = binomial_interval_multiply(weight,
@@ -925,13 +1002,15 @@ static int binomial_tail_interval(uint64_t depth, uint64_t k,
     weight = one;
     if (!binomial_interval_divide(probability_interval, complement,
                                   &probability_ratio)) {
-        return 0;
+        return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
     }
     for (uint64_t i = mode; i < depth; i++) {
+        duckhts_somalier_status_t status = threshold_work_charge(work);
         binomial_interval_t integer_ratio = {
             (long double)(depth - i) / (long double)(i + 1u),
             (long double)(depth - i) / (long double)(i + 1u)
         };
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         integer_ratio.lower = binomial_round_down(integer_ratio.lower);
         integer_ratio.upper = binomial_round_up(integer_ratio.upper);
         weight = binomial_interval_multiply(weight,
@@ -965,64 +1044,75 @@ static int binomial_tail_interval(uint64_t depth, uint64_t k,
     }
     if (k <= mode) {
         binomial_interval_t excluded;
-        if (!binomial_interval_divide(side, total, &excluded)) return 0;
+        if (!binomial_interval_divide(side, total, &excluded)) {
+            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+        }
         survival->lower = binomial_round_down(1.0L - excluded.upper);
         survival->upper = binomial_round_up(1.0L - excluded.lower);
     } else if (!binomial_interval_divide(side, total, survival)) {
-        return 0;
+        return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
     }
     if (survival->lower < 0.0L) survival->lower = 0.0L;
     if (survival->upper > 1.0L) survival->upper = 1.0L;
-    return survival->lower <= survival->upper;
+    return survival->lower <= survival->upper
+        ? DUCKHTS_SOMALIER_OK : DUCKHTS_SOMALIER_NUMERIC_FAILURE;
 }
 
-static int binomial_tail_compare(uint64_t depth, uint64_t k,
-                                 double probability, double tail_alpha,
-                                 int *at_least) {
+static duckhts_somalier_status_t binomial_tail_compare(
+    uint64_t depth,
+    uint64_t k,
+    double probability,
+    double tail_alpha,
+    duckhts_somalier_threshold_work_t *work,
+    int *at_least) {
     binomial_interval_t survival;
-    if (at_least == NULL) return 0;
+    int handled;
+    duckhts_somalier_status_t status;
+    if (at_least == NULL) return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     if (k == 0u) {
         *at_least = 1;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (k > depth || probability == 0.0) {
         *at_least = 0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (probability == 1.0) {
         *at_least = 1;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (depth == 1u) {
         *at_least = probability >= tail_alpha;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
-    if (binomial_tail_exact_small(depth, k, probability, tail_alpha,
-                                  at_least)) {
-        return 1;
-    }
-    if (!binomial_tail_interval(depth, k, probability, &survival)) return 0;
+    status = binomial_tail_exact_small(depth, k, probability, tail_alpha,
+                                       work, &handled, at_least);
+    if (status != DUCKHTS_SOMALIER_OK) return status;
+    if (handled) return DUCKHTS_SOMALIER_OK;
+    status = binomial_tail_interval(depth, k, probability, work, &survival);
+    if (status != DUCKHTS_SOMALIER_OK) return status;
     if (survival.lower >= (long double)tail_alpha) {
         *at_least = 1;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
     if (survival.upper < (long double)tail_alpha) {
         *at_least = 0;
-        return 1;
+        return DUCKHTS_SOMALIER_OK;
     }
-    return 0;
+    return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
 }
 
-duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
+static duckhts_somalier_status_t binomial_max_minor_metered(
     uint64_t depth,
     double minor_rate,
     double tail_alpha,
     uint64_t max_depth,
+    duckhts_somalier_threshold_work_t *work,
     uint64_t *max_minor) {
     uint64_t lo = 0u;
     uint64_t hi;
 
-    if (max_minor == NULL || max_depth == 0u || depth > max_depth ||
+    if (max_minor == NULL || work == NULL || max_depth == 0u || depth > max_depth ||
         depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
         !somalier_double_isfinite(minor_rate) ||
         minor_rate < 0.0 || minor_rate > 1.0 ||
@@ -1038,9 +1128,9 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
     while (hi - lo > 1u) {
         uint64_t mid = lo + (hi - lo) / 2u;
         double survival;
-        if (!binomial_survival(depth, mid, minor_rate, &survival)) {
-            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
-        }
+        duckhts_somalier_status_t status =
+            binomial_survival(depth, mid, minor_rate, work, &survival);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         if (survival >= tail_alpha) {
             lo = mid;
         } else {
@@ -1049,24 +1139,139 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
     }
     while (lo > 0u) {
         int at_least;
-        if (!binomial_tail_compare(depth, lo, minor_rate, tail_alpha,
-                                   &at_least)) {
-            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
-        }
+        duckhts_somalier_status_t status = threshold_work_charge(work);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
+        status = binomial_tail_compare(depth, lo, minor_rate, tail_alpha,
+                                       work, &at_least);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         if (at_least) break;
         lo--;
     }
     while (lo < depth) {
         int at_least;
-        if (!binomial_tail_compare(depth, lo + 1u, minor_rate, tail_alpha,
-                                   &at_least)) {
-            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
-        }
+        duckhts_somalier_status_t status = threshold_work_charge(work);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
+        status = binomial_tail_compare(depth, lo + 1u, minor_rate, tail_alpha,
+                                       work, &at_least);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
         if (!at_least) break;
         lo++;
     }
     *max_minor = lo;
     return DUCKHTS_SOMALIER_OK;
+}
+
+duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
+    uint64_t depth,
+    double minor_rate,
+    double tail_alpha,
+    uint64_t max_depth,
+    uint64_t *max_minor) {
+    duckhts_somalier_threshold_work_t work = {
+        0u, DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK
+    };
+    return binomial_max_minor_metered(depth, minor_rate, tail_alpha,
+                                      max_depth, &work, max_minor);
+}
+
+duckhts_somalier_status_t duckhts_somalier_certify_thresholds(
+    const uint64_t *depths,
+    size_t depth_count,
+    const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_threshold_work_t *work,
+    duckhts_somalier_certified_threshold_t *thresholds) {
+    size_t i;
+    duckhts_somalier_status_t status = DUCKHTS_SOMALIER_OK;
+
+    if (!contamination_settings_valid(settings) || work == NULL ||
+        work->limit != settings->max_threshold_work || work->used > work->limit ||
+        (depth_count > 0u && (depths == NULL || thresholds == NULL))) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (depth_count > settings->max_sites) {
+        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    }
+    if (depth_count > 0u &&
+        (uint64_t)(depth_count - 1u) > settings->max_depth) {
+        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    }
+    for (i = 0u; i < depth_count; i++) {
+        if (depths[i] > settings->max_depth ||
+            depths[i] > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH) {
+            return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+        }
+        if (i > 0u && depths[i] <= depths[i - 1u]) {
+            return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+        }
+    }
+    if (depth_count == 0u) return DUCKHTS_SOMALIER_OK;
+    for (i = 0u; i < depth_count; i++) {
+        thresholds[i].depth = depths[i];
+        thresholds[i].hom_minor_rate = settings->hom_minor_rate;
+        thresholds[i].hom_tail_alpha = settings->hom_tail_alpha;
+        status = binomial_max_minor_metered(depths[i], settings->hom_minor_rate,
+                                            settings->hom_tail_alpha,
+                                            settings->max_depth, work,
+                                            &thresholds[i].max_minor);
+        if (status != DUCKHTS_SOMALIER_OK) break;
+    }
+    return status;
+}
+
+static int charr_policy_matches(
+    const duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_contamination_settings_t *settings) {
+    return accumulator->threshold_policy_min_depth == settings->min_depth &&
+        accumulator->threshold_cache_max_depth == settings->max_depth &&
+        accumulator->threshold_work.limit == settings->max_threshold_work &&
+        same_double_bits(accumulator->threshold_cache_minor_rate,
+                         settings->hom_minor_rate) &&
+        same_double_bits(accumulator->threshold_cache_tail_alpha,
+                         settings->hom_tail_alpha);
+}
+
+static int charr_unopened_is_empty(
+    const duckhts_somalier_charr_accumulator_t *accumulator) {
+    return accumulator->contribution_scaled_low == 0u &&
+        accumulator->contribution_scaled_high == 0u &&
+        accumulator->usable_sites == 0u &&
+        accumulator->usable_hom_a == 0u &&
+        accumulator->usable_hom_b == 0u &&
+        accumulator->threshold_cache_valid == 0u &&
+        accumulator->threshold_work.used == 0u &&
+        accumulator->threshold_work.limit == 0u;
+}
+
+static duckhts_somalier_status_t charr_open(
+    duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_charr_mode_t mode) {
+    if (accumulator->mode == DUCKHTS_SOMALIER_CHARR_UNOPENED) {
+        if (!charr_unopened_is_empty(accumulator)) {
+            return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+        }
+        accumulator->mode = mode;
+        accumulator->threshold_policy_min_depth = settings->min_depth;
+        accumulator->threshold_cache_max_depth = settings->max_depth;
+        accumulator->threshold_cache_minor_rate = settings->hom_minor_rate;
+        accumulator->threshold_cache_tail_alpha = settings->hom_tail_alpha;
+        accumulator->threshold_work.limit = settings->max_threshold_work;
+        return DUCKHTS_SOMALIER_OK;
+    }
+    if (accumulator->mode != mode || !charr_policy_matches(accumulator, settings)) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    return DUCKHTS_SOMALIER_OK;
+}
+
+static int certified_threshold_matches(
+    const duckhts_somalier_certified_threshold_t *certified,
+    uint64_t depth,
+    const duckhts_somalier_contamination_settings_t *settings) {
+    return certified != NULL && certified->depth == depth &&
+        certified->max_minor <= depth &&
+        same_double_bits(certified->hom_minor_rate, settings->hom_minor_rate) &&
+        same_double_bits(certified->hom_tail_alpha, settings->hom_tail_alpha);
 }
 
 static duckhts_somalier_status_t contamination_threshold(
@@ -1075,20 +1280,19 @@ static duckhts_somalier_status_t contamination_threshold(
     const duckhts_somalier_contamination_settings_t *settings,
     uint64_t *threshold) {
     duckhts_somalier_status_t status;
+    duckhts_somalier_threshold_work_t direct_work;
     unsigned slot;
     uint64_t bit;
 
     if (accumulator == NULL) {
-        return duckhts_somalier_binomial_max_minor(depth, settings->hom_minor_rate,
-            settings->hom_tail_alpha, settings->max_depth, threshold);
+        direct_work.used = 0u;
+        direct_work.limit = settings->max_threshold_work;
+        return binomial_max_minor_metered(depth, settings->hom_minor_rate,
+            settings->hom_tail_alpha, settings->max_depth, &direct_work, threshold);
     }
-    if (accumulator->threshold_cache_max_depth != settings->max_depth ||
-        accumulator->threshold_cache_minor_rate != settings->hom_minor_rate ||
-        accumulator->threshold_cache_tail_alpha != settings->hom_tail_alpha) {
-        accumulator->threshold_cache_valid = 0u;
-        accumulator->threshold_cache_max_depth = settings->max_depth;
-        accumulator->threshold_cache_minor_rate = settings->hom_minor_rate;
-        accumulator->threshold_cache_tail_alpha = settings->hom_tail_alpha;
+    if (accumulator->mode != DUCKHTS_SOMALIER_CHARR_DIRECT ||
+        !charr_policy_matches(accumulator, settings)) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
     slot = (unsigned)(depth % DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE);
     bit = UINT64_C(1) << slot;
@@ -1097,8 +1301,9 @@ static duckhts_somalier_status_t contamination_threshold(
         *threshold = accumulator->threshold_cache_value[slot];
         return DUCKHTS_SOMALIER_OK;
     }
-    status = duckhts_somalier_binomial_max_minor(depth, settings->hom_minor_rate,
-        settings->hom_tail_alpha, settings->max_depth, threshold);
+    status = binomial_max_minor_metered(depth, settings->hom_minor_rate,
+        settings->hom_tail_alpha, settings->max_depth,
+        &accumulator->threshold_work, threshold);
     if (status != DUCKHTS_SOMALIER_OK) return status;
     accumulator->threshold_cache_depth[slot] = (uint32_t)depth;
     accumulator->threshold_cache_value[slot] = (uint32_t)*threshold;
@@ -1110,6 +1315,8 @@ static duckhts_somalier_status_t classify_contamination(
     const duckhts_somalier_counts_t *counts,
     const duckhts_somalier_contamination_settings_t *settings,
     duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_certified_threshold_t *certified,
+    int require_certified,
     duckhts_somalier_genotype_t *genotype) {
     duckhts_somalier_status_t status;
     uint64_t depth;
@@ -1120,15 +1327,27 @@ static duckhts_somalier_status_t classify_contamination(
         !contamination_settings_valid(settings)) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
-    *genotype = DUCKHTS_SOMALIER_UNKNOWN;
-    if (!counts->available) return DUCKHTS_SOMALIER_OK;
+    if (!counts->available) {
+        if (certified != NULL) return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+        *genotype = DUCKHTS_SOMALIER_UNKNOWN;
+        return DUCKHTS_SOMALIER_OK;
+    }
     depth = counts_depth(counts);
+    if (require_certified &&
+        !certified_threshold_matches(certified, depth, settings)) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    *genotype = DUCKHTS_SOMALIER_UNKNOWN;
     if (depth > settings->max_depth) return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
     if (depth < settings->min_depth || contamination_other_is_high(counts)) {
         return DUCKHTS_SOMALIER_OK;
     }
-    status = contamination_threshold(accumulator, depth, settings, &threshold);
-    if (status != DUCKHTS_SOMALIER_OK) return status;
+    if (require_certified) {
+        threshold = certified->max_minor;
+    } else {
+        status = contamination_threshold(accumulator, depth, settings, &threshold);
+        if (status != DUCKHTS_SOMALIER_OK) return status;
+    }
     minor = counts->allele_a < counts->allele_b ? counts->allele_a : counts->allele_b;
     if (minor > threshold || counts->allele_a == counts->allele_b) {
         return DUCKHTS_SOMALIER_OK;
@@ -1143,7 +1362,15 @@ duckhts_somalier_status_t duckhts_somalier_classify_contamination(
     const duckhts_somalier_counts_t *counts,
     const duckhts_somalier_contamination_settings_t *settings,
     duckhts_somalier_genotype_t *genotype) {
-    return classify_contamination(counts, settings, NULL, genotype);
+    return classify_contamination(counts, settings, NULL, NULL, 0, genotype);
+}
+
+duckhts_somalier_status_t duckhts_somalier_classify_contamination_certified(
+    const duckhts_somalier_counts_t *counts,
+    const duckhts_somalier_contamination_settings_t *settings,
+    const duckhts_somalier_certified_threshold_t *threshold,
+    duckhts_somalier_genotype_t *genotype) {
+    return classify_contamination(counts, settings, NULL, threshold, 1, genotype);
 }
 
 duckhts_somalier_status_t duckhts_somalier_contamination_usable(
@@ -1163,25 +1390,38 @@ duckhts_somalier_status_t duckhts_somalier_contamination_usable(
     return DUCKHTS_SOMALIER_OK;
 }
 
-duckhts_somalier_status_t duckhts_somalier_charr_observe(
+static duckhts_somalier_status_t charr_observe(
     duckhts_somalier_charr_accumulator_t *accumulator,
     const duckhts_somalier_counts_t *counts,
     double population_b_frequency,
-    const duckhts_somalier_contamination_settings_t *settings) {
+    const duckhts_somalier_contamination_settings_t *settings,
+    const duckhts_somalier_certified_threshold_t *threshold,
+    int require_certified) {
     duckhts_somalier_genotype_t genotype;
     duckhts_somalier_status_t status;
     uint64_t depth;
     double contaminant_frequency;
     double infiltrating;
     double contribution;
+    duckhts_somalier_charr_mode_t mode = require_certified
+        ? DUCKHTS_SOMALIER_CHARR_CERTIFIED : DUCKHTS_SOMALIER_CHARR_DIRECT;
 
-    if (accumulator == NULL ||
+    if (accumulator == NULL || counts == NULL || counts->available > 1u ||
+        !contamination_settings_valid(settings) ||
         !somalier_double_isfinite(population_b_frequency) ||
         population_b_frequency < 0.0 ||
         population_b_frequency > 1.0) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
-    status = classify_contamination(counts, settings, accumulator, &genotype);
+    if ((counts->available && require_certified &&
+         !certified_threshold_matches(threshold, counts_depth(counts), settings)) ||
+        (!counts->available && threshold != NULL)) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    status = charr_open(accumulator, settings, mode);
+    if (status != DUCKHTS_SOMALIER_OK) return status;
+    status = classify_contamination(counts, settings, accumulator,
+                                    threshold, require_certified, &genotype);
     if (status != DUCKHTS_SOMALIER_OK) return status;
     if (genotype == DUCKHTS_SOMALIER_UNKNOWN) return DUCKHTS_SOMALIER_OK;
     if (accumulator->usable_sites == UINT64_MAX ||
@@ -1238,6 +1478,25 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     return DUCKHTS_SOMALIER_OK;
 }
 
+duckhts_somalier_status_t duckhts_somalier_charr_observe(
+    duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_counts_t *counts,
+    double population_b_frequency,
+    const duckhts_somalier_contamination_settings_t *settings) {
+    return charr_observe(accumulator, counts, population_b_frequency,
+                         settings, NULL, 0);
+}
+
+duckhts_somalier_status_t duckhts_somalier_charr_observe_certified(
+    duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_counts_t *counts,
+    double population_b_frequency,
+    const duckhts_somalier_contamination_settings_t *settings,
+    const duckhts_somalier_certified_threshold_t *threshold) {
+    return charr_observe(accumulator, counts, population_b_frequency,
+                         settings, threshold, 1);
+}
+
 duckhts_somalier_status_t duckhts_somalier_charr_combine(
     duckhts_somalier_charr_accumulator_t *target,
     const duckhts_somalier_charr_accumulator_t *source) {
@@ -1245,6 +1504,38 @@ duckhts_somalier_status_t duckhts_somalier_charr_combine(
     uint64_t carry;
     uint64_t high;
     if (target == NULL || source == NULL) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (target->mode == DUCKHTS_SOMALIER_CHARR_DIRECT ||
+        source->mode == DUCKHTS_SOMALIER_CHARR_DIRECT ||
+        target->mode < DUCKHTS_SOMALIER_CHARR_UNOPENED ||
+        target->mode > DUCKHTS_SOMALIER_CHARR_CERTIFIED ||
+        source->mode < DUCKHTS_SOMALIER_CHARR_UNOPENED ||
+        source->mode > DUCKHTS_SOMALIER_CHARR_CERTIFIED) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (target->mode == DUCKHTS_SOMALIER_CHARR_UNOPENED) {
+        if (!charr_unopened_is_empty(target)) {
+            return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+        }
+        if (source->mode == DUCKHTS_SOMALIER_CHARR_UNOPENED) {
+            return charr_unopened_is_empty(source)
+                ? DUCKHTS_SOMALIER_OK : DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+        }
+        *target = *source;
+        return DUCKHTS_SOMALIER_OK;
+    }
+    if (source->mode == DUCKHTS_SOMALIER_CHARR_UNOPENED) {
+        return charr_unopened_is_empty(source)
+            ? DUCKHTS_SOMALIER_OK : DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (target->threshold_policy_min_depth != source->threshold_policy_min_depth ||
+        target->threshold_cache_max_depth != source->threshold_cache_max_depth ||
+        target->threshold_work.limit != source->threshold_work.limit ||
+        !same_double_bits(target->threshold_cache_minor_rate,
+                          source->threshold_cache_minor_rate) ||
+        !same_double_bits(target->threshold_cache_tail_alpha,
+                          source->threshold_cache_tail_alpha)) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
     if (source->usable_sites > UINT64_MAX - target->usable_sites ||
@@ -1604,6 +1895,7 @@ const char *duckhts_somalier_status_string(duckhts_somalier_status_t status) {
     case DUCKHTS_SOMALIER_NO_EVIDENCE: return "no evidence";
     case DUCKHTS_SOMALIER_INVALID_ARGUMENT: return "invalid argument";
     case DUCKHTS_SOMALIER_LIMIT_EXCEEDED: return "limit exceeded";
+    case DUCKHTS_SOMALIER_WORK_LIMIT_EXCEEDED: return "work limit exceeded";
     case DUCKHTS_SOMALIER_IDENTITY_MISMATCH: return "identity mismatch";
     case DUCKHTS_SOMALIER_CORRUPT_MASK: return "corrupt mask";
     case DUCKHTS_SOMALIER_CORRUPT_RESULT: return "corrupt result";

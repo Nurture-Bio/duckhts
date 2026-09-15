@@ -172,6 +172,234 @@ WHERE contamination.receiver_id = 'U';
 ----
 U	1	1
 
+# One query-scoped certification is shared across sample groups and matched
+# profile construction. A one-step budget cannot certify depth 200; the error
+# is independent of DuckDB worker partitioning.
+statement ok
+CREATE TEMP VIEW contam_budget_depth6_evidence AS
+SELECT * FROM contam_evidence WHERE sample_id = 'L';
+
+statement ok
+CREATE TEMP TABLE contam_budget_depth6_pairs AS
+SELECT * FROM (VALUES ('L', 'U')) p(receiver_id, anchor_id);
+
+statement ok
+CREATE TEMP TABLE contam_budget_depth200_pairs AS
+SELECT * FROM (VALUES ('R', 'H')) p(receiver_id, anchor_id);
+
+statement ok
+CREATE TEMP TABLE contam_budget_both_pairs AS
+SELECT * FROM (VALUES ('L', 'R')) p(receiver_id, anchor_id);
+
+# Each distinct depth fits the same budget alone. Preparing both depths in one
+# query exhausts one cumulative budget rather than resetting it per sample.
+query TIIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.unavailable_sites, contamination.max_threshold_work,
+       contamination.max_sites
+FROM duckhts_somalier_charr(
+  'contam_budget_depth6_evidence', 'contam_panel', 'contam_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 220, max_sites := 2);
+----
+no_evidence	2	0	220	2
+
+query TIIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.unavailable_sites, contamination.max_threshold_work,
+       contamination.max_sites
+FROM duckhts_somalier_charr(
+  'contam_one_evidence', 'contam_one_panel', 'contam_one_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 220, max_sites := 1);
+----
+ok	1	0	220	1
+
+statement error
+SELECT * FROM duckhts_somalier_charr(
+  'contam_charr_evidence', 'contam_panel', 'contam_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 220, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+statement error
+SELECT __duckhts_somalier_certify_thresholds(
+  [6::UBIGINT, 200::UBIGINT], 7::UBIGINT, 1000000::UBIGINT,
+  0.1::DOUBLE, 0.001::DOUBLE, 1::UBIGINT, 16000000::UBIGINT);
+----
+depth list exceeds max_sites
+
+query TIIIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.receiver_unavailable_sites,
+       contamination.anchor_unavailable_sites,
+       contamination.max_threshold_work, contamination.max_sites
+FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency',
+  'contam_budget_depth6_pairs', min_depth := 7, hom_minor_rate := 0.1,
+  hom_tail_alpha := 0.001, max_threshold_work := 220, max_sites := 2);
+----
+no_evidence	2	0	2	220	2
+
+query TIIIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.receiver_unavailable_sites,
+       contamination.anchor_unavailable_sites,
+       contamination.max_threshold_work, contamination.max_sites
+FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency',
+  'contam_budget_depth200_pairs', min_depth := 7, hom_minor_rate := 0.1,
+  hom_tail_alpha := 0.001, max_threshold_work := 220, max_sites := 2);
+----
+ok	2	0	0	220	2
+
+statement error
+SELECT * FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency',
+  'contam_budget_both_pairs', min_depth := 7, hom_minor_rate := 0.1,
+  hom_tail_alpha := 0.001, max_threshold_work := 220, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+query I
+SELECT count(*) FROM duckhts_somalier_charr(
+  'contam_charr_evidence', 'contam_panel', 'contam_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 2000, max_sites := 2);
+----
+5
+
+query I
+SELECT count(*) FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency', 'contam_pairs',
+  max_threshold_work := 1000, max_sites := 2);
+----
+4
+
+statement ok
+SET threads = 1;
+
+statement error
+SELECT * FROM duckhts_somalier_charr(
+  'contam_charr_evidence', 'contam_panel', 'contam_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 1, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+statement error
+SELECT * FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency', 'contam_pairs',
+  max_threshold_work := 1, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+statement ok
+SET threads = 4;
+
+statement error
+SELECT * FROM duckhts_somalier_charr(
+  'contam_charr_evidence', 'contam_panel', 'contam_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 1, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+statement error
+SELECT * FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency', 'contam_pairs',
+  max_threshold_work := 1, max_sites := 2);
+----
+binomial threshold certification exceeded max_threshold_work
+
+query II
+SELECT contamination.max_threshold_work, contamination.max_sites
+FROM duckhts_somalier_charr(
+  'contam_one_evidence', 'contam_one_panel', 'contam_one_frequency',
+  min_depth := 7, hom_minor_rate := 0.1, hom_tail_alpha := 0.001,
+  max_threshold_work := 2000, max_sites := 1);
+----
+2000	1
+
+query II
+SELECT contamination.max_threshold_work, contamination.max_sites
+FROM duckhts_somalier_matched_contamination(
+  'contam_evidence', 'contam_panel', 'contam_match_frequency', 'contam_pairs',
+  max_threshold_work := 2000, max_sites := 2)
+WHERE contamination.receiver_id = 'R' AND contamination.anchor_id = 'H';
+----
+2000	2
+
+# Empty threshold preparation is valid for wholly unavailable evidence and
+# retains the full panel/profile denominators.
+statement ok
+CREATE TEMP TABLE contam_unavailable_evidence AS
+SELECT * FROM contam_evidence WHERE sample_id = 'U'
+UNION ALL SELECT * REPLACE('U2' AS sample_id)
+FROM contam_evidence WHERE sample_id = 'U';
+
+statement ok
+CREATE TEMP TABLE contam_unavailable_pairs AS
+SELECT * FROM (VALUES ('U', 'U2')) p(receiver_id, anchor_id);
+
+query TIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.unavailable_sites, contamination.usable_sites
+FROM duckhts_somalier_charr(
+  'contam_unavailable_evidence', 'contam_panel', 'contam_frequency',
+  max_threshold_work := 1, max_sites := 2)
+WHERE contamination.sample_id = 'U';
+----
+no_evidence	2	2	0
+
+query TIIII
+SELECT contamination.status, contamination.observed_sites,
+       contamination.receiver_unavailable_sites,
+       contamination.anchor_unavailable_sites, contamination.usable_sites
+FROM duckhts_somalier_matched_contamination(
+  'contam_unavailable_evidence', 'contam_panel', 'contam_match_frequency',
+  'contam_unavailable_pairs', max_threshold_work := 1, max_sites := 2);
+----
+no_evidence	2	2	2	0
+
+# The certified numerical domain includes the declared maximum A+B depth.
+statement ok
+CREATE TEMP TABLE contam_deep_panel AS
+SELECT 'GRCh38' AS assembly, 0::UBIGINT AS site_index, 'chr1' AS region,
+       900000::UBIGINT AS position, 'A' AS allele_a, 'G' AS allele_b;
+
+statement ok
+CREATE TEMP TABLE contam_deep_frequency AS
+SELECT *, 0.25::DOUBLE AS population_b_af FROM contam_deep_panel;
+
+statement ok
+CREATE TEMP TABLE contam_deep_evidence AS
+SELECT s.sample_id, p.*, 999999::UBIGINT AS a, 1::UBIGINT AS b,
+       0::UBIGINT AS other
+FROM (VALUES ('DeepR'), ('DeepH')) s(sample_id), contam_deep_panel p;
+
+statement ok
+CREATE TEMP TABLE contam_deep_pairs AS
+SELECT * FROM (VALUES ('DeepR', 'DeepH')) p(receiver_id, anchor_id);
+
+query TI
+SELECT contamination.status, contamination.max_depth
+FROM duckhts_somalier_charr(
+  'contam_deep_evidence', 'contam_deep_panel', 'contam_deep_frequency',
+  max_sites := 1)
+WHERE contamination.sample_id = 'DeepR';
+----
+ok	1000000
+
+query TI
+SELECT contamination.status, contamination.max_depth
+FROM duckhts_somalier_matched_contamination(
+  'contam_deep_evidence', 'contam_deep_panel', 'contam_deep_frequency',
+  'contam_deep_pairs', max_sites := 1);
+----
+ok	1000000
+
 statement ok
 CREATE TEMP TABLE contam_panel_flipped AS
 SELECT assembly, site_index, region, position,
@@ -340,7 +568,20 @@ SELECT * FROM duckhts_somalier_charr(
   'contam_one_evidence', 'contam_one_panel', 'contam_one_frequency',
   min_depth := 7, max_depth := 199, max_sites := 1);
 ----
-a depth or site setting exceeds its declared limit
+a sample A+B depth exceeds max_depth
+
+statement ok
+CREATE TEMP VIEW contam_overflow_evidence AS
+SELECT sample_id, assembly, site_index, region, position, allele_a, allele_b,
+       18446744073709551615::UBIGINT AS a, 1::UBIGINT AS b, other
+FROM contam_one_evidence;
+
+statement error
+SELECT * FROM duckhts_somalier_charr(
+  'contam_overflow_evidence', 'contam_one_panel', 'contam_one_frequency',
+  min_depth := 7, max_sites := 1);
+----
+measured counts must fit UINTEGER
 
 statement error
 SELECT * FROM duckhts_somalier_charr(
@@ -354,14 +595,15 @@ SELECT * FROM duckhts_somalier_charr(
   'contam_evidence', 'contam_panel', 'contam_frequency',
   min_depth := 7, max_sites := 1);
 ----
-invalid identity, site limit
+panel exceeds max_sites
 
 statement error
 SELECT __duckhts_somalier_charr(
   'Identity', repeat('a', 1025), repeat('b', 64), repeat('c', 64),
   0::UBIGINT, 1::UBIGINT, 199::UBIGINT, 1::UBIGINT, 0::UBIGINT,
-  0.25::DOUBLE, 7::UBIGINT, 1000000::UBIGINT, 0.1::DOUBLE,
-  0.001::DOUBLE, 1::UBIGINT);
+  200::UBIGINT, 11::UBIGINT, 0.25::DOUBLE, 7::UBIGINT,
+  1000000::UBIGINT, 0.1::DOUBLE, 0.001::DOUBLE,
+  16000000::UBIGINT, 1::UBIGINT);
 ----
 sample_id and assembly must be at most 1024 bytes
 
@@ -375,6 +617,7 @@ SELECT struct_pack(
   observed_sites := 1::UBIGINT, unavailable_sites := 0::UBIGINT,
   min_depth := 7::UBIGINT, max_depth := 1000000::UBIGINT,
   hom_minor_rate := 0.1::DOUBLE, hom_tail_alpha := 0.001::DOUBLE,
+  max_threshold_work := 16000000::UBIGINT, max_sites := 1::UBIGINT,
   receiver_a := [199::UINTEGER], receiver_b := [1::UINTEGER],
   receiver_usable := [1::UTINYINT], anchor_genotype := [1::TINYINT]
 ) AS profile;
@@ -394,13 +637,14 @@ SELECT __duckhts_somalier_matched_profiles(
   struct_update(p.profile, sample_id := repeat('a', 1024),
                 assembly := repeat('g', 1024)),
   struct_update(f.profile, assembly := repeat('g', 1024)),
-  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 16000000, 1)
 FROM contam_direct_profile p, contam_direct_frequency f;
 
 statement error
 SELECT __duckhts_somalier_matched_profiles(
   struct_update(p.profile, sample_id := repeat('s', 1025)), p.profile,
-  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096,
+  16000000, 1)
 FROM contam_direct_profile p, contam_direct_frequency f;
 ----
 sample_id and assembly must be at most 1024 bytes
@@ -408,7 +652,8 @@ sample_id and assembly must be at most 1024 bytes
 statement error
 SELECT __duckhts_somalier_matched_profiles(
   p.profile, struct_update(p.profile, assembly := repeat('g', 1025)),
-  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+  f.profile, 0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096,
+  16000000, 1)
 FROM contam_direct_profile p, contam_direct_frequency f;
 ----
 sample_id and assembly must be at most 1024 bytes
@@ -417,7 +662,7 @@ statement error
 SELECT __duckhts_somalier_matched_profiles(
   p.profile, p.profile,
   struct_update(f.profile, assembly := repeat('g', 1025)),
-  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 1)
+  0.002, 1e-10, 1e-6, 0, 1, 0.01, 1e-10, 4096, 16000000, 1)
 FROM contam_direct_profile p, contam_direct_frequency f;
 ----
 sample_id and assembly must be at most 1024 bytes
@@ -432,8 +677,9 @@ SELECT __duckhts_somalier_charr(
   'Identity', 'GRCh38', repeat('a', 64),
   CASE site_index WHEN 0 THEN repeat('b', 64) ELSE repeat('c', 64) END,
   site_index, 2::UBIGINT, 200::UBIGINT, 0::UBIGINT, 0::UBIGINT,
-  0.25::DOUBLE, 7::UBIGINT, 1000000::UBIGINT, 0.1::DOUBLE,
-  0.001::DOUBLE, 2::UBIGINT)
+  200::UBIGINT, 11::UBIGINT, 0.25::DOUBLE, 7::UBIGINT,
+  1000000::UBIGINT, 0.1::DOUBLE, 0.001::DOUBLE,
+  16000000::UBIGINT, 2::UBIGINT)
 FROM contam_panel;
 ----
 identity, site count, or settings changed within one group
@@ -480,7 +726,7 @@ SELECT * FROM duckhts_somalier_matched_contamination(
   'contam_matched_partial_evidence', 'contam_panel',
   'contam_match_frequency', 'contam_pairs', max_sites := 2);
 ----
-count tuple must be all measured or all unavailable
+counts must be all measured or all unavailable
 
 statement ok
 CREATE TEMP VIEW contam_matched_wrong_tuple AS
@@ -501,7 +747,23 @@ SELECT * FROM duckhts_somalier_matched_contamination(
   'contam_evidence', 'contam_panel',
   'contam_match_frequency', 'contam_pairs', max_depth := 199, max_sites := 2);
 ----
-a sample depth exceeds max_depth
+a sample A+B depth exceeds max_depth
+
+statement ok
+CREATE TEMP VIEW contam_matched_overflow_evidence AS
+SELECT sample_id, assembly, site_index, region, position, allele_a, allele_b,
+       CASE WHEN sample_id = 'R' AND site_index = 0
+            THEN 18446744073709551615::UBIGINT ELSE a END AS a,
+       CASE WHEN sample_id = 'R' AND site_index = 0 THEN 1::UBIGINT ELSE b END AS b,
+       other
+FROM contam_evidence;
+
+statement error
+SELECT * FROM duckhts_somalier_matched_contamination(
+  'contam_matched_overflow_evidence', 'contam_panel',
+  'contam_match_frequency', 'contam_pairs', max_sites := 2);
+----
+measured counts must fit UINTEGER
 
 statement error
 SELECT * FROM duckhts_somalier_matched_contamination(
@@ -555,7 +817,7 @@ query II rowsort
 SELECT case_index,
        __duckhts_somalier_matched_settings_valid(
          min_depth, 1000000, 0.05, 0.001, 0.002, 1e-10, 1e-6,
-         0, 1, grid_step, 1e-10, 4096, 2)::INTEGER
+         0, 1, grid_step, 1e-10, 4096, 16000000, 2)::INTEGER
 FROM (VALUES
   (0, NULL::UBIGINT, 0.01),
   (1, 15::UBIGINT, 0.01),

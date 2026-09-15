@@ -15,6 +15,8 @@ extern "C" {
 #define DUCKHTS_SOMALIER_RELATEDNESS_MAX_OTHER_FRACTION 0.10
 #define DUCKHTS_SOMALIER_CONTAMINATION_MAX_OTHER_FRACTION 0.04
 #define DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH UINT64_C(1000000)
+#define DUCKHTS_SOMALIER_DEFAULT_THRESHOLD_WORK UINT64_C(16000000)
+#define DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK UINT64_C(100000000)
 #define DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES UINT32_C(1024)
 #define DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE 64u
 
@@ -23,6 +25,7 @@ typedef enum duckhts_somalier_status {
     DUCKHTS_SOMALIER_NO_EVIDENCE,
     DUCKHTS_SOMALIER_INVALID_ARGUMENT,
     DUCKHTS_SOMALIER_LIMIT_EXCEEDED,
+    DUCKHTS_SOMALIER_WORK_LIMIT_EXCEEDED,
     DUCKHTS_SOMALIER_IDENTITY_MISMATCH,
     DUCKHTS_SOMALIER_CORRUPT_MASK,
     DUCKHTS_SOMALIER_NUMERIC_FAILURE,
@@ -178,10 +181,23 @@ duckhts_somalier_status_t duckhts_somalier_verify_pair_result(
 typedef struct duckhts_somalier_contamination_settings {
     uint64_t min_depth;
     uint64_t max_depth;
+    uint64_t max_threshold_work;
     size_t max_sites;
     double hom_minor_rate;
     double hom_tail_alpha;
 } duckhts_somalier_contamination_settings_t;
+
+typedef struct duckhts_somalier_threshold_work {
+    uint64_t used;
+    uint64_t limit;
+} duckhts_somalier_threshold_work_t;
+
+typedef struct duckhts_somalier_certified_threshold {
+    uint64_t depth;
+    uint64_t max_minor;
+    double hom_minor_rate;
+    double hom_tail_alpha;
+} duckhts_somalier_certified_threshold_t;
 
 void duckhts_somalier_charr_settings_default(
     duckhts_somalier_contamination_settings_t *settings);
@@ -202,11 +218,31 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
     uint64_t max_depth,
     uint64_t *max_minor);
 
+/* depths must be strictly increasing and unique. The function validates the
+ * complete input before charging work. Output entries are unspecified on
+ * failure and must not be published by the caller. work.limit must match the
+ * setting's configured budget. */
+duckhts_somalier_status_t duckhts_somalier_certify_thresholds(
+    const uint64_t *depths,
+    size_t depth_count,
+    const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_threshold_work_t *work,
+    duckhts_somalier_certified_threshold_t *thresholds);
+
 /* Contamination eligibility uses the stricter 0.04 other-read ceiling and a
  * depth-aware homozygous-like binomial test. */
 duckhts_somalier_status_t duckhts_somalier_classify_contamination(
     const duckhts_somalier_counts_t *counts,
     const duckhts_somalier_contamination_settings_t *settings,
+    duckhts_somalier_genotype_t *genotype);
+
+/* A measured count tuple requires the threshold for its exact A+B depth and
+ * the exact hom_minor_rate/hom_tail_alpha policy. Unavailable counts may pass
+ * NULL because no threshold is consumed. */
+duckhts_somalier_status_t duckhts_somalier_classify_contamination_certified(
+    const duckhts_somalier_counts_t *counts,
+    const duckhts_somalier_contamination_settings_t *settings,
+    const duckhts_somalier_certified_threshold_t *threshold,
     duckhts_somalier_genotype_t *genotype);
 
 /* Receiver eligibility does not require a homozygous-like call. An
@@ -224,17 +260,27 @@ typedef struct duckhts_somalier_charr_result {
     uint64_t usable_hom_b;
 } duckhts_somalier_charr_result_t;
 
+typedef enum duckhts_somalier_charr_mode {
+    DUCKHTS_SOMALIER_CHARR_UNOPENED = 0,
+    DUCKHTS_SOMALIER_CHARR_DIRECT,
+    DUCKHTS_SOMALIER_CHARR_CERTIFIED
+} duckhts_somalier_charr_mode_t;
+
 typedef struct duckhts_somalier_charr_accumulator {
     uint64_t contribution_scaled_low;
     uint64_t contribution_scaled_high;
     uint64_t usable_sites;
     uint64_t usable_hom_a;
     uint64_t usable_hom_b;
-    /* Direct-mapped, fixed-size reuse of certified depth thresholds. */
+    duckhts_somalier_charr_mode_t mode;
+    uint64_t threshold_policy_min_depth;
+    /* Direct mode uses an accumulator-local budget and cache. Certified mode
+     * records the same immutable policy but performs no threshold work. */
     uint64_t threshold_cache_valid;
     uint64_t threshold_cache_max_depth;
     double threshold_cache_minor_rate;
     double threshold_cache_tail_alpha;
+    duckhts_somalier_threshold_work_t threshold_work;
     uint32_t threshold_cache_depth[DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE];
     uint32_t threshold_cache_value[DUCKHTS_SOMALIER_THRESHOLD_CACHE_SIZE];
 } duckhts_somalier_charr_accumulator_t;
@@ -245,6 +291,15 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     double population_b_frequency,
     const duckhts_somalier_contamination_settings_t *settings);
 
+duckhts_somalier_status_t duckhts_somalier_charr_observe_certified(
+    duckhts_somalier_charr_accumulator_t *accumulator,
+    const duckhts_somalier_counts_t *counts,
+    double population_b_frequency,
+    const duckhts_somalier_contamination_settings_t *settings,
+    const duckhts_somalier_certified_threshold_t *threshold);
+
+/* Only unopened and certified accumulators are composable. Direct mode owns
+ * one sequential certification budget and therefore cannot be combined. */
 duckhts_somalier_status_t duckhts_somalier_charr_combine(
     duckhts_somalier_charr_accumulator_t *target,
     const duckhts_somalier_charr_accumulator_t *source);

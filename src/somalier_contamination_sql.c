@@ -13,11 +13,27 @@ DUCKDB_EXTENSION_EXTERN
 #define CONTAM_SQL_MAX_SITES UINT64_C(100000000)
 #define CONTAM_METHOD_VERSION "somalier-0.3.4-duckhts-1.5.2"
 
+enum certify_input {
+    CERTIFY_IN_DEPTHS = 0, CERTIFY_IN_MIN_DEPTH, CERTIFY_IN_MAX_DEPTH,
+    CERTIFY_IN_HOM_MINOR_RATE, CERTIFY_IN_HOM_TAIL_ALPHA,
+    CERTIFY_IN_MAX_SITES, CERTIFY_IN_MAX_THRESHOLD_WORK, CERTIFY_IN_COUNT
+};
+
+enum certify_output {
+    CERTIFY_OUT_DEPTH = 0, CERTIFY_OUT_MAX_MINOR, CERTIFY_OUT_COUNT
+};
+
+static const char *certify_output_names[CERTIFY_OUT_COUNT] = {
+    "depth", "max_minor"
+};
+
 enum charr_input {
     CH_IN_SAMPLE = 0, CH_IN_ASSEMBLY, CH_IN_PANEL, CH_IN_FREQUENCY,
     CH_IN_SITE_INDEX, CH_IN_SITE_COUNT, CH_IN_A, CH_IN_B, CH_IN_OTHER,
+    CH_IN_CERTIFIED_DEPTH, CH_IN_CERTIFIED_MAX_MINOR,
     CH_IN_POPULATION_B_AF, CH_IN_MIN_DEPTH, CH_IN_MAX_DEPTH,
-    CH_IN_HOM_MINOR_RATE, CH_IN_HOM_TAIL_ALPHA, CH_IN_MAX_SITES,
+    CH_IN_HOM_MINOR_RATE, CH_IN_HOM_TAIL_ALPHA, CH_IN_MAX_THRESHOLD_WORK,
+    CH_IN_MAX_SITES,
     CH_IN_COUNT
 };
 
@@ -26,7 +42,8 @@ enum charr_output {
     CH_OUT_METHOD, CH_OUT_STATUS, CH_OUT_SITE_COUNT, CH_OUT_OBSERVED,
     CH_OUT_UNAVAILABLE, CH_OUT_USABLE, CH_OUT_HOM_A, CH_OUT_HOM_B,
     CH_OUT_ESTIMATE, CH_OUT_MIN_DEPTH, CH_OUT_MAX_DEPTH,
-    CH_OUT_HOM_MINOR_RATE, CH_OUT_HOM_TAIL_ALPHA, CH_OUT_MAX_SITES,
+    CH_OUT_HOM_MINOR_RATE, CH_OUT_HOM_TAIL_ALPHA, CH_OUT_MAX_THRESHOLD_WORK,
+    CH_OUT_MAX_SITES,
     CH_OUT_COUNT
 };
 
@@ -35,7 +52,7 @@ static const char *charr_output_names[CH_OUT_COUNT] = {
     "method_version", "status", "site_count", "observed_sites",
     "unavailable_sites", "usable_sites", "usable_hom_a", "usable_hom_b",
     "estimate", "min_depth", "max_depth", "hom_minor_rate",
-    "hom_tail_alpha", "max_sites"
+    "hom_tail_alpha", "max_threshold_work", "max_sites"
 };
 
 typedef struct contamination_identity {
@@ -64,6 +81,219 @@ typedef struct contamination_state {
 static bool row_valid(duckdb_vector vector, idx_t row) {
     uint64_t *validity = duckdb_vector_get_validity(vector);
     return validity == NULL || duckdb_validity_row_is_valid(validity, row);
+}
+
+static void certify_set_status_error(duckdb_function_info info,
+                                     duckhts_somalier_status_t status) {
+    const char *message;
+    switch (status) {
+    case DUCKHTS_SOMALIER_LIMIT_EXCEEDED:
+        message = "duckhts_somalier_certify_thresholds: depth, site, or threshold-work limit exceeded";
+        break;
+    case DUCKHTS_SOMALIER_WORK_LIMIT_EXCEEDED:
+        message = "duckhts_somalier_certify_thresholds: binomial threshold certification exceeded max_threshold_work";
+        break;
+    case DUCKHTS_SOMALIER_NUMERIC_FAILURE:
+        message = "duckhts_somalier_certify_thresholds: binomial threshold certification failed numerically";
+        break;
+    default:
+        message = "duckhts_somalier_certify_thresholds: depths must be sorted, unique, and valid for the contamination settings";
+        break;
+    }
+    duckdb_scalar_function_set_error(info, message);
+}
+
+static void certify_thresholds_scalar(duckdb_function_info info,
+                                      duckdb_data_chunk input,
+                                      duckdb_vector output) {
+    duckdb_vector in[CERTIFY_IN_COUNT];
+    duckdb_vector depth_list;
+    duckdb_vector output_records;
+    duckdb_vector output_depth;
+    duckdb_vector output_max_minor;
+    duckdb_list_entry *input_lists;
+    duckdb_list_entry *output_lists;
+    uint64_t *input_depths;
+    uint32_t *output_depths;
+    uint32_t *output_max_minors;
+    duckhts_somalier_certified_threshold_t *certified = NULL;
+    idx_t rows = duckdb_data_chunk_get_size(input);
+    idx_t input_child_count;
+    idx_t output_count = 0u;
+
+    for (unsigned i = 0u; i < CERTIFY_IN_COUNT; i++) {
+        in[i] = duckdb_data_chunk_get_vector(input, i);
+    }
+    depth_list = duckdb_list_vector_get_child(in[CERTIFY_IN_DEPTHS]);
+    input_lists = duckdb_vector_get_data(in[CERTIFY_IN_DEPTHS]);
+    input_depths = duckdb_vector_get_data(depth_list);
+    input_child_count = duckdb_list_vector_get_size(in[CERTIFY_IN_DEPTHS]);
+
+    for (idx_t row = 0u; row < rows; row++) {
+        duckdb_list_entry depths;
+        duckhts_somalier_contamination_settings_t settings;
+        duckhts_somalier_counts_t unavailable = {0};
+        duckhts_somalier_status_t settings_status;
+        uint64_t max_sites;
+        uint8_t usable;
+        bool missing = false;
+        for (unsigned i = 0u; i < CERTIFY_IN_COUNT; i++) {
+            if (!row_valid(in[i], row)) missing = true;
+        }
+        if (missing) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: depths and settings cannot be NULL");
+            return;
+        }
+        depths = input_lists[row];
+        max_sites = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_SITES]))[row];
+        if (max_sites == 0u || max_sites > CONTAM_SQL_MAX_SITES ||
+            max_sites > SIZE_MAX) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: max_sites exceeds its limit");
+            return;
+        }
+        duckhts_somalier_charr_settings_default(&settings);
+        settings.min_depth = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MIN_DEPTH]))[row];
+        settings.max_depth = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_DEPTH]))[row];
+        settings.hom_minor_rate = ((double *)duckdb_vector_get_data(
+            in[CERTIFY_IN_HOM_MINOR_RATE]))[row];
+        settings.hom_tail_alpha = ((double *)duckdb_vector_get_data(
+            in[CERTIFY_IN_HOM_TAIL_ALPHA]))[row];
+        settings.max_sites = (size_t)max_sites;
+        settings.max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_THRESHOLD_WORK]))[row];
+        if (settings.max_depth > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
+            settings.max_threshold_work > DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK) {
+            certify_set_status_error(info, DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
+            return;
+        }
+        settings_status = duckhts_somalier_contamination_usable(
+            &unavailable, &settings, &usable);
+        if (settings_status != DUCKHTS_SOMALIER_OK) {
+            certify_set_status_error(info, settings_status);
+            return;
+        }
+        if (depths.offset > input_child_count ||
+            depths.length > input_child_count - depths.offset) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: depth list length or offset is invalid");
+            return;
+        }
+        if (depths.length > max_sites) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: depth list exceeds max_sites");
+            return;
+        }
+        for (idx_t i = 0u; i < depths.length; i++) {
+            if (!row_valid(depth_list, depths.offset + i)) {
+                duckdb_scalar_function_set_error(info,
+                    "duckhts_somalier_certify_thresholds: depths cannot contain NULL");
+                return;
+            }
+        }
+        if (depths.length > UINT64_MAX - output_count ||
+            output_count + depths.length >
+                DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH + 1u) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: output length exceeds its limit");
+            return;
+        }
+        output_count += depths.length;
+    }
+
+    if (output_count > 0u) {
+        if (output_count > SIZE_MAX / sizeof(*certified)) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: checked output size exceeds its limit");
+            return;
+        }
+        certified = duckdb_malloc((size_t)output_count * sizeof(*certified));
+        if (certified == NULL) {
+            duckdb_scalar_function_set_error(info,
+                "duckhts_somalier_certify_thresholds: checked output allocation failed");
+            return;
+        }
+    }
+
+    output_count = 0u;
+    for (idx_t row = 0u; row < rows; row++) {
+        duckdb_list_entry depths = input_lists[row];
+        duckhts_somalier_contamination_settings_t settings;
+        duckhts_somalier_threshold_work_t work;
+        duckhts_somalier_status_t status;
+        uint64_t max_sites = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_SITES]))[row];
+
+        duckhts_somalier_charr_settings_default(&settings);
+        settings.min_depth = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MIN_DEPTH]))[row];
+        settings.max_depth = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_DEPTH]))[row];
+        settings.hom_minor_rate = ((double *)duckdb_vector_get_data(
+            in[CERTIFY_IN_HOM_MINOR_RATE]))[row];
+        settings.hom_tail_alpha = ((double *)duckdb_vector_get_data(
+            in[CERTIFY_IN_HOM_TAIL_ALPHA]))[row];
+        settings.max_sites = (size_t)max_sites;
+        settings.max_threshold_work = ((uint64_t *)duckdb_vector_get_data(
+            in[CERTIFY_IN_MAX_THRESHOLD_WORK]))[row];
+        work.used = 0u;
+        work.limit = settings.max_threshold_work;
+        status = duckhts_somalier_certify_thresholds(
+            depths.length == 0u ? NULL : input_depths + depths.offset,
+            (size_t)depths.length, &settings, &work,
+            depths.length == 0u ? NULL : certified + output_count);
+        if (status != DUCKHTS_SOMALIER_OK) {
+            duckdb_free(certified);
+            certify_set_status_error(info, status);
+            return;
+        }
+        for (idx_t i = 0u; i < depths.length; i++) {
+            if (certified[output_count + i].depth > UINT32_MAX ||
+                certified[output_count + i].max_minor > UINT32_MAX) {
+                duckdb_free(certified);
+                duckdb_scalar_function_set_error(info,
+                    "duckhts_somalier_certify_thresholds: certified output exceeds UINTEGER");
+                return;
+            }
+        }
+        output_count += depths.length;
+    }
+
+    if ((output_count > 0u &&
+         (duckdb_list_vector_reserve(output, output_count) != DuckDBSuccess ||
+          duckdb_list_vector_set_size(output, output_count) != DuckDBSuccess)) ||
+        (output_count == 0u &&
+         duckdb_list_vector_set_size(output, 0u) != DuckDBSuccess)) {
+        duckdb_free(certified);
+        duckdb_scalar_function_set_error(info,
+            "duckhts_somalier_certify_thresholds: could not reserve checked output");
+        return;
+    }
+    output_lists = duckdb_vector_get_data(output);
+    output_records = duckdb_list_vector_get_child(output);
+    output_depth = duckdb_struct_vector_get_child(
+        output_records, CERTIFY_OUT_DEPTH);
+    output_max_minor = duckdb_struct_vector_get_child(
+        output_records, CERTIFY_OUT_MAX_MINOR);
+    output_depths = duckdb_vector_get_data(output_depth);
+    output_max_minors = duckdb_vector_get_data(output_max_minor);
+    output_count = 0u;
+    for (idx_t row = 0u; row < rows; row++) {
+        duckdb_list_entry depths = input_lists[row];
+        output_lists[row] = (duckdb_list_entry){output_count, depths.length};
+        for (idx_t i = 0u; i < depths.length; i++) {
+            output_depths[output_count + i] =
+                (uint32_t)certified[output_count + i].depth;
+            output_max_minors[output_count + i] =
+                (uint32_t)certified[output_count + i].max_minor;
+        }
+        output_count += depths.length;
+    }
+    duckdb_free(certified);
 }
 
 static bool lowercase_sha256(duckdb_string_t *value) {
@@ -218,6 +448,7 @@ static bool filter_same(const duckhts_somalier_contamination_settings_t *left,
                         const duckhts_somalier_contamination_settings_t *right) {
     return left->min_depth == right->min_depth &&
         left->max_depth == right->max_depth && left->max_sites == right->max_sites &&
+        left->max_threshold_work == right->max_threshold_work &&
         left->hom_minor_rate == right->hom_minor_rate &&
         left->hom_tail_alpha == right->hom_tail_alpha;
 }
@@ -366,7 +597,8 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
                          duckdb_aggregate_state *states) {
     duckdb_vector vector[CH_IN_COUNT];
     duckdb_string_t *sample, *assembly, *panel, *frequency;
-    uint64_t *site_index, *site_count, *min_depth, *max_depth, *max_sites;
+    uint64_t *site_index, *site_count, *min_depth, *max_depth;
+    uint64_t *max_threshold_work, *max_sites;
     double *population_b_af, *hom_minor_rate, *hom_tail_alpha;
     idx_t rows = duckdb_data_chunk_get_size(input);
 
@@ -389,11 +621,15 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
     max_depth = duckdb_vector_get_data(vector[CH_IN_MAX_DEPTH]);
     hom_minor_rate = duckdb_vector_get_data(vector[CH_IN_HOM_MINOR_RATE]);
     hom_tail_alpha = duckdb_vector_get_data(vector[CH_IN_HOM_TAIL_ALPHA]);
+    max_threshold_work = duckdb_vector_get_data(
+        vector[CH_IN_MAX_THRESHOLD_WORK]);
     max_sites = duckdb_vector_get_data(vector[CH_IN_MAX_SITES]);
 
     for (idx_t row = 0u; row < rows; row++) {
         contamination_state_t *state = (contamination_state_t *)states[row];
         duckhts_somalier_contamination_settings_t settings;
+        duckhts_somalier_certified_threshold_t threshold;
+        const duckhts_somalier_certified_threshold_t *threshold_ptr = NULL;
         duckhts_somalier_counts_t counts;
         duckhts_somalier_status_t status;
         bool counts_available;
@@ -405,7 +641,7 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
             return;
         }
         for (unsigned i = 0u; i < CH_IN_COUNT; i++) {
-            if (i >= CH_IN_A && i <= CH_IN_OTHER) continue;
+            if (i >= CH_IN_A && i <= CH_IN_CERTIFIED_MAX_MINOR) continue;
             if (!row_valid(vector[i], row)) {
                 duckdb_aggregate_function_set_error(info,
                     "duckhts_somalier_charr: identity, ordinal, frequency, and settings cannot be NULL");
@@ -425,19 +661,52 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
                 "duckhts_somalier_charr: counts must be all measured or all unavailable and fit UINT32");
             return;
         }
+        {
+            bool have_depth = row_valid(vector[CH_IN_CERTIFIED_DEPTH], row);
+            bool have_max_minor = row_valid(
+                vector[CH_IN_CERTIFIED_MAX_MINOR], row);
+            if (have_depth != have_max_minor ||
+                (counts_available && !have_depth) ||
+                (!counts_available && have_depth)) {
+                duckdb_aggregate_function_set_error(info,
+                    "duckhts_somalier_charr: measured counts require one prepared threshold and unavailable counts require none");
+                return;
+            }
+            if (have_depth) {
+                uint64_t measured_depth = (uint64_t)counts.allele_a +
+                    (uint64_t)counts.allele_b;
+                threshold.depth = ((uint64_t *)duckdb_vector_get_data(
+                    vector[CH_IN_CERTIFIED_DEPTH]))[row];
+                threshold.max_minor = ((uint64_t *)duckdb_vector_get_data(
+                    vector[CH_IN_CERTIFIED_MAX_MINOR]))[row];
+                if (counts_available && threshold.depth != measured_depth) {
+                    duckdb_aggregate_function_set_error(info,
+                        "duckhts_somalier_charr: prepared threshold does not match measured depth");
+                    return;
+                }
+                threshold_ptr = &threshold;
+            }
+        }
         if (max_sites[row] == 0u || max_sites[row] > CONTAM_SQL_MAX_SITES ||
             max_sites[row] > SIZE_MAX ||
-            max_depth[row] > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH) {
+            max_depth[row] > DUCKHTS_SOMALIER_MAX_BINOMIAL_DEPTH ||
+            max_threshold_work[row] == 0u ||
+            max_threshold_work[row] > DUCKHTS_SOMALIER_MAX_THRESHOLD_WORK) {
             duckdb_aggregate_function_set_error(info,
-                "duckhts_somalier_charr: max_sites must be 1..100000000 and max_depth no larger than 1000000");
+                "duckhts_somalier_charr: max_sites, max_depth, or max_threshold_work exceeds its limit");
             return;
         }
         duckhts_somalier_charr_settings_default(&settings);
         settings.min_depth = min_depth[row];
         settings.max_depth = max_depth[row];
         settings.max_sites = (size_t)max_sites[row];
+        settings.max_threshold_work = max_threshold_work[row];
         settings.hom_minor_rate = hom_minor_rate[row];
         settings.hom_tail_alpha = hom_tail_alpha[row];
+        if (threshold_ptr != NULL) {
+            threshold.hom_minor_rate = settings.hom_minor_rate;
+            threshold.hom_tail_alpha = settings.hom_tail_alpha;
+        }
         if (!isfinite(population_b_af[row]) || population_b_af[row] < 0.0 ||
             population_b_af[row] > 1.0) {
             duckdb_aggregate_function_set_error(info,
@@ -471,8 +740,9 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
                 "duckhts_somalier_charr: duplicate or out-of-range site_index");
             return;
         }
-        status = duckhts_somalier_charr_observe(&state->charr, &counts,
-            population_b_af[row], &settings);
+        status = duckhts_somalier_charr_observe_certified(
+            &state->charr, &counts, population_b_af[row], &settings,
+            threshold_ptr);
         if (status != DUCKHTS_SOMALIER_OK) {
             duckdb_aggregate_function_set_error(info,
                 status == DUCKHTS_SOMALIER_LIMIT_EXCEEDED
@@ -586,6 +856,8 @@ static void charr_finalize(duckdb_function_info info,
         write_u64(field[CH_OUT_MAX_DEPTH], row, state->filter.max_depth);
         write_double(field[CH_OUT_HOM_MINOR_RATE], row, state->filter.hom_minor_rate);
         write_double(field[CH_OUT_HOM_TAIL_ALPHA], row, state->filter.hom_tail_alpha);
+        write_u64(field[CH_OUT_MAX_THRESHOLD_WORK], row,
+                  state->filter.max_threshold_work);
         write_u64(field[CH_OUT_MAX_SITES], row, state->filter.max_sites);
     }
 }
@@ -610,19 +882,57 @@ static duckdb_aggregate_function create_charr_aggregate(
     return function;
 }
 
+static duckdb_logical_type certify_result_type(void) {
+    duckdb_logical_type fields[CERTIFY_OUT_COUNT];
+    duckdb_logical_type record;
+    duckdb_logical_type result;
+    for (unsigned i = 0u; i < CERTIFY_OUT_COUNT; i++) {
+        fields[i] = duckdb_create_logical_type(DUCKDB_TYPE_UINTEGER);
+    }
+    record = duckdb_create_struct_type(fields, certify_output_names,
+                                       CERTIFY_OUT_COUNT);
+    result = duckdb_create_list_type(record);
+    duckdb_destroy_logical_type(&record);
+    for (unsigned i = 0u; i < CERTIFY_OUT_COUNT; i++) {
+        duckdb_destroy_logical_type(&fields[i]);
+    }
+    return result;
+}
+
 void register_duckhts_somalier_contamination_functions(
     duckdb_connection connection) {
     duckdb_logical_type varchar = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
     duckdb_logical_type bigint = duckdb_create_logical_type(DUCKDB_TYPE_UBIGINT);
     duckdb_logical_type real = duckdb_create_logical_type(DUCKDB_TYPE_DOUBLE);
+    duckdb_logical_type depths = duckdb_create_list_type(bigint);
+    duckdb_logical_type certified = certify_result_type();
     duckdb_logical_type result = charr_result_type();
     duckdb_aggregate_function charr = create_charr_aggregate(
         varchar, bigint, real, result);
 
     if (charr != NULL) duckdb_register_aggregate_function(connection, charr);
     duckdb_destroy_aggregate_function(&charr);
+    duckdb_scalar_function certify = duckdb_create_scalar_function();
+    if (certify != NULL) {
+        duckdb_scalar_function_set_name(certify,
+            "__duckhts_somalier_certify_thresholds");
+        for (unsigned i = 0u; i < CERTIFY_IN_COUNT; i++) {
+            duckdb_logical_type type = i == CERTIFY_IN_DEPTHS ? depths :
+                i == CERTIFY_IN_HOM_MINOR_RATE || i == CERTIFY_IN_HOM_TAIL_ALPHA
+                    ? real : bigint;
+            duckdb_scalar_function_add_parameter(certify, type);
+        }
+        duckdb_scalar_function_set_return_type(certify, certified);
+        duckdb_scalar_function_set_special_handling(certify);
+        duckdb_scalar_function_set_function(certify,
+                                           certify_thresholds_scalar);
+        duckdb_register_scalar_function(connection, certify);
+    }
+    duckdb_destroy_scalar_function(&certify);
     duckdb_destroy_logical_type(&varchar);
     duckdb_destroy_logical_type(&bigint);
     duckdb_destroy_logical_type(&real);
+    duckdb_destroy_logical_type(&depths);
+    duckdb_destroy_logical_type(&certified);
     duckdb_destroy_logical_type(&result);
 }

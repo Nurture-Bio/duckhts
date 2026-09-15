@@ -127,6 +127,45 @@ SELECT duckhts_somalier_panel_sha256('somalier_duplicate_position');
 ----
 duplicate physical region and position
 
+# Panel strings are byte-bounded before their encoded and hex-expanded hash
+# inputs are materialized. Multi-byte values distinguish the byte contract
+# from a character-count limit, and these calls exercise the standalone hash.
+statement ok
+CREATE TEMP VIEW somalier_panel_assembly_limit AS
+SELECT * REPLACE(repeat('é', 512) AS assembly) FROM somalier_panel_base;
+
+query I
+SELECT length(duckhts_somalier_panel_sha256('somalier_panel_assembly_limit'));
+----
+64
+
+statement ok
+CREATE TEMP VIEW somalier_panel_assembly_over_limit AS
+SELECT * REPLACE(repeat('é', 512) || 'a' AS assembly) FROM somalier_panel_base;
+
+statement error
+SELECT duckhts_somalier_panel_sha256('somalier_panel_assembly_over_limit');
+----
+panel assembly and region must be at most 1024 bytes
+
+statement ok
+CREATE TEMP VIEW somalier_panel_region_limit AS
+SELECT * REPLACE(repeat('é', 512) AS region) FROM somalier_panel_base;
+
+query I
+SELECT length(duckhts_somalier_panel_sha256('somalier_panel_region_limit'));
+----
+64
+
+statement ok
+CREATE TEMP VIEW somalier_panel_region_over_limit AS
+SELECT * REPLACE(repeat('é', 512) || 'a' AS region) FROM somalier_panel_base;
+
+statement error
+SELECT duckhts_somalier_panel_sha256('somalier_panel_region_over_limit');
+----
+panel assembly and region must be at most 1024 bytes
+
 statement ok
 CREATE TEMP TABLE somalier_evidence (
   sample_id VARCHAR, assembly VARCHAR, site_index UBIGINT,

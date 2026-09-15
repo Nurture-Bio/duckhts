@@ -27,6 +27,7 @@ rduckhts_somalier_matched_contamination(
   grid_step = 0.01,
   refine_tolerance = 1e-10,
   max_evaluations = 4096,
+  max_threshold_work = 1.6e+07,
   max_sites = 1e+06,
   overwrite = FALSE
 )
@@ -39,7 +40,8 @@ rduckhts_somalier_matched_contamination(
 \item{evidence_parquet}{Path to an evidence Parquet file, instead of
 `evidence_table`.}
 
-\item{panel_table}{Name of the required ordered panel table or view.}
+\item{panel_table}{Name of the required ordered panel table or view. Panel
+assembly and region values are each limited to 1,024 bytes.}
 
 \item{panel_parquet}{Path to the required ordered panel Parquet file, instead
 of `panel_table`.}
@@ -81,6 +83,10 @@ eligibility.}
 \item{refine_tolerance}{Positive local-refinement tolerance.}
 
 \item{max_evaluations}{Positive bound on likelihood evaluations.}
+
+\item{max_threshold_work}{Positive cumulative limit on exact binomial
+certification steps, at most 100,000,000. Distinct observed depths are
+certified once per call and shared across samples.}
 
 \item{max_sites}{Positive per-sample panel capacity, at most 100,000,000.}
 

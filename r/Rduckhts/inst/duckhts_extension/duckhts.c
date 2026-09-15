@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "duckhts_somalier.h"
 #include "duckhts_simd.h"
 #include "wasm_http_hfile.h"
 
@@ -304,14 +305,27 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "duckhts_duckdb_type_supported('GEOMETRY'))")) {
         return false;
     }
-    if (!run_sql_or_fail(connection,
+    {
+        char max_identity_bytes[16];
+        static const char somalier_panel_sha256_sql_a[] =
         "CREATE OR REPLACE MACRO duckhts_somalier_panel_sha256(panel_table) AS ("
         "WITH __dht_panel_rows AS MATERIALIZED ("
         "SELECT CAST(assembly AS VARCHAR) AS assembly, "
         "CAST(site_index AS UBIGINT) AS site_index, CAST(region AS VARCHAR) AS region, "
         "CAST(position AS UBIGINT) AS position, CAST(allele_a AS VARCHAR) AS allele_a, "
         "CAST(allele_b AS VARCHAR) AS allele_b FROM query_table(panel_table)"
-        "), __dht_validation AS (SELECT CASE "
+        "), __dht_string_validation AS MATERIALIZED (SELECT CASE "
+        "WHEN count(*) FILTER (WHERE strlen(assembly) > ";
+        static const char somalier_panel_sha256_sql_b[] =
+        " OR strlen(region) > ";
+        static const char somalier_panel_sha256_sql_c[] =
+        ") != 0 THEN error('duckhts_somalier_panel_sha256: panel assembly and region "
+        "must be at most ";
+        static const char somalier_panel_sha256_sql_d[] =
+        " bytes') ELSE true END AS valid FROM __dht_panel_rows), "
+        "__dht_bounded_panel_rows AS MATERIALIZED (SELECT p.* FROM __dht_panel_rows p "
+        "CROSS JOIN __dht_string_validation sv WHERE sv.valid), "
+        "__dht_validation AS MATERIALIZED (SELECT CASE "
         "WHEN count(*) = 0 THEN error('duckhts_somalier_panel_sha256: panel is empty') "
         "WHEN count(*) FILTER (WHERE assembly IS NULL OR site_index IS NULL "
         "OR region IS NULL OR position IS NULL "
@@ -335,22 +349,37 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "WHEN count(DISTINCT struct_pack(region := region, pos1 := position)) "
         "!= count(*) THEN "
         "error('duckhts_somalier_panel_sha256: duplicate physical region and position') "
-        "ELSE true END AS valid FROM __dht_panel_rows"
-        "), __dht_row_hashes AS MATERIALIZED (SELECT site_index, sha256(site_index::VARCHAR || ':' || "
-        "hex(encode(region)) || ':' || position::VARCHAR || ':' || hex(encode(allele_a)) || ':' || "
-        "hex(encode(allele_b))) AS row_hash FROM __dht_panel_rows), "
+        "ELSE true END AS valid FROM __dht_bounded_panel_rows), "
+        "__dht_validated_panel_rows AS MATERIALIZED (SELECT p.* "
+        "FROM __dht_bounded_panel_rows p CROSS JOIN __dht_validation v WHERE v.valid), "
+        "__dht_row_hashes AS MATERIALIZED (SELECT site_index, "
+        "sha256(site_index::VARCHAR || ':' || hex(encode(region)) || ':' || "
+        "position::VARCHAR || ':' || hex(encode(allele_a)) || ':' || "
+        "hex(encode(allele_b))) AS row_hash FROM __dht_validated_panel_rows), "
         "__dht_block_hashes AS MATERIALIZED (SELECT site_index // 4096 AS block_index, "
         "sha256(string_agg(row_hash, '' ORDER BY site_index)) AS block_hash "
         "FROM __dht_row_hashes GROUP BY block_index), "
-        "__dht_panel_summary AS MATERIALIZED (SELECT min(assembly) AS assembly, count(*) AS site_count "
-        "FROM __dht_panel_rows) "
+        "__dht_panel_summary AS MATERIALIZED (SELECT min(assembly) AS assembly, "
+        "count(*) AS site_count FROM __dht_validated_panel_rows) "
         "SELECT sha256('duckhts-somalier-panel-v2;autosomal-diploid-biallelic-snp;' || "
-        "hex(encode(ps.assembly)) || ';' || "
-        "ps.site_count::VARCHAR || ';' || string_agg(b.block_hash, '' ORDER BY b.block_index)) "
+        "hex(encode(ps.assembly)) || ';' || ps.site_count::VARCHAR || ';' || "
+        "string_agg(b.block_hash, '' ORDER BY b.block_index)) "
         "FROM __dht_block_hashes b CROSS JOIN __dht_panel_summary ps "
-        "CROSS JOIN __dht_validation v "
-        "WHERE v.valid GROUP BY ps.assembly, ps.site_count)")) {
-        return false;
+        "GROUP BY ps.assembly, ps.site_count)";
+        const char *const somalier_panel_sha256_sql[] = {
+            somalier_panel_sha256_sql_a, max_identity_bytes,
+            somalier_panel_sha256_sql_b, max_identity_bytes,
+            somalier_panel_sha256_sql_c, max_identity_bytes,
+            somalier_panel_sha256_sql_d
+        };
+
+        snprintf(max_identity_bytes, sizeof(max_identity_bytes), "%u",
+                 (unsigned int)DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES);
+        if (!run_sql_parts_or_fail(connection, somalier_panel_sha256_sql,
+                sizeof(somalier_panel_sha256_sql) /
+                    sizeof(somalier_panel_sha256_sql[0]))) {
+            return false;
+        }
     }
     if (!run_sql_or_fail(connection,
         "CREATE OR REPLACE MACRO duckhts_somalier_prepare_sketches("
@@ -486,11 +515,12 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "GROUP BY pi.panel_sha256)")) {
         return false;
     }
-    if (!run_sql_or_fail(connection,
+    {
+        static const char charr_sql_a[] =
         "CREATE OR REPLACE MACRO duckhts_somalier_charr("
         "evidence_table, panel_table, frequency_table, min_depth := 15, "
         "max_depth := 1000000, hom_minor_rate := 0.12, hom_tail_alpha := 0.002, "
-        "max_sites := 1000000) AS TABLE "
+        "max_threshold_work := 16000000, max_sites := 1000000) AS TABLE "
         "WITH __dht_panel AS MATERIALIZED (SELECT CAST(assembly AS VARCHAR) AS assembly, "
         "CAST(site_index AS UBIGINT) AS site_index, CAST(region AS VARCHAR) AS region, "
         "CAST(position AS UBIGINT) AS position, CAST(allele_a AS VARCHAR) AS allele_a, "
@@ -508,13 +538,50 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "p.allele_a AS panel_allele_a, p.allele_b AS panel_allele_b, f.population_b_af "
         "FROM __dht_evidence e LEFT JOIN __dht_panel p USING (site_index) "
         "LEFT JOIN __dht_frequency f ON f.site_index = p.site_index), "
+        ;
+        static const char charr_sql_b[] =
         "__dht_evidence_count AS MATERIALIZED (SELECT CASE WHEN count(*) = 0 THEN "
         "error('duckhts_somalier_charr: evidence is empty') "
         "ELSE true END AS valid FROM __dht_evidence), "
+        "__dht_count_validation AS MATERIALIZED (SELECT CASE "
+        "WHEN count(*) FILTER (WHERE (a IS NULL) != (b IS NULL) "
+        "OR (a IS NULL) != (other IS NULL)) != 0 THEN "
+        "error('duckhts_somalier_charr: counts must be all measured or all unavailable') "
+        "WHEN count(*) FILTER (WHERE a > 4294967295 OR b > 4294967295 "
+        "OR other > 4294967295) != 0 THEN "
+        "error('duckhts_somalier_charr: measured counts must fit UINTEGER') "
+        "WHEN count(*) FILTER (WHERE a IS NOT NULL AND "
+        "CAST(a AS UHUGEINT) + CAST(b AS UHUGEINT) > "
+        "CAST(max_depth AS UHUGEINT)) != 0 THEN "
+        "error('duckhts_somalier_charr: a sample A+B depth exceeds max_depth') "
+        "ELSE true END AS valid FROM __dht_checked), "
+        "__dht_panel_limit AS MATERIALIZED (SELECT CASE WHEN "
+        "CAST(max_sites AS UBIGINT) = 0 OR CAST(max_sites AS UBIGINT) > 100000000 "
+        "THEN error('duckhts_somalier_charr: max_sites must be 1..100000000') "
+        "WHEN count(*) > "
+        "CAST(max_sites AS UBIGINT) THEN error('duckhts_somalier_charr: panel "
+        "exceeds max_sites') ELSE count(*)::UBIGINT END AS site_count "
+        "FROM __dht_panel), "
+        "__dht_depth_list AS MATERIALIZED (SELECT coalesce(list(depth ORDER BY depth), "
+        "[]::UBIGINT[]) AS depths FROM (SELECT DISTINCT CASE WHEN "
+        "a <= 4294967295 AND b <= 4294967295 THEN a + b END AS depth "
+        "FROM __dht_checked CROSS JOIN __dht_count_validation WHERE valid "
+        "AND a IS NOT NULL AND a <= 4294967295 AND b <= 4294967295)), "
+        "__dht_threshold_list AS MATERIALIZED (SELECT "
+        "__duckhts_somalier_certify_thresholds(depths, CAST(min_depth AS UBIGINT), "
+        "CAST(max_depth AS UBIGINT), CAST(hom_minor_rate AS DOUBLE), "
+        "CAST(hom_tail_alpha AS DOUBLE), CAST(max_sites AS UBIGINT), "
+        "CAST(max_threshold_work AS UBIGINT)) AS thresholds FROM __dht_depth_list "
+        "CROSS JOIN __dht_panel_limit), "
+        "__dht_thresholds AS MATERIALIZED (SELECT threshold.depth::UBIGINT AS depth, "
+        "threshold.max_minor::UBIGINT AS max_minor FROM __dht_threshold_list, "
+        "unnest(thresholds) AS u(threshold)), "
+        ;
+        static const char charr_sql_c[] =
         "__dht_identities AS MATERIALIZED (SELECT "
         "duckhts_somalier_panel_sha256(panel_table) AS panel_sha256, "
         "duckhts_somalier_frequency_sha256(frequency_table, panel_table) AS frequency_sha256, "
-        "(SELECT count(*)::UBIGINT FROM __dht_panel) AS site_count) "
+        "site_count FROM __dht_panel_limit) "
         "SELECT __duckhts_somalier_charr(c.sample_id, c.assembly, i.panel_sha256, "
         "i.frequency_sha256, CASE WHEN c.sample_id IS NULL OR c.sample_id = '' "
         "OR c.assembly IS NULL OR c.region IS NULL OR c.position IS NULL "
@@ -525,15 +592,23 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "OR c.allele_a != c.panel_allele_a OR c.allele_b != c.panel_allele_b "
         "OR c.population_b_af IS NULL THEN error('duckhts_somalier_charr: evidence or "
         "frequency relation does not match the ordered panel') "
-        "WHEN (c.a IS NULL) != (c.b IS NULL) OR (c.a IS NULL) != (c.other IS NULL) "
-        "THEN error('duckhts_somalier_charr: counts must be all measured or all unavailable') "
         "ELSE c.site_index END, i.site_count, c.a, c.b, c.other, "
+        "t.depth, t.max_minor, "
         "c.population_b_af, CAST(min_depth AS UBIGINT), CAST(max_depth AS UBIGINT), "
         "CAST(hom_minor_rate AS DOUBLE), CAST(hom_tail_alpha AS DOUBLE), "
-        "CAST(max_sites AS UBIGINT)) AS contamination FROM __dht_checked c "
+        "CAST(max_threshold_work AS UBIGINT), CAST(max_sites AS UBIGINT)) "
+        "AS contamination FROM __dht_checked c LEFT JOIN __dht_thresholds t "
+        "ON t.depth = CASE WHEN c.a <= 4294967295 AND c.b <= 4294967295 "
+        "THEN c.a + c.b END "
         "CROSS JOIN __dht_evidence_count ec CROSS JOIN __dht_identities i WHERE ec.valid "
-        "GROUP BY c.sample_id, i.panel_sha256, i.frequency_sha256, i.site_count")) {
-        return false;
+        "GROUP BY c.sample_id, i.panel_sha256, i.frequency_sha256, i.site_count";
+        static const char *const charr_sql[] = {
+            charr_sql_a, charr_sql_b, charr_sql_c
+        };
+        if (!run_sql_parts_or_fail(connection, charr_sql,
+                sizeof(charr_sql) / sizeof(charr_sql[0]))) {
+            return false;
+        }
     }
     {
         static const char matched_sql_a[] =
@@ -543,7 +618,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "error_rate := 0.002, min_probability := 1e-10, "
         "min_prior_frequency := 1e-6, alpha_min := 0.0, alpha_max := 1.0, "
         "grid_step := 0.01, refine_tolerance := 1e-10, max_evaluations := 4096, "
-        "max_sites := 1000000) AS TABLE "
+        "max_threshold_work := 16000000, max_sites := 1000000) AS TABLE "
         "WITH __dht_panel AS MATERIALIZED (SELECT CAST(assembly AS VARCHAR) AS assembly, "
         "CAST(site_index AS UBIGINT) AS site_index, CAST(region AS VARCHAR) AS region, "
         "CAST(position AS UBIGINT) AS position, CAST(allele_a AS VARCHAR) AS allele_a, "
@@ -568,7 +643,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "CAST(min_prior_frequency AS DOUBLE), CAST(alpha_min AS DOUBLE), "
         "CAST(alpha_max AS DOUBLE), CAST(grid_step AS DOUBLE), "
         "CAST(refine_tolerance AS DOUBLE), CAST(max_evaluations AS UBIGINT), "
-        "CAST(max_sites AS UBIGINT)) AS valid), "
+        "CAST(max_threshold_work AS UBIGINT), CAST(max_sites AS UBIGINT)) AS valid), "
         "__dht_panel_limit AS MATERIALIZED (SELECT count(*)::UBIGINT AS site_count, "
         "count(*) <= CAST(max_sites AS UBIGINT) AS valid FROM __dht_panel), "
         "__dht_pair_validation AS MATERIALIZED (SELECT CASE "
@@ -606,11 +681,46 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "FROM __dht_checked c CROSS JOIN __dht_panel_limit pl WHERE pl.valid "
         "GROUP BY c.sample_id, pl.site_count), ";
         static const char matched_sql_c[] =
+        "__dht_count_validation AS MATERIALIZED (SELECT CASE "
+        "WHEN count(*) FILTER (WHERE (c.a IS NULL) != (c.b IS NULL) "
+        "OR (c.a IS NULL) != (c.other IS NULL)) != 0 THEN "
+        "error('duckhts_somalier_matched_contamination: counts must be all measured "
+        "or all unavailable') WHEN count(*) FILTER (WHERE c.a > 4294967295 "
+        "OR c.b > 4294967295 OR c.other > 4294967295) != 0 THEN "
+        "error('duckhts_somalier_matched_contamination: measured counts must fit UINTEGER') "
+        "WHEN count(*) FILTER (WHERE c.a IS NOT NULL AND "
+        "CAST(c.a AS UHUGEINT) + CAST(c.b AS UHUGEINT) > "
+        "CAST(max_depth AS UHUGEINT)) != 0 THEN "
+        "error('duckhts_somalier_matched_contamination: a sample A+B depth "
+        "exceeds max_depth') "
+        "ELSE true END AS valid FROM __dht_checked c "
+        "JOIN __dht_evidence_validation v USING (sample_id) WHERE v.valid), "
+        "__dht_depth_list AS MATERIALIZED (SELECT coalesce(list(depth ORDER BY depth), "
+        "[]::UBIGINT[]) AS depths FROM (SELECT DISTINCT CASE WHEN "
+        "c.a <= 4294967295 AND c.b <= 4294967295 THEN c.a + c.b END AS depth "
+        "FROM __dht_checked c JOIN __dht_evidence_validation v USING (sample_id) "
+        "CROSS JOIN __dht_count_validation cv WHERE v.valid AND cv.valid "
+        "AND c.a IS NOT NULL AND c.a <= 4294967295 AND c.b <= 4294967295)), "
+        "__dht_threshold_list AS MATERIALIZED (SELECT "
+        "__duckhts_somalier_certify_thresholds(depths, CAST(min_depth AS UBIGINT), "
+        "CAST(max_depth AS UBIGINT), CAST(hom_minor_rate AS DOUBLE), "
+        "CAST(hom_tail_alpha AS DOUBLE), CAST(max_sites AS UBIGINT), "
+        "CAST(max_threshold_work AS UBIGINT)) AS thresholds FROM __dht_depth_list "
+        "CROSS JOIN __dht_panel_limit WHERE valid), "
+        "__dht_thresholds AS MATERIALIZED (SELECT threshold.depth::UBIGINT AS depth, "
+        "threshold.max_minor::UBIGINT AS max_minor FROM __dht_threshold_list, "
+        "unnest(thresholds) AS u(threshold)), "
+        ;
+        static const char matched_sql_d[] =
         "__dht_classified AS NOT MATERIALIZED (SELECT c.*, "
         "__duckhts_somalier_contamination_filter(c.a, c.b, c.other, "
+        "t.depth, t.max_minor, "
         "CAST(min_depth AS UBIGINT), CAST(max_depth AS UBIGINT), "
-        "CAST(hom_minor_rate AS DOUBLE), CAST(hom_tail_alpha AS DOUBLE)) AS filter "
+        "CAST(hom_minor_rate AS DOUBLE), CAST(hom_tail_alpha AS DOUBLE), "
+        "CAST(max_threshold_work AS UBIGINT), CAST(max_sites AS UBIGINT)) AS filter "
         "FROM __dht_checked c JOIN __dht_evidence_validation v USING (sample_id) "
+        "LEFT JOIN __dht_thresholds t ON t.depth = CASE WHEN "
+        "c.a <= 4294967295 AND c.b <= 4294967295 THEN c.a + c.b END "
         "WHERE v.valid), __dht_identities AS MATERIALIZED (SELECT "
         "duckhts_somalier_panel_sha256(panel_table) AS panel_sha256, "
         "duckhts_somalier_frequency_sha256(frequency_table, panel_table) "
@@ -622,6 +732,8 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "min_depth := CAST(min_depth AS UBIGINT), max_depth := CAST(max_depth AS UBIGINT), "
         "hom_minor_rate := CAST(hom_minor_rate AS DOUBLE), "
         "hom_tail_alpha := CAST(hom_tail_alpha AS DOUBLE), "
+        "max_threshold_work := CAST(max_threshold_work AS UBIGINT), "
+        "max_sites := CAST(max_sites AS UBIGINT), "
         "receiver_a := list(CAST(coalesce(c.a, 0) AS UINTEGER) "
         "ORDER BY c.checked_site_index), receiver_b := "
         "list(CAST(coalesce(c.b, 0) AS UINTEGER) ORDER BY c.checked_site_index), "
@@ -639,7 +751,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "r.profile AS receiver_profile, a.profile AS anchor_profile FROM __dht_pairs q "
         "LEFT JOIN __dht_profiles r ON r.profile.sample_id = q.receiver_id "
         "LEFT JOIN __dht_profiles a ON a.profile.sample_id = q.anchor_id) ";
-        static const char matched_sql_d[] =
+        static const char matched_sql_e[] =
         "SELECT CASE WHEN j.receiver_profile IS NULL OR j.anchor_profile IS NULL THEN "
         "error('duckhts_somalier_matched_contamination: each ordered pair requires complete "
         "evidence for both samples') ELSE __duckhts_somalier_matched_profiles("
@@ -647,7 +759,8 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "CAST(min_probability AS DOUBLE), CAST(min_prior_frequency AS DOUBLE), "
         "CAST(alpha_min AS DOUBLE), CAST(alpha_max AS DOUBLE), CAST(grid_step AS DOUBLE), "
         "CAST(refine_tolerance AS DOUBLE), CAST(max_evaluations AS UBIGINT), "
-        "CAST(max_sites AS UBIGINT)) END AS contamination FROM __dht_joined j "
+        "CAST(max_threshold_work AS UBIGINT), CAST(max_sites AS UBIGINT)) "
+        "END AS contamination FROM __dht_joined j "
         "CROSS JOIN __dht_pair_validation pv CROSS JOIN __dht_frequency_profile fp "
         "CROSS JOIN __dht_settings s WHERE pv.valid AND s.valid "
         "UNION ALL SELECT error('duckhts_somalier_matched_contamination: invalid "
@@ -656,7 +769,8 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection,
         "UNION ALL SELECT error('duckhts_somalier_matched_contamination: panel "
         "exceeds max_sites') AS contamination FROM __dht_panel_limit WHERE NOT valid";
         static const char *const matched_sql[] = {
-            matched_sql_a, matched_sql_b, matched_sql_c, matched_sql_d
+            matched_sql_a, matched_sql_b, matched_sql_c, matched_sql_d,
+            matched_sql_e
         };
         if (!run_sql_parts_or_fail(connection, matched_sql,
                 sizeof(matched_sql) / sizeof(matched_sql[0]))) {
