@@ -20,7 +20,9 @@ the same extension release; publication remains pending.
 - Add distinct per-sample CHARR and directional matched-anchor contamination
   methods over measured A/B/other counts and panel-aligned population frequency.
   Both retain usable-site denominators, filter/search settings and numerical
-  status; no usable evidence is not reported as zero contamination.
+  status; no usable evidence is not reported as zero contamination. CHARR uses
+  an exact fixed-size scaled accumulator so parallel reduction order does not
+  change its estimate or persisted result.
 - Preserve the pinned Somalier v0.3.4 numerical counterexamples: stable
   high-depth CHARR tail evaluation and a full-grid matched search can differ
   from upstream's underflow-prone threshold and fixed search sequence. The

@@ -21,7 +21,8 @@ below describe implemented package behavior, not a completed release submission.
   aligned population-B allele frequencies. They retain numerical status and
   usable-site denominators, and reject changed panel/evidence identity. The
   matched method preserves receiver/anchor direction and evaluates only
-  requested ordered pairs without a pair-sized native workspace.
+  requested ordered pairs without a pair-sized native workspace. CHARR results
+  are stable across parallel aggregate reduction order.
 - The bundled estimators use stable high-depth CHARR tail evaluation and a
   full-grid matched search. Their documented numerical counterexamples can
   differ from Somalier v0.3.4 output; they are not bitwise CLI replicas.

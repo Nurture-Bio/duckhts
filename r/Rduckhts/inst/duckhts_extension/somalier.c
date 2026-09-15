@@ -856,16 +856,22 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     double contaminant_frequency;
     double infiltrating;
     double contribution;
-    double new_sum;
 
-    if (accumulator == NULL || !isfinite(accumulator->contribution_sum) ||
-        !isfinite(population_b_frequency) || population_b_frequency < 0.0 ||
+    if (accumulator == NULL || !isfinite(population_b_frequency) ||
+        population_b_frequency < 0.0 ||
         population_b_frequency > 1.0) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
     status = duckhts_somalier_classify_contamination(counts, settings, &genotype);
     if (status != DUCKHTS_SOMALIER_OK) return status;
     if (genotype == DUCKHTS_SOMALIER_UNKNOWN) return DUCKHTS_SOMALIER_OK;
+    if (accumulator->usable_sites == UINT64_MAX ||
+        (genotype == DUCKHTS_SOMALIER_HOM_A &&
+         accumulator->usable_hom_a == UINT64_MAX) ||
+        (genotype == DUCKHTS_SOMALIER_HOM_B &&
+         accumulator->usable_hom_b == UINT64_MAX)) {
+        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    }
     depth = counts_depth(counts);
     contaminant_frequency = genotype == DUCKHTS_SOMALIER_HOM_A
         ? population_b_frequency : 1.0 - population_b_frequency;
@@ -875,28 +881,82 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     infiltrating = genotype == DUCKHTS_SOMALIER_HOM_A
         ? (double)counts->allele_b : (double)counts->allele_a;
     contribution = infiltrating / (contaminant_frequency * (double)depth);
-    new_sum = accumulator->contribution_sum + contribution;
-    if (!isfinite(new_sum)) return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
-    if (accumulator->usable_sites == UINT64_MAX ||
-        (genotype == DUCKHTS_SOMALIER_HOM_A &&
-         accumulator->usable_hom_a == UINT64_MAX) ||
-        (genotype == DUCKHTS_SOMALIER_HOM_B &&
-         accumulator->usable_hom_b == UINT64_MAX)) {
-        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    if (contribution > 0.0) {
+        double fraction;
+        uint64_t significand;
+        uint64_t low;
+        uint64_t high;
+        uint64_t combined_low;
+        uint64_t carry;
+        int exponent;
+        unsigned shift;
+
+        /* Accepted counts make each contribution a positive finite double in
+         * [1e-6, 1e6). Scaling by 2^72 therefore produces an exact integer;
+         * 1e8 accepted sites fit in 119 bits. Two limbs make aggregate
+         * combination independent of DuckDB's parallel reduction order. */
+        fraction = frexp(contribution, &exponent);
+        if (!isfinite(contribution) || exponent < -19 || exponent > 20) {
+            return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
+        }
+        significand = (uint64_t)ldexp(fraction, 53);
+        shift = (unsigned)(exponent + 19);
+        low = significand << shift;
+        high = shift == 0u ? 0u : significand >> (64u - shift);
+        combined_low = accumulator->contribution_scaled_low + low;
+        carry = combined_low < accumulator->contribution_scaled_low;
+        if (high > UINT64_MAX - carry ||
+            accumulator->contribution_scaled_high > UINT64_MAX - high - carry) {
+            return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+        }
+        accumulator->contribution_scaled_low = combined_low;
+        accumulator->contribution_scaled_high += high + carry;
     }
-    accumulator->contribution_sum = new_sum;
     accumulator->usable_sites++;
     if (genotype == DUCKHTS_SOMALIER_HOM_A) accumulator->usable_hom_a++;
     else accumulator->usable_hom_b++;
     return DUCKHTS_SOMALIER_OK;
 }
 
+duckhts_somalier_status_t duckhts_somalier_charr_combine(
+    duckhts_somalier_charr_accumulator_t *target,
+    const duckhts_somalier_charr_accumulator_t *source) {
+    uint64_t low;
+    uint64_t carry;
+    uint64_t high;
+    if (target == NULL || source == NULL) {
+        return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
+    }
+    if (source->usable_sites > UINT64_MAX - target->usable_sites ||
+        source->usable_hom_a > UINT64_MAX - target->usable_hom_a ||
+        source->usable_hom_b > UINT64_MAX - target->usable_hom_b) {
+        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    }
+    low = target->contribution_scaled_low + source->contribution_scaled_low;
+    carry = low < target->contribution_scaled_low;
+    if (source->contribution_scaled_high > UINT64_MAX - carry ||
+        target->contribution_scaled_high >
+            UINT64_MAX - source->contribution_scaled_high - carry) {
+        return DUCKHTS_SOMALIER_LIMIT_EXCEEDED;
+    }
+    high = target->contribution_scaled_high +
+        source->contribution_scaled_high + carry;
+    target->contribution_scaled_low = low;
+    target->contribution_scaled_high = high;
+    target->usable_sites += source->usable_sites;
+    target->usable_hom_a += source->usable_hom_a;
+    target->usable_hom_b += source->usable_hom_b;
+    return DUCKHTS_SOMALIER_OK;
+}
+
 duckhts_somalier_status_t duckhts_somalier_charr_finish(
     const duckhts_somalier_charr_accumulator_t *accumulator,
     duckhts_somalier_charr_result_t *result) {
+    double contribution_sum;
     if (result == NULL || accumulator == NULL ||
-        !isfinite(accumulator->contribution_sum) ||
-        accumulator->contribution_sum < 0.0 ||
+        (accumulator->usable_sites == 0u &&
+         (accumulator->contribution_scaled_low != 0u ||
+          accumulator->contribution_scaled_high != 0u)) ||
         accumulator->usable_hom_a > accumulator->usable_sites ||
         accumulator->usable_hom_b >
             accumulator->usable_sites - accumulator->usable_hom_a ||
@@ -904,6 +964,9 @@ duckhts_somalier_status_t duckhts_somalier_charr_finish(
             accumulator->usable_sites) {
         return DUCKHTS_SOMALIER_INVALID_ARGUMENT;
     }
+    contribution_sum = ldexp((double)accumulator->contribution_scaled_high, -8) +
+        ldexp((double)accumulator->contribution_scaled_low, -72);
+    if (!isfinite(contribution_sum)) return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
     memset(result, 0, sizeof(*result));
     result->estimate = NAN;
     if (accumulator->usable_sites == 0u) {
@@ -911,7 +974,7 @@ duckhts_somalier_status_t duckhts_somalier_charr_finish(
         return result->status;
     }
     result->status = DUCKHTS_SOMALIER_OK;
-    result->estimate = accumulator->contribution_sum / (double)accumulator->usable_sites;
+    result->estimate = contribution_sum / (double)accumulator->usable_sites;
     result->usable_sites = accumulator->usable_sites;
     result->usable_hom_a = accumulator->usable_hom_a;
     result->usable_hom_b = accumulator->usable_hom_b;

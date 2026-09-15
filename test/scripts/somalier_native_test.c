@@ -715,6 +715,71 @@ static void test_charr_orientation(void) {
     CHECK(a.usable_sites == b.usable_sites);
 }
 
+static void test_charr_reduction_order(void) {
+    enum { SITE_COUNT = 31 };
+    duckhts_somalier_contamination_settings_t settings;
+    duckhts_somalier_charr_accumulator_t forward = {0};
+    duckhts_somalier_charr_accumulator_t reverse = {0};
+    duckhts_somalier_charr_accumulator_t even = {0};
+    duckhts_somalier_charr_accumulator_t odd = {0};
+    duckhts_somalier_charr_accumulator_t combined_left;
+    duckhts_somalier_charr_accumulator_t combined_right;
+    duckhts_somalier_charr_result_t result[4];
+    unsigned i;
+
+    duckhts_somalier_charr_settings_default(&settings);
+    settings.min_depth = 7u;
+    for (i = 0u; i < SITE_COUNT; i++) {
+        duckhts_somalier_counts_t counts = {
+            199u - i % 3u, 1u + i % 3u, 0u, 1u
+        };
+        double frequency = (double)(10u + i) / 100.0;
+        CHECK(duckhts_somalier_charr_observe(&forward, &counts, frequency,
+              &settings) == DUCKHTS_SOMALIER_OK);
+        CHECK(duckhts_somalier_charr_observe(i % 2u == 0u ? &even : &odd,
+              &counts, frequency, &settings) == DUCKHTS_SOMALIER_OK);
+    }
+    for (i = SITE_COUNT; i > 0u; i--) {
+        unsigned site = i - 1u;
+        duckhts_somalier_counts_t counts = {
+            199u - site % 3u, 1u + site % 3u, 0u, 1u
+        };
+        double frequency = (double)(10u + site) / 100.0;
+        CHECK(duckhts_somalier_charr_observe(&reverse, &counts, frequency,
+              &settings) == DUCKHTS_SOMALIER_OK);
+    }
+    combined_left = even;
+    combined_right = odd;
+    CHECK(duckhts_somalier_charr_combine(&combined_left, &odd) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_combine(&combined_right, &even) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&forward, &result[0]) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&reverse, &result[1]) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&combined_left, &result[2]) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(duckhts_somalier_charr_finish(&combined_right, &result[3]) ==
+          DUCKHTS_SOMALIER_OK);
+    for (i = 1u; i < 4u; i++) {
+        CHECK(result[i].estimate == result[0].estimate);
+        CHECK(result[i].usable_sites == result[0].usable_sites);
+        CHECK(result[i].usable_hom_a == result[0].usable_hom_a);
+        CHECK(result[i].usable_hom_b == result[0].usable_hom_b);
+    }
+    {
+        duckhts_somalier_charr_accumulator_t maximum = {0};
+        duckhts_somalier_charr_accumulator_t one = {0};
+        maximum.contribution_scaled_high = UINT64_MAX;
+        one.contribution_scaled_high = 1u;
+        CHECK(duckhts_somalier_charr_combine(&maximum, &one) ==
+              DUCKHTS_SOMALIER_LIMIT_EXCEEDED);
+        CHECK(maximum.contribution_scaled_high == UINT64_MAX &&
+              maximum.contribution_scaled_low == 0u);
+    }
+}
+
 static duckhts_somalier_matched_view_t matched_view(
     const uint32_t *a, const uint32_t *b, const int8_t *anchor,
     const double *frequency, size_t count) {
@@ -1276,6 +1341,7 @@ int main(int argc, char **argv) {
     test_binomial_and_charr();
     test_random_binomial_differential();
     test_charr_orientation();
+    test_charr_reduction_order();
     test_matched_anchor();
     test_matched_orientation();
     test_random_pair_differential();

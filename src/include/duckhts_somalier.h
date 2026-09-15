@@ -221,7 +221,8 @@ typedef struct duckhts_somalier_charr_result {
 } duckhts_somalier_charr_result_t;
 
 typedef struct duckhts_somalier_charr_accumulator {
-    double contribution_sum;
+    uint64_t contribution_scaled_low;
+    uint64_t contribution_scaled_high;
     uint64_t usable_sites;
     uint64_t usable_hom_a;
     uint64_t usable_hom_b;
@@ -232,6 +233,10 @@ duckhts_somalier_status_t duckhts_somalier_charr_observe(
     const duckhts_somalier_counts_t *counts,
     double population_b_frequency,
     const duckhts_somalier_contamination_settings_t *settings);
+
+duckhts_somalier_status_t duckhts_somalier_charr_combine(
+    duckhts_somalier_charr_accumulator_t *target,
+    const duckhts_somalier_charr_accumulator_t *source);
 
 duckhts_somalier_status_t duckhts_somalier_charr_finish(
     const duckhts_somalier_charr_accumulator_t *accumulator,

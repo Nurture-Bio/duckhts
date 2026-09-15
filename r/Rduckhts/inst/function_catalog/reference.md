@@ -1804,9 +1804,13 @@ Count evidence and population_b_af must match the panel's full ordered site iden
 
 The struct retains sample, panel and frequency identities, method and numerical status, observed/unavailable/usable and homozygous-site denominators, estimate and every filter/limit. No usable evidence has status no_evidence and a NULL estimate, distinct from measured zero contamination.
 
-### Numerical domain
+### Limits
 
-Binomial eligibility is certified through A+B depth 1,000,000; larger depths error. DuckHTS evaluates the tail stably rather than reproducing Somalier v0.3.4's linear-probability underflow. On the retained depth-6000 witness, upstream returns a minor-read threshold of 6000 and DuckHTS returns 793. This is a deliberate numerical difference, not a claim of full CLI parity.
+A+B depth must not exceed 1,000,000. Input order and parallel aggregate reduction order do not change the estimate.
+
+### Compatibility
+
+Eligibility follows Somalier 0.3.4 CHARR except that DuckHTS computes high-depth binomial tails without upstream's numerical underflow. Very deep sites can therefore have different eligibility; a pinned upstream counterexample is retained in the conformance tests.
 
 ### Examples
 

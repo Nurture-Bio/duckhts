@@ -310,6 +310,7 @@ static bool states_same(const contamination_state_t *left,
 
 static bool states_combine(contamination_state_t *target,
                            const contamination_state_t *source) {
+    duckhts_somalier_status_t status;
     if (!states_same(target, source) ||
         source->observed_sites > target->site_count - target->observed_sites ||
         source->unavailable_sites > target->site_count - target->unavailable_sites) return false;
@@ -321,18 +322,14 @@ static bool states_combine(contamination_state_t *target,
         source->charr.usable_hom_a >
             target->site_count - target->charr.usable_hom_a ||
         source->charr.usable_hom_b >
-            target->site_count - target->charr.usable_hom_b ||
-        !isfinite(target->charr.contribution_sum +
-                  source->charr.contribution_sum)) return false;
+            target->site_count - target->charr.usable_hom_b) return false;
+    status = duckhts_somalier_charr_combine(&target->charr, &source->charr);
+    if (status != DUCKHTS_SOMALIER_OK) return false;
     for (size_t word = 0u; word < target->word_count; word++) {
         target->seen[word] |= source->seen[word];
     }
     target->observed_sites += source->observed_sites;
     target->unavailable_sites += source->unavailable_sites;
-    target->charr.contribution_sum += source->charr.contribution_sum;
-    target->charr.usable_sites += source->charr.usable_sites;
-    target->charr.usable_hom_a += source->charr.usable_hom_a;
-    target->charr.usable_hom_b += source->charr.usable_hom_b;
     return true;
 }
 
