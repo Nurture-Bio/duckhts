@@ -587,6 +587,14 @@ static void test_binomial_and_charr(void) {
           DUCKHTS_SOMALIER_OK);
     CHECK(threshold == 1u);
     CHECK(duckhts_somalier_binomial_max_minor(
+          1u, 0.05, nextafter(0.05, 0.0), 1000000u, &threshold) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(threshold == 1u);
+    CHECK(duckhts_somalier_binomial_max_minor(
+          1u, 0.05, nextafter(0.05, 1.0), 1000000u, &threshold) ==
+          DUCKHTS_SOMALIER_OK);
+    CHECK(threshold == 0u);
+    CHECK(duckhts_somalier_binomial_max_minor(
           3u, 0.25, nextafter(0.578125, 0.0), 1000000u, &threshold) ==
           DUCKHTS_SOMALIER_OK);
     CHECK(threshold == 1u);

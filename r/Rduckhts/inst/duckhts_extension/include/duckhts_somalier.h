@@ -191,7 +191,9 @@ void duckhts_somalier_matched_anchor_settings_default(
 /* Returns the largest k for which P[X >= k] >= tail_alpha for
  * X ~ Binomial(depth, minor_rate). max_depth bounds the incomplete-beta
  * evaluations and binary search domain. DuckHTS certifies this implementation
- * through depth 1,000,000; larger depths return LIMIT_EXCEEDED. */
+ * through depth 1,000,000; larger depths return LIMIT_EXCEEDED. A final
+ * outward-rounded comparison returns NUMERIC_FAILURE rather than guessing
+ * when the exact tail and cutoff cannot be separated. */
 duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
     uint64_t depth,
     double minor_rate,

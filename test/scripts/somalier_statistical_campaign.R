@@ -58,6 +58,7 @@ run_native <- function(mode, input, expected_columns) {
 # qbinom supplies a candidate; exact pbinom survival checks decide the
 # discrete maximum. This does not copy the kernel's beta implementation.
 survival <- function(depth, minor_rate, k) {
+  if (depth == 1 && k == 1) return(minor_rate)
   # This small rational witness has an exact binary64 tail. Keep it independent
   # of pbinom so adjacent representable cutoffs test the strict comparison.
   if (depth == 3 && minor_rate == 0.25) {
@@ -97,6 +98,10 @@ adjacent <- rbind(adjacent, data.frame(
   depth = rep(3L, 3L), minor_rate = rep(0.25, 3L),
   tail_alpha = 0.578125 + c(-.Machine$double.eps / 2, 0,
     .Machine$double.eps / 2)))
+adjacent <- rbind(adjacent, data.frame(
+  depth = rep(1L, 3L), minor_rate = rep(0.05, 3L),
+  tail_alpha = 0.05 + c(-.Machine$double.eps / 32, 0,
+    .Machine$double.eps / 32)))
 for (depth in c(15, 100, 1000, 6000, 100000, 1000000)) {
   for (rate in c(0.05, 0.12, 0.49)) {
     k <- max(1, min(depth, round(depth * rate)))

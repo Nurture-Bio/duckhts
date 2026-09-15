@@ -9,11 +9,16 @@
 #define SOMALIER_BETA_MAX_ITERATIONS 10000u
 #define SOMALIER_BETA_EPSILON (8.0 * DBL_EPSILON)
 
+#if defined(__FAST_MATH__)
+#error "Somalier numerical kernels require strict floating-point semantics"
+#endif
+
 _Static_assert(CHAR_BIT == 8, "Somalier masks require eight-bit bytes");
 _Static_assert(sizeof(uint64_t) * CHAR_BIT == 64, "Somalier masks require uint64_t words");
 _Static_assert(sizeof(size_t) <= sizeof(uint64_t), "Somalier counters must represent size_t");
 _Static_assert(sizeof(size_t) <= sizeof(uintptr_t), "Mask spans must fit uintptr_t");
 _Static_assert(sizeof(double) == sizeof(uint64_t), "Somalier content digest requires binary64");
+_Static_assert(FLT_RADIX == 2, "Somalier numerical kernels require binary floating point");
 _Static_assert(DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "Somalier content digest requires IEEE binary64 semantics");
 
@@ -654,89 +659,291 @@ static int binomial_survival(uint64_t depth, uint64_t k, double probability,
     return regularized_beta(probability, (double)k, (double)(depth - k + 1u), survival);
 }
 
-static void binomial_sum_add(double term, double *sum, double *correction) {
-    double adjusted = term - *correction;
-    double next = *sum + adjusted;
-    *correction = (next - *sum) - adjusted;
-    *sum = next;
+typedef struct binomial_interval {
+    long double lower;
+    long double upper;
+} binomial_interval_t;
+
+static long double binomial_round_down(long double value) {
+    volatile long double rounded = value;
+    if (rounded <= 0.0L) return 0.0L;
+    return nextafterl(rounded, 0.0L);
 }
 
-static int binomial_remainder_bounded(double weight, double next_ratio,
-                                      double precision_target) {
-    /* Mode-outward ratios decrease. The remaining geometric envelope is
-     * weight * next_ratio / (1 - next_ratio), in units where the mode is one. */
-    return next_ratio == 0.0 ||
-        (precision_target > 0.0 && next_ratio > 0.0 && next_ratio < 1.0 &&
-         weight * next_ratio <= precision_target * (1.0 - next_ratio));
+static long double binomial_round_up(long double value) {
+    volatile long double rounded = value;
+    return nextafterl(rounded, INFINITY);
 }
 
-/* Normalize at the binomial mode. This avoids subtracting large lgamma values
- * in the final k/k+1 decision; weights decrease away from the mode. */
-static int binomial_survival_recurrence(uint64_t depth, uint64_t k,
-                                         double probability, double tail_alpha,
-                                         double *survival) {
+static binomial_interval_t binomial_interval_add(binomial_interval_t left,
+                                                  binomial_interval_t right) {
+    binomial_interval_t result;
+    result.lower = binomial_round_down(left.lower + right.lower);
+    result.upper = binomial_round_up(left.upper + right.upper);
+    return result;
+}
+
+static binomial_interval_t binomial_interval_multiply(
+    binomial_interval_t left,
+    binomial_interval_t right) {
+    binomial_interval_t result;
+    result.lower = binomial_round_down(left.lower * right.lower);
+    result.upper = binomial_round_up(left.upper * right.upper);
+    return result;
+}
+
+static int binomial_interval_divide(binomial_interval_t numerator,
+                                    binomial_interval_t denominator,
+                                    binomial_interval_t *result) {
+    if (result == NULL || denominator.lower <= 0.0) return 0;
+    result->lower = binomial_round_down(numerator.lower / denominator.upper);
+    result->upper = binomial_round_up(numerator.upper / denominator.lower);
+    return isfinite(result->lower) && isfinite(result->upper) &&
+        result->lower >= 0.0 && result->upper >= result->lower;
+}
+
+static int binomial_interval_remainder_upper(
+    binomial_interval_t weight,
+    binomial_interval_t next_ratio,
+    long double *upper) {
+    long double numerator;
+    long double denominator;
+    if (upper == NULL || next_ratio.upper <= 0.0L ||
+        next_ratio.upper >= 1.0L) {
+        return 0;
+    }
+    numerator = binomial_round_up(weight.upper * next_ratio.upper);
+    denominator = binomial_round_down(1.0L - next_ratio.upper);
+    if (denominator <= 0.0L) return 0;
+    *upper = binomial_round_up(numerator / denominator);
+    return isfinite(*upper) && *upper >= 0.0;
+}
+
+static unsigned binomial_trailing_zeroes(uint64_t value) {
+    unsigned count = 0u;
+    while ((value & UINT64_C(1)) == 0u) {
+        value >>= 1u;
+        count++;
+    }
+    return count;
+}
+
+/* Decode an exact binary64 probability as numerator / 2^denominator_power,
+ * reduced to an odd numerator. */
+static int binomial_binary_fraction(double value, uint64_t *numerator,
+                                    unsigned *denominator_power) {
+    double fraction;
+    int exponent;
+    unsigned trailing;
+
+    if (numerator == NULL || denominator_power == NULL ||
+        !isfinite(value) || value <= 0.0 || value >= 1.0) {
+        return 0;
+    }
+    fraction = frexp(value, &exponent);
+    *numerator = (uint64_t)ldexp(fraction, DBL_MANT_DIG);
+    *denominator_power = (unsigned)(DBL_MANT_DIG - exponent);
+    trailing = binomial_trailing_zeroes(*numerator);
+    *numerator >>= trailing;
+    *denominator_power -= trailing;
+    return 1;
+}
+
+/* When the complete binomial denominator fits in binary64's significand,
+ * polynomial convolution gives the exact tail using only uint64 arithmetic. */
+static int binomial_tail_exact_small(uint64_t depth, uint64_t k,
+                                     double probability, double tail_alpha,
+                                     int *at_least) {
+    uint64_t coefficients[54] = {0u};
+    uint64_t numerator;
+    uint64_t denominator;
+    uint64_t complement;
+    uint64_t tail = 0u;
+    uint64_t power;
+    unsigned denominator_power;
+
+    if (at_least == NULL ||
+        !binomial_binary_fraction(probability, &numerator,
+                                  &denominator_power) ||
+        denominator_power == 0u || depth > 53u ||
+        denominator_power > 53u / (unsigned)depth) {
+        return 0;
+    }
+    power = denominator_power * (unsigned)depth;
+    denominator = UINT64_C(1) << denominator_power;
+    complement = denominator - numerator;
+    coefficients[0] = 1u;
+    for (uint64_t trial = 0u; trial < depth; trial++) {
+        for (uint64_t successes = trial + 1u; successes > 0u; successes--) {
+            uint64_t from_failure = successes <= trial
+                ? coefficients[successes] * complement : 0u;
+            uint64_t from_success = coefficients[successes - 1u] * numerator;
+            coefficients[successes] = from_failure + from_success;
+        }
+        coefficients[0] *= complement;
+    }
+    for (uint64_t successes = k; successes <= depth; successes++) {
+        tail += coefficients[successes];
+    }
+    *at_least = ldexp((double)tail, -(int)power) >= tail_alpha;
+    return 1;
+}
+
+/* Enclose the exact tail using outward-rounded floating-point operations. The
+ * incomplete beta locates a candidate only; this comparison certifies the
+ * final k/k+1 decision or reports that binary64 intervals cannot decide it. */
+static int binomial_tail_interval(uint64_t depth, uint64_t k,
+                                  double probability,
+                                  binomial_interval_t *survival) {
+    binomial_interval_t one = {1.0L, 1.0L};
+    binomial_interval_t probability_interval = {
+        (long double)probability, (long double)probability
+    };
+    binomial_interval_t complement;
+    binomial_interval_t total = {1.0L, 1.0L};
+    binomial_interval_t side = {0.0L, 0.0L};
+    binomial_interval_t weight = {1.0L, 1.0L};
+    binomial_interval_t probability_ratio;
     uint64_t mode;
-    double total = 1.0;
-    double total_correction = 0.0;
-    double side = 0.0;
-    double side_correction = 0.0;
-    double weight;
-    double complement;
-    double precision_target;
+    volatile long double rounded_complement =
+        1.0L - (long double)probability;
 
-    if (k == 0u) {
-        *survival = 1.0;
-        return 1;
+    if (survival == NULL) return 0;
+    complement.lower = binomial_round_down(rounded_complement);
+    complement.upper = binomial_round_up(rounded_complement);
+    if (!binomial_interval_divide(complement, probability_interval,
+                                  &probability_ratio)) {
+        return 0;
     }
-    if (k > depth || probability == 0.0) {
-        *survival = 0.0;
-        return 1;
-    }
-    if (probability == 1.0) {
-        *survival = 1.0;
-        return 1;
-    }
-    complement = 1.0 - probability;
-    precision_target = (DBL_EPSILON / 16.0) *
-        fmin(tail_alpha, 1.0 - tail_alpha);
     mode = (uint64_t)floor(((double)depth + 1.0) * probability);
     if (mode > depth) mode = depth;
 
-    weight = 1.0;
     for (uint64_t i = mode; i > 0u; i--) {
-        weight *= ((double)i / (double)(depth - i + 1u)) *
-            (complement / probability);
-        if (weight == 0.0) break;
-        if (!isfinite(weight) || weight < 0.0) return 0;
-        binomial_sum_add(weight, &total, &total_correction);
+        binomial_interval_t integer_ratio = {
+            (long double)i / (long double)(depth - i + 1u),
+            (long double)i / (long double)(depth - i + 1u)
+        };
+        integer_ratio.lower = binomial_round_down(integer_ratio.lower);
+        integer_ratio.upper = binomial_round_up(integer_ratio.upper);
+        weight = binomial_interval_multiply(weight,
+            binomial_interval_multiply(integer_ratio, probability_ratio));
+        total = binomial_interval_add(total, weight);
         if (i - 1u < k && k <= mode) {
-            binomial_sum_add(weight, &side, &side_correction);
+            side = binomial_interval_add(side, weight);
         }
-        if (i > 1u && binomial_remainder_bounded(weight,
-            ((double)(i - 1u) / (double)(depth - i + 2u)) *
-                (complement / probability), precision_target)) break;
+        if (i > 1u) {
+            binomial_interval_t next_integer_ratio = {
+                (long double)(i - 1u) / (long double)(depth - i + 2u),
+                (long double)(i - 1u) / (long double)(depth - i + 2u)
+            };
+            binomial_interval_t next_ratio;
+            long double remainder;
+            next_integer_ratio.lower =
+                binomial_round_down(next_integer_ratio.lower);
+            next_integer_ratio.upper =
+                binomial_round_up(next_integer_ratio.upper);
+            next_ratio = binomial_interval_multiply(
+                next_integer_ratio, probability_ratio);
+            if (binomial_interval_remainder_upper(weight, next_ratio,
+                    &remainder) && remainder <= LDBL_EPSILON / 64.0L) {
+                total.upper = binomial_round_up(total.upper + remainder);
+                if (k <= mode) {
+                    side.upper = binomial_round_up(side.upper + remainder);
+                }
+                break;
+            }
+        }
     }
 
-    weight = 1.0;
-    for (uint64_t i = mode; i < depth; i++) {
-        weight *= ((double)(depth - i) / (double)(i + 1u)) *
-            (probability / complement);
-        if (weight == 0.0) break;
-        if (!isfinite(weight) || weight < 0.0) return 0;
-        binomial_sum_add(weight, &total, &total_correction);
-        if (i + 1u >= k && k > mode) {
-            binomial_sum_add(weight, &side, &side_correction);
-        }
-        if (i + 1u < depth && binomial_remainder_bounded(weight,
-            ((double)(depth - i - 1u) / (double)(i + 2u)) *
-                (probability / complement), precision_target)) break;
+    weight = one;
+    if (!binomial_interval_divide(probability_interval, complement,
+                                  &probability_ratio)) {
+        return 0;
     }
-    *survival = k <= mode ? 1.0 - side / total : side / total;
-    return isfinite(*survival) && *survival >= 0.0 && *survival <= 1.0;
+    for (uint64_t i = mode; i < depth; i++) {
+        binomial_interval_t integer_ratio = {
+            (long double)(depth - i) / (long double)(i + 1u),
+            (long double)(depth - i) / (long double)(i + 1u)
+        };
+        integer_ratio.lower = binomial_round_down(integer_ratio.lower);
+        integer_ratio.upper = binomial_round_up(integer_ratio.upper);
+        weight = binomial_interval_multiply(weight,
+            binomial_interval_multiply(integer_ratio, probability_ratio));
+        total = binomial_interval_add(total, weight);
+        if (i + 1u >= k && k > mode) {
+            side = binomial_interval_add(side, weight);
+        }
+        if (i + 1u < depth) {
+            binomial_interval_t next_integer_ratio = {
+                (long double)(depth - i - 1u) / (long double)(i + 2u),
+                (long double)(depth - i - 1u) / (long double)(i + 2u)
+            };
+            binomial_interval_t next_ratio;
+            long double remainder;
+            next_integer_ratio.lower =
+                binomial_round_down(next_integer_ratio.lower);
+            next_integer_ratio.upper =
+                binomial_round_up(next_integer_ratio.upper);
+            next_ratio = binomial_interval_multiply(
+                next_integer_ratio, probability_ratio);
+            if (binomial_interval_remainder_upper(weight, next_ratio,
+                    &remainder) && remainder <= LDBL_EPSILON / 64.0L) {
+                total.upper = binomial_round_up(total.upper + remainder);
+                if (k > mode) {
+                    side.upper = binomial_round_up(side.upper + remainder);
+                }
+                break;
+            }
+        }
+    }
+    if (k <= mode) {
+        binomial_interval_t excluded;
+        if (!binomial_interval_divide(side, total, &excluded)) return 0;
+        survival->lower = binomial_round_down(1.0L - excluded.upper);
+        survival->upper = binomial_round_up(1.0L - excluded.lower);
+    } else if (!binomial_interval_divide(side, total, survival)) {
+        return 0;
+    }
+    if (survival->lower < 0.0L) survival->lower = 0.0L;
+    if (survival->upper > 1.0L) survival->upper = 1.0L;
+    return survival->lower <= survival->upper;
 }
 
-static int binomial_tail_at_least(double survival, double tail_alpha) {
-    return survival >= tail_alpha;
+static int binomial_tail_compare(uint64_t depth, uint64_t k,
+                                 double probability, double tail_alpha,
+                                 int *at_least) {
+    binomial_interval_t survival;
+    if (at_least == NULL) return 0;
+    if (k == 0u) {
+        *at_least = 1;
+        return 1;
+    }
+    if (k > depth || probability == 0.0) {
+        *at_least = 0;
+        return 1;
+    }
+    if (probability == 1.0) {
+        *at_least = 1;
+        return 1;
+    }
+    if (depth == 1u) {
+        *at_least = probability >= tail_alpha;
+        return 1;
+    }
+    if (binomial_tail_exact_small(depth, k, probability, tail_alpha,
+                                  at_least)) {
+        return 1;
+    }
+    if (!binomial_tail_interval(depth, k, probability, &survival)) return 0;
+    if (survival.lower >= (long double)tail_alpha) {
+        *at_least = 1;
+        return 1;
+    }
+    if (survival.upper < (long double)tail_alpha) {
+        *at_least = 0;
+        return 1;
+    }
+    return 0;
 }
 
 duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
@@ -765,28 +972,28 @@ duckhts_somalier_status_t duckhts_somalier_binomial_max_minor(
         if (!binomial_survival(depth, mid, minor_rate, &survival)) {
             return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
         }
-        if (binomial_tail_at_least(survival, tail_alpha)) {
+        if (survival >= tail_alpha) {
             lo = mid;
         } else {
             hi = mid;
         }
     }
     while (lo > 0u) {
-        double survival;
-        if (!binomial_survival_recurrence(depth, lo, minor_rate,
-                tail_alpha, &survival)) {
+        int at_least;
+        if (!binomial_tail_compare(depth, lo, minor_rate, tail_alpha,
+                                   &at_least)) {
             return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
         }
-        if (binomial_tail_at_least(survival, tail_alpha)) break;
+        if (at_least) break;
         lo--;
     }
     while (lo < depth) {
-        double survival;
-        if (!binomial_survival_recurrence(depth, lo + 1u, minor_rate,
-                tail_alpha, &survival)) {
+        int at_least;
+        if (!binomial_tail_compare(depth, lo + 1u, minor_rate, tail_alpha,
+                                   &at_least)) {
             return DUCKHTS_SOMALIER_NUMERIC_FAILURE;
         }
-        if (!binomial_tail_at_least(survival, tail_alpha)) break;
+        if (!at_least) break;
         lo++;
     }
     *max_minor = lo;

@@ -27,8 +27,9 @@ the same extension release; publication remains pending.
   change its estimate or persisted result.
 - Bound retained Somalier sample and assembly identities to 1,024 bytes before
   aggregate-state allocation, including parallel sketch and CHARR reductions.
-- Preserve strict binomial-tail cutoffs at adjacent binary64 thresholds and
-  persist the normalized classification settings used to seal each sketch.
+- Preserve strict binomial-tail cutoffs with exact small binary-rational cases
+  and an outward-rounded final comparison; persist the normalized
+  classification settings used to seal each sketch.
 - Preserve the pinned Somalier v0.3.4 numerical counterexamples: stable
   high-depth CHARR tail evaluation and a full-grid matched search can differ
   from upstream's underflow-prone threshold and fixed search sequence. The
