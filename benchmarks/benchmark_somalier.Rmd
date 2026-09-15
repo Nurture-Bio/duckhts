@@ -74,7 +74,7 @@ duckvep_evidence_write_extension_receipt(
 
 ```sh
 BENCHMARK_RMD=benchmark_somalier.Rmd \
-BENCHMARK_REPORT=benchmark_somalier_reviewed.md \
+BENCHMARK_REPORT=benchmark_somalier_local_snapshot.md \
 SOMALIER_BENCHMARK_EXTENSION_RECEIPT=/tmp/somalier-extension.tsv \
 SOMALIER_BENCHMARK_SAMPLES=250 \
 SOMALIER_BENCHMARK_SELECTED_SAMPLES=3 \
@@ -221,6 +221,20 @@ summary <- do.call(rbind, lapply(cases, function(case) {
     stringsAsFactors = FALSE
   )
 }))
+baseline_revision <- "c3bd4ced6e049d4ebc5290037bb3684f9e555267"
+baseline_report <- "benchmarks/benchmark_somalier_identity_bound.md"
+baseline_seconds <- c(0.030, 0.209, 0.004, 1.206, 0.284, 0.434, 0.451, 2.192)
+stopifnot(file.exists(baseline_report), identical(summary$workload, cases),
+          length(baseline_seconds) == nrow(summary))
+comparison <- data.frame(
+  workload = summary$workload,
+  baseline_seconds = baseline_seconds,
+  current_seconds = summary$median_seconds,
+  change_percent = 100 * (summary$median_seconds / baseline_seconds - 1),
+  stringsAsFactors = FALSE
+)
+comparison_change <- stats::setNames(comparison$change_percent,
+                                     comparison$workload)
 work <- do.call(rbind, lapply(cases, function(case) {
   row <- measurements[measurements$case == case, , drop = FALSE][1L, ]
   row[c("case", "related_selected_pairs", "related_all_pairs",
@@ -318,6 +332,25 @@ knitr::kable(matched_work)
 knitr::kable(output_summary)
 knitr::kable(memory_repetitions, digits = 3)
 ```
+
+## Identical-workload comparison
+
+```{r comparison}
+knitr::kable(comparison, digits = c(NA, 3, 3, 1))
+```
+
+The comparison baseline is `r baseline_report` at revision
+`r baseline_revision`, with the same 250 samples, 17,000 sites, K=3, P=2,
+four threads, output denominators, warmup, and repetition count. CHARR changed
+by `r sprintf("%+.1f%%", comparison_change[["charr"]])`; the query-wide
+distinct-depth preparation adds a pass over count evidence before the aggregate.
+Matched-anchor changed by
+`r sprintf("%+.1f%%", comparison_change[["matched_anchor"]])`, all-pair
+relatedness by `r sprintf("%+.1f%%", comparison_change[["related_all"]])`,
+and end-to-end execution by
+`r sprintf("%+.1f%%", comparison_change[["end_to_end"]])`. These are observed
+timings on this host, not generalized improvement claims. The current and
+baseline reports retain the same result-row and biological-work denominators.
 
 The runner checks 266 words in each of the three prepared masks. Selected-pair
 `jointly_called`, `ibs0`, and `ibs2` integers are compared with a separate SQL
