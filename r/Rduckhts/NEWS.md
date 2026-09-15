@@ -23,6 +23,8 @@ below describe implemented package behavior, not a completed release submission.
   matched method preserves receiver/anchor direction and evaluates only
   requested ordered pairs without a pair-sized native workspace. CHARR results
   are stable across parallel aggregate reduction order.
+- Bound sample and assembly identities retained by bundled sketch and CHARR
+  aggregate states to 1,024 bytes.
 - The bundled estimators use stable high-depth CHARR tail evaluation and a
   full-grid matched search. Their documented numerical counterexamples can
   differ from Somalier v0.3.4 output; they are not bitwise CLI replicas.

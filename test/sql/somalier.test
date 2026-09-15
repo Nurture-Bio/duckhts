@@ -554,6 +554,25 @@ SELECT * FROM duckhts_somalier_prepare_sketches(
 ----
 site_count must be positive and no larger than max_sites
 
+# Retained aggregate identities have a fixed byte bound independent of the
+# number of samples. The largest accepted identity and first rejected byte are
+# checked directly on the production aggregate.
+query I
+SELECT length((__duckhts_somalier_sketch(
+  repeat('s', 1024), repeat('a', 1024), repeat('b', 64),
+  0::UBIGINT, 1::UBIGINT, 20::UBIGINT, 0::UBIGINT, 0::UBIGINT,
+  7::UBIGINT, 0.3::DOUBLE, 0.01::DOUBLE, 1::UBIGINT)).sample_id);
+----
+1024
+
+statement error
+SELECT __duckhts_somalier_sketch(
+  repeat('s', 1025), 'GRCh38', repeat('b', 64),
+  0::UBIGINT, 1::UBIGINT, 20::UBIGINT, 0::UBIGINT, 0::UBIGINT,
+  7::UBIGINT, 0.3::DOUBLE, 0.01::DOUBLE, 1::UBIGINT);
+----
+sample_id and assembly must be at most 1024 bytes
+
 # Final mask word counts at the 64-bit transition, with a called last site.
 statement ok
 CREATE TEMP TABLE somalier_word_panel_all AS

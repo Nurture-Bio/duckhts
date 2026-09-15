@@ -233,6 +233,19 @@ test_somalier_relatedness_wrappers <- function() {
     ),
     "site_count exceeds max_sites"
   )
+  oversized_evidence <- "somalier_oversized_sample_identity"
+  dbExecute(con, sprintf(paste(
+    "CREATE TEMP VIEW %s AS SELECT * REPLACE(",
+    "repeat('s', 1025)::VARCHAR AS sample_id) FROM %s",
+    "WHERE sample_id = 'A'"
+  ), qid(oversized_evidence), evidence))
+  expect_error(
+    rduckhts_somalier_sketches(
+      con, evidence_table = oversized_evidence, panel_table = panel_name,
+      max_sites = 8
+    ),
+    "sample_id and assembly must be at most 1024 bytes"
+  )
 
   # Word-count transitions exercise the public preparation wrapper, not a
   # hand-constructed mask.

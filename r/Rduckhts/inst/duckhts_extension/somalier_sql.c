@@ -287,7 +287,7 @@ static void somalier_sketch_state_destroy(duckdb_aggregate_state *states,
 static char *copy_duckdb_string(duckdb_string_t *value, uint32_t *length_out) {
     uint32_t length = duckdb_string_t_length(*value);
     char *copy;
-    if (length == UINT32_MAX) return NULL;
+    if (length == 0u || length > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) return NULL;
     copy = duckdb_malloc((size_t)length + 1u);
     if (copy == NULL) return NULL;
     memcpy(copy, duckdb_string_t_data(value), length);
@@ -316,6 +316,11 @@ static bool somalier_sketch_state_open(
         duckdb_string_t_length(*assembly) == 0u ||
         !parse_panel_sha256(panel, digest)) {
         *error = "duckhts_somalier_sketch: sample, assembly, and lowercase panel SHA-256 are required";
+        return false;
+    }
+    if (duckdb_string_t_length(*sample) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES ||
+        duckdb_string_t_length(*assembly) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) {
+        *error = "duckhts_somalier_sketch: sample_id and assembly must be at most 1024 bytes";
         return false;
     }
     if (site_count == 0u || site_count > max_sites || site_count > SIZE_MAX) {

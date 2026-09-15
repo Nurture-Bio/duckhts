@@ -356,6 +356,15 @@ SELECT * FROM duckhts_somalier_charr(
 ----
 invalid identity, site limit
 
+statement error
+SELECT __duckhts_somalier_charr(
+  'Identity', repeat('a', 1025), repeat('b', 64), repeat('c', 64),
+  0::UBIGINT, 1::UBIGINT, 199::UBIGINT, 1::UBIGINT, 0::UBIGINT,
+  0.25::DOUBLE, 7::UBIGINT, 1000000::UBIGINT, 0.1::DOUBLE,
+  0.001::DOUBLE, 1::UBIGINT);
+----
+sample_id and assembly must be at most 1024 bytes
+
 # The public macros derive this identity, while the checked aggregate refuses
 # rows that attempt to change it inside one reduction group.
 statement ok

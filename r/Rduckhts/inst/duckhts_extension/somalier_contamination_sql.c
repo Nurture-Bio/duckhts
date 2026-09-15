@@ -79,7 +79,7 @@ static bool lowercase_sha256(duckdb_string_t *value) {
 static char *copy_string(duckdb_string_t *value, uint32_t *length) {
     char *copy;
     *length = duckdb_string_t_length(*value);
-    if ((uint64_t)*length + 1u > SIZE_MAX) return NULL;
+    if (*length == 0u || *length > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) return NULL;
     copy = duckdb_malloc((size_t)*length + 1u);
     if (copy == NULL) return NULL;
     memcpy(copy, duckdb_string_t_data(value), *length);
@@ -136,6 +136,8 @@ static bool identity_open(contamination_identity_t *identity,
     if (duckdb_string_t_length(*sample) == 0u ||
         duckdb_string_t_length(*assembly) == 0u ||
         !lowercase_sha256(panel) || !lowercase_sha256(frequency)) return false;
+    if (duckdb_string_t_length(*sample) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES ||
+        duckdb_string_t_length(*assembly) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) return false;
     identity->sample = copy_string(sample, &identity->sample_len);
     identity->assembly = copy_string(assembly, &identity->assembly_len);
     identity->panel = copy_string(panel, &identity->panel_len);
@@ -409,6 +411,12 @@ static void charr_update(duckdb_function_info info, duckdb_data_chunk input,
                     "duckhts_somalier_charr: identity, ordinal, frequency, and settings cannot be NULL");
                 return;
             }
+        }
+        if (duckdb_string_t_length(sample[row]) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES ||
+            duckdb_string_t_length(assembly[row]) > DUCKHTS_SOMALIER_MAX_IDENTITY_BYTES) {
+            duckdb_aggregate_function_set_error(info,
+                "duckhts_somalier_charr: sample_id and assembly must be at most 1024 bytes");
+            return;
         }
         counts_available = row_valid(vector[CH_IN_A], row);
         if (!counts_from_vectors(vector[CH_IN_A], vector[CH_IN_B],

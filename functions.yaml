@@ -895,7 +895,7 @@
       "description": "Build one panel-verified packed relatedness sketch per sample from typed count evidence.",
       "details": {
         "Evidence": "evidence_table contains sample_id, the six panel identity columns, and nullable a, b and other counts. Each sample must contain every panel ordinal exactly once. Count channels already follow the panel's canonical lexical A/B order; changed coordinates or orientation error. Counts are never inferred from GT or DP. All-NULL tuples are unavailable, all-zero tuples are measured zero depth, and partial NULL tuples error.",
-        "Persistence": "The returned struct contains identities, classification settings, counters, a raw-count receipt, content integrity fields and three UBIGINT[] masks. The receipt binds every ordinal, availability state and A/B/other tuple even when changed counts retain the same genotype. It is an ordinary typed value suitable for Parquet, not a serialized native object. max_sites bounds each prepared sketch."
+        "Persistence": "The returned struct contains identities, classification settings, counters, a raw-count receipt, content integrity fields and three UBIGINT[] masks. The receipt binds every ordinal, availability state and A/B/other tuple even when changed counts retain the same genotype. It is an ordinary typed value suitable for Parquet, not a serialized native object. max_sites bounds each prepared sketch; sample_id and assembly are each limited to 1,024 bytes."
       },
       "examples": [
         "CREATE TABLE sample_sketches AS SELECT * FROM duckhts_somalier_prepare_sketches('allele_counts', 'fingerprint_panel', 7, 0.3, 0.01);"
@@ -960,7 +960,7 @@
       "details": {
         "Inputs": "Count evidence and population_b_af must match the panel's full ordered site identity. CHARR uses measured counts, its own homozygous-like binomial eligibility and the pinned 4% other-read filter; relatedness genotype masks are insufficient.",
         "Results": "The struct retains sample, panel and frequency identities, method and numerical status, observed/unavailable/usable and homozygous-site denominators, estimate and every filter/limit. No usable evidence has status no_evidence and a NULL estimate, distinct from measured zero contamination.",
-        "Limits": "A+B depth must not exceed 1,000,000. Input order and parallel aggregate reduction order do not change the estimate.",
+        "Limits": "A+B depth must not exceed 1,000,000. sample_id and assembly are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.",
         "Compatibility": "Eligibility follows Somalier 0.3.4 CHARR except that DuckHTS computes high-depth binomial tails without upstream's numerical underflow. Very deep sites can therefore have different eligibility; a pinned upstream counterexample is retained in the conformance tests."
       },
       "examples": [

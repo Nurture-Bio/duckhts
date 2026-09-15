@@ -1682,7 +1682,7 @@ evidence_table contains sample_id, the six panel identity columns, and nullable 
 
 ### Persistence
 
-The returned struct contains identities, classification settings, counters, a raw-count receipt, content integrity fields and three UBIGINT[] masks. The receipt binds every ordinal, availability state and A/B/other tuple even when changed counts retain the same genotype. It is an ordinary typed value suitable for Parquet, not a serialized native object. max_sites bounds each prepared sketch.
+The returned struct contains identities, classification settings, counters, a raw-count receipt, content integrity fields and three UBIGINT[] masks. The receipt binds every ordinal, availability state and A/B/other tuple even when changed counts retain the same genotype. It is an ordinary typed value suitable for Parquet, not a serialized native object. max_sites bounds each prepared sketch; sample_id and assembly are each limited to 1,024 bytes.
 
 ### Examples
 
@@ -1806,7 +1806,7 @@ The struct retains sample, panel and frequency identities, method and numerical 
 
 ### Limits
 
-A+B depth must not exceed 1,000,000. Input order and parallel aggregate reduction order do not change the estimate.
+A+B depth must not exceed 1,000,000. sample_id and assembly are each limited to 1,024 bytes. Input order and parallel aggregate reduction order do not change the estimate.
 
 ### Compatibility
 
