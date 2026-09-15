@@ -200,8 +200,7 @@ test-somalier-native-ubsan:
 
 test-somalier-r-release:
 	@if command -v Rscript >/dev/null 2>&1; then \
-		$(MAKE) --no-print-directory test-somalier-pinned-helper \
-			test-somalier-statistical test-somalier-upstream-staging; \
+		scripts/test_somalier_release_campaigns.sh; \
 	else \
 		echo "Rscript unavailable: R-only Somalier campaigns run in R-CMD-check.yaml"; \
 	fi
