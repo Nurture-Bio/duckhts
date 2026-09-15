@@ -8,9 +8,10 @@ output:
 The registered HPRC v2.0 GRCh38 cohort region `chr22:20000000-21000000`
 retains every source sample and allele. This is not the consequence-only,
 split-allele corpus. Stage explicitly with
-`duckhtsbench::duckhts_bench_stage_genotypes()` before rendering; rendering is
-network-free. BCF and VCF.gz contain the same complete records, verified by
-the staging test and full HTSlib text comparison.
+`duckhtsbench::duckhts_bench_stage_genotypes()` and
+`duckhtsbench::duckhts_bench_stage_genotype_phase_set()` before rendering;
+rendering is network-free. BCF and VCF.gz contain the same complete records,
+verified by the staging test and full HTSlib text comparison.
 
 This compares `read_geno()` with the canonical `read_bcf(..., tidy_format:=true)`
 GT projection. Full cohorts, the
@@ -134,7 +135,7 @@ for (key in split(results,interaction(results$format,results$reader,results$work
 ## Source and workload identity
 
 ```{r identity}
-cat("Source revision:",revision,"\nSource tree:",src_tree,"\n")
+cat("Source revision: ", revision, "\nSource tree: ", src_tree, "\n", sep="")
 cat("Extension MD5:",unname(tools::md5sum(extension)),"\n")
 cat("R:",R.version.string,"; DuckDB:",as.character(packageVersion("duckdb")),"\n")
 cat(system2("uname","-srmo",stdout=TRUE),"\n")
@@ -190,4 +191,165 @@ GIAB workload, not an identical cohort baseline. This report compares the two
 current interfaces, not pre-change and post-change revisions. The separately
 rendered paired BCF regression workload measures changes to the existing reader.
 These results do not establish universal fastest-reader performance, remote-I/O
-throughput, multi-worker scaling, PS throughput, or phased annotation correctness.
+throughput or multi-worker scaling. This HPRC section does not measure PS
+throughput or phased annotation correctness.
+
+```{r phase-set-measurement, include=FALSE}
+phase_ids <- c(VCF="geno_giab_phased_chr1_vcfgz", BCF="geno_giab_phased_chr1_bcf")
+phase_source_ids <- c(source="geno_giab_phased_source",
+                      index="geno_giab_phased_source_tbi")
+phase_paths <- vapply(phase_ids, duckhts_bench_artifact_path, character(1L))
+phase_receipts <- lapply(phase_paths, function(path) {
+  receipt_path <- paste0(path, ".provenance.tsv")
+  stopifnot(file.exists(receipt_path))
+  duckhtsbench:::duckhts_bench_read_genotype_phase_set_receipt(receipt_path)
+})
+
+phase_oracles <- lapply(phase_paths,
+  duckhtsbench:::duckhts_bench_genotype_phase_observation, bcftools=Sys.which("bcftools"))
+phase_registry <- duckhts_bench_registry()
+phase_identity <- duckhtsbench:::duckhts_bench_validate_genotype_phase_set_evidence(
+  phase_registry, phase_ids, phase_source_ids, phase_paths, phase_receipts, phase_oracles)
+stopifnot(identical(phase_oracles[["VCF"]]$samples, phase_oracles[["BCF"]]$samples),
+          identical(phase_oracles[["VCF"]]$calls, phase_oracles[["BCF"]]$calls),
+          identical(phase_oracles[["VCF"]]$counts, phase_oracles[["BCF"]]$counts),
+          phase_oracles[["VCF"]]$counts[["nonnull_ps"]] > 0)
+phase_counts <- as.data.frame(as.list(phase_oracles[["VCF"]]$counts))
+phase_counts[] <- lapply(phase_counts, as.numeric)
+
+phase_repetitions <- as.integer(Sys.getenv("GENO_PS_RUNS", "5"))
+stopifnot(length(phase_repetitions) == 1L, !is.na(phase_repetitions), phase_repetitions >= 5L)
+phase_directory <- tempfile("duckhts-genotype-phase-set-report-")
+dir.create(phase_directory)
+phase_results <- list()
+phase_snapshots <- setNames(vector("list", length(phase_paths)), names(phase_paths))
+for (format in names(phase_paths)) {
+  for (repetition in seq_len(phase_repetitions)) {
+    readers <- if (repetition %% 2L) c("read_bcf", "read_geno") else c("read_geno", "read_bcf")
+    for (reader in readers) {
+      snapshot <- if (repetition == 1L) {
+        file.path(phase_directory, paste(format, reader, "parquet", sep="."))
+      } else ""
+      if (nzchar(snapshot)) phase_snapshots[[format]][[reader]] <- snapshot
+      observed <- callr::r(genotype_reader_run, args=list(
+        extension=extension, input=phase_paths[[format]], reader=reader, workload="full",
+        selector="", sample_names=phase_oracles[[format]]$samples, snapshot=snapshot,
+        threads=1L, phase_set_field=TRUE))
+      expected <- phase_oracles[[format]]$counts
+      stopifnot(observed$output_rows == if (reader == "read_geno") expected[["records"]] else expected[["calls"]],
+                observed$output_calls == expected[["calls"]],
+                observed$output_slots == expected[["allele_slots"]],
+                observed$output_ps_values == expected[["nonnull_ps"]])
+      phase_results[[length(phase_results) + 1L]] <- cbind(format, repetition, observed)
+    }
+  }
+}
+phase_results <- do.call(rbind, phase_results)
+for (rows in split(phase_results, interaction(phase_results$format, phase_results$reader)))
+  stopifnot(length(unique(rows$checksum)) == 1L)
+
+phase_con <- dbConnect(duckdb::duckdb())
+dbExecute(phase_con, "SET threads=1")
+phase_comparisons <- list()
+phase_table <- function(path) paste0("read_parquet(", dbQuoteString(phase_con, path), ")")
+for (format in names(phase_paths)) {
+  reference <- paste("SELECT * FROM", phase_table(phase_snapshots[[format]][["read_bcf"]]))
+  candidate <- paste("SELECT * FROM", phase_table(phase_snapshots[[format]][["read_geno"]]))
+  differences <- genotype_reader_difference(phase_con, reference, candidate)
+  stopifnot(differences == 0)
+  phase_comparisons[[length(phase_comparisons) + 1L]] <- data.frame(
+    format, comparison="read_bcf versus read_geno", differences)
+}
+candidate <- paste("SELECT * FROM", phase_table(phase_snapshots[["VCF"]][["read_geno"]]))
+identity_columns <- "CHROM,POS,ID,REF,ALT,sample_index"
+controls <- c(
+  duplicate_multiplicity=genotype_reader_difference(phase_con,
+    paste0("SELECT * FROM (", candidate, ") UNION ALL (SELECT * FROM (", candidate, ") LIMIT 1)"),
+    candidate),
+  null_phase_set=genotype_reader_difference(phase_con, candidate,
+    paste0("SELECT ", identity_columns, ",alleles,phase_before,NULL::BIGINT AS phase_set FROM (", candidate, ")")),
+  changed_phase_set=genotype_reader_difference(phase_con, candidate,
+    paste0("SELECT ", identity_columns, ",alleles,phase_before,",
+           "CASE WHEN phase_set IS NULL THEN NULL ELSE phase_set+1 END AS phase_set FROM (", candidate, ")")),
+  removed_allele_slot=genotype_reader_difference(phase_con, candidate,
+    paste0("SELECT ", identity_columns, ",list_slice(alleles,1,len(alleles)-1) AS alleles,",
+           "phase_before,phase_set FROM (", candidate, ")")),
+  changed_phase_bit=genotype_reader_difference(phase_con, candidate,
+    paste0("SELECT ", identity_columns, ",alleles,",
+           "list_concat([NOT phase_before[1]],list_slice(phase_before,2,len(phase_before))) AS phase_before,",
+           "phase_set FROM (", candidate, ")"))
+)
+stopifnot(all(controls > 0))
+dbDisconnect(phase_con, shutdown=TRUE)
+unlink(phase_directory, recursive=TRUE)
+
+phase_summary <- aggregate(
+  cbind(elapsed,cpu,peak_rss_kib,materialized_database_bytes) ~ format+reader,
+  phase_results, median)
+phase_summary$records_per_second <- phase_counts$records / phase_summary$elapsed
+phase_summary$calls_per_second <- phase_counts$calls / phase_summary$elapsed
+phase_summary$allele_slots_per_second <- phase_counts$allele_slots / phase_summary$elapsed
+phase_summary$phase_sets_per_second <- phase_counts$nonnull_ps / phase_summary$elapsed
+phase_summary$input_bytes_per_second <- phase_identity$bytes[
+  match(phase_summary$format, phase_identity$format)] / phase_summary$elapsed
+```
+
+## Non-null FORMAT/PS materialization
+
+The pinned GIAB HG002 v4.2.1 phased benchmark supplies an integer `FORMAT/PS`
+oracle that the existing HPRC cohort and unphased GIAB input do not. Staging
+retains every chr1 record and the original single sample, then encodes those
+same records as VCF.gz and BCF. It does not generate phase sets or filter calls.
+Rendering rejects either encoding unless its live region, PS header type and
+counts match both registered identities and its receipt binds the file hash and
+original source/index provenance.
+
+Stage the registered source and derived inputs explicitly before rendering:
+
+```sh
+Rscript -e 'duckhtsbench::duckhts_bench_stage_genotype_phase_set()'
+```
+
+```{r phase-set-identity}
+cat("Source revision: ", revision, "\nSource tree: ", src_tree, "\n", sep="")
+cat("Extension MD5:",unname(tools::md5sum(extension)),"\n")
+cat("R:",R.version.string,"; DuckDB:",as.character(packageVersion("duckdb")),"\n")
+cat(system2("uname","-srmo",stdout=TRUE),"\n")
+cat(system2("taskset",c("-pc",Sys.getpid()),stdout=TRUE),"\n")
+cat(system2("sh",c("-c",shQuote("lscpu | sed -n '/Model name:/p'")),stdout=TRUE),"\n")
+cat("DuckDB threads: 1; scan handles: 1; HTSlib decompression workers: 0; repetitions:",
+    phase_repetitions,"\n")
+knitr::kable(phase_identity)
+knitr::kable(data.frame(denominator=names(phase_oracles[["VCF"]]$counts),
+                        count=as.numeric(phase_oracles[["VCF"]]$counts)))
+```
+
+The independent `bcftools query` oracle reads both encodings and requires the
+complete GT/PS call streams to be identical. Every physical record, call,
+allele slot and non-null phase set contributes to the denominator.
+
+```{r phase-set-timing}
+knitr::kable(phase_summary[c("format","reader","elapsed","cpu","records_per_second",
+  "calls_per_second","allele_slots_per_second","phase_sets_per_second",
+  "input_bytes_per_second","peak_rss_kib","materialized_database_bytes")], digits=3)
+knitr::kable(phase_results[c("format","reader","repetition","output_rows","output_calls",
+  "output_slots","output_ps_values","elapsed","cpu","peak_rss_kib")], digits=3)
+```
+
+Each timer includes sequential bind, read/decompression, typed GT/PS decoding,
+vector writing and CTAS in a fresh process. Checksums, denominators, Parquet
+snapshots and comparisons are outside timing. Reader order alternates between
+repetitions. Peak RSS is the process high-water mark after materialization.
+
+```{r phase-set-agreement}
+knitr::kable(do.call(rbind, phase_comparisons))
+knitr::kable(data.frame(control=names(controls), rejected_differences=as.numeric(controls)))
+```
+
+The normalized comparison retains variant identity, original-header sample
+ordinal, every allele and phase slot, and nullable PS. `EXCEPT ALL` runs in both
+directions, so duplicates retain multiplicity. Independent controls prove that
+a changed duplicate multiplicity, NULL or changed PS, removed allele slot and
+changed phase bit are rejected. The one-sample source does not support a
+meaningful selected-sample or sparse comparison; those remain measured by the
+HPRC cohort above.

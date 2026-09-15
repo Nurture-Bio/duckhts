@@ -33,6 +33,10 @@ https://github.com/RGenomicsETL/duckhts/issues/218.
 
 ## DuckVEP independent-event annotation
 
+- Fuse consequence annotation with typed transcript projection for complete
+  field exports. This removes the intermediate annotation table and second
+  projection pass while preserving the existing 17-field and VEP-CSQ output
+  contracts.
 - Add `duckvep_transcript_projection()` for typed transcript/CDS/protein ranges,
   exon/intron ordinals, transcript distance, quality flags and codon/amino-acid
   display from existing annotations and prepared models. Selected transcripts
@@ -176,6 +180,21 @@ compound prediction remains in https://github.com/RGenomicsETL/duckhts/issues/92
   Field comparisons preserve every discrepancy; isolated-record replay checks
   those same cells without changing the alleles or model. Independent-event HGVS
   gaps remain tracked in https://github.com/RGenomicsETL/duckhts/issues/223.
+- Add registered, network-free benchmark inputs with real non-null integer
+  `FORMAT/PS` values, exact GT/PS multiset comparisons and mutation controls;
+  the derived VCF.gz and BCF must declare the same semantic workload identity,
+  and report publication rechecks their observed region, PS type, denominators
+  and source/index identities against that provenance.
+  FastVEP staging can now derive its GFF3 from the exact DuckVEP transcript
+  inventory and records bidirectional transcript, exon and CDS geometry proofs
+  before constructing a cache; reuse recomputes those counts, digests and six
+  bidirectional comparisons instead of trusting the retained receipt. Matched
+  cache staging also rebuilds and verifies the DuckVEP model receipt before
+  derivation and again before publication.
+  The source-bound whole-GIAB campaign retains three one- and four-core runs for
+  each declared output contract, with all 4,095,611 eligible source ALT alleles
+  covered. Complete-field timings expose the current materialized SQL projection
+  path separately from the faster compact annotation path.
 
 # duckhts 1.5.1
 - mark Rduckhts as requiring compilation because its configure scripts build
