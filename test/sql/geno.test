@@ -573,6 +573,22 @@ FROM read_geno('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf')
 ----
 5000	0	4999	5000
 
+query T
+SELECT typeof(calls)
+FROM read_geno('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf') LIMIT 1;
+----
+STRUCT(sample_index UINTEGER, alleles INTEGER[], phase_before BOOLEAN[], phase_set BIGINT)[]
+
+query ITT
+SELECT POS, FILTER::VARCHAR, calls[1].alleles::VARCHAR
+FROM read_geno('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf',
+               include_filter := true)
+WHERE POS IN (1, 13)
+ORDER BY POS;
+----
+1	[PASS]	[0, 1]
+13	[q10, q20]	[0, 1]
+
 # Cycle through missing fields and changing ploidy over several output chunks.
 statement ok
 COPY (

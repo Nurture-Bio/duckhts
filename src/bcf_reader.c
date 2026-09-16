@@ -32,6 +32,7 @@ DUCKDB_EXTENSION_EXTERN
 #include "include/region_list.h"
 #include "include/bcf_scan.h"
 #include "include/bcf_field_vector.h"
+#include "include/bcf_filter_vector.h"
 #include "include/bcf_format.h"
 
 // =============================================================================
@@ -1719,31 +1720,9 @@ static void bcf_read_function(duckdb_function_info info, duckdb_data_chunk outpu
                 break;
             }
             case BCF_OUT_FILTER: {
-                // FILTER is a LIST(VARCHAR)
-                duckdb_list_entry entry;
-                entry.offset = duckdb_list_vector_get_size(vec);
-
-                duckdb_vector child_vec = duckdb_list_vector_get_child(vec);
-
-                if (init->rec->d.n_flt == 0) {
-                    // No filters means PASS
-                    entry.length = 1;
-                    if (!duckhts_list_extend(vec, entry.length, &entry)) goto list_error;
-                    duckdb_vector_assign_string_element(child_vec, entry.offset, "PASS");
-                } else {
-                    entry.length = init->rec->d.n_flt;
-                    // Reserve space for all filters at once
-                    if (!duckhts_list_extend(vec, entry.length, &entry)) goto list_error;
-                    for (int f = 0; f < init->rec->d.n_flt; f++) {
-                        const char* flt_name = bcf_hdr_int2id(init->scan.hdr, BCF_DT_ID,
-                                                              init->rec->d.flt[f]);
-                        duckdb_vector_assign_string_element(child_vec, entry.offset + f,
-                                                            flt_name ? flt_name : ".");
-                    }
-                }
-
-                duckdb_list_entry* list_data = (duckdb_list_entry*)duckdb_vector_get_data(vec);
-                list_data[row_idx] = entry;
+                if (!duckhts_bcf_filter_write(vec, row_idx, init->scan.hdr, init->rec,
+                                               scan_err, sizeof(scan_err)))
+                    goto materialization_error;
                 break;
             }
             case BCF_OUT_VEP: {

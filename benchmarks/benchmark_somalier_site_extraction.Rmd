@@ -1,0 +1,576 @@
+---
+title: "Somalier site extraction: 17,000-site VCF/BCF and BAM/CRAM materialization"
+output:
+  github_document:
+    html_preview: false
+---
+
+This report measures complete count-relation materialization for both Somalier
+extraction surfaces. `duckhts_somalier_vcf_counts()` reads two encodings of the
+same registered GIAB HG002 input. Its untimed panel contains 17,000 distinct
+canonical biallelic SNVs selected deterministically from those records.
+`duckhts_somalier_bam_counts()` reads a separately registered synthetic
+17,000-site alignment workload in BAM and CRAM form with worker counts 1, 2,
+and 4. Neither panel is the published Somalier population panel, and this
+report does not establish biological panel quality.
+
+The VCF.gz and BCF artifacts contain the same 319,349 chr1 records, one sample,
+and all original fields including `FORMAT/AD`. Each timed query scans one
+encoding with zero HTSlib decompression workers and materializes all 17,000
+output rows in DuckDB. Panel construction, connection setup, extension loading,
+warm-up, result verification, and VCF-versus-BCF comparison are outside the
+timer. Peak resident memory is the Linux process high-water mark after the
+timed materialization, so it includes that process's R, DuckDB, extension,
+panel, and warm-up state rather than pretending to isolate one operator.
+
+The synthetic alignment workload has 22 contigs, 17,000 panel sites, and
+17,000 coordinate-sorted 101-base source reads: exactly one read covers each
+site. Even site indices observe panel allele A and odd indices observe panel
+allele B. The BAM and CRAM contain the same records and use the same generated
+reference and explicit indexes. This controlled workload measures sparse
+panel extraction mechanics; it is not a whole-genome I/O, coverage, or
+biological accuracy workload.
+
+## Reproduction
+
+Stage the registered inputs explicitly, build the candidate extension, and
+render from the repository root. Rendering performs no download:
+
+```sh
+DUCKHTSBENCH_REGISTRY=r/duckhtsbench/inst/benchmark_registry.tsv \
+  Rscript -e 'library(duckhtsbench); duckhts_bench_stage_genotype_phase_set()'
+DUCKHTSBENCH_REGISTRY=r/duckhtsbench/inst/benchmark_registry.tsv \
+  Rscript -e 'library(duckhtsbench); duckhtsbench:::duckhts_bench_stage_somalier_site_extraction()'
+make release -j2
+DUCKHTSBENCH_REGISTRY=r/duckhtsbench/inst/benchmark_registry.tsv \
+DUCKHTS_EXTENSION=build/release/duckhts.duckdb_extension \
+  Rscript -e 'rmarkdown::render("benchmarks/benchmark_somalier_site_extraction.Rmd")'
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+```{r measurement}
+required_packages <- c("DBI", "duckdb", "callr", "digest", "duckhtsbench")
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace,
+                                               logical(1L), quietly = TRUE)]
+if (length(missing_packages)) {
+  stop("missing benchmark package(s): ", paste(missing_packages, collapse = ", "))
+}
+
+if (!nzchar(Sys.getenv("DUCKHTSBENCH_REGISTRY"))) {
+  Sys.setenv(DUCKHTSBENCH_REGISTRY = normalizePath(
+    "r/duckhtsbench/inst/benchmark_registry.tsv", mustWork = TRUE))
+}
+extension <- normalizePath(Sys.getenv(
+  "DUCKHTS_EXTENSION", "build/release/duckhts.duckdb_extension"), mustWork = TRUE)
+plan <- duckhtsbench::duckhts_bench_stage_plan("genotype-phase-set")
+ids <- c(VCF = "geno_giab_phased_chr1_vcfgz",
+         BCF = "geno_giab_phased_chr1_bcf")
+if (!identical(plan$id[3:4], unname(ids)) ||
+    any(!grepl("benchmark_somalier_site_extraction.Rmd",
+               plan$consumer, fixed = TRUE))) {
+  stop("genotype phase-set registry does not declare this benchmark consumer")
+}
+inputs <- vapply(ids, duckhtsbench::duckhts_bench_artifact_path, character(1L))
+receipts <- paste0(inputs, ".provenance.tsv")
+if (!all(file.exists(c(inputs, receipts)))) {
+  stop("stage the genotype-phase-set workload before rendering")
+}
+read_receipt <- function(path) {
+  fields <- utils::read.delim(path, colClasses = "character", check.names = FALSE,
+                              stringsAsFactors = FALSE)
+  if (!identical(names(fields), c("field", "value")) || anyDuplicated(fields$field)) {
+    stop("malformed benchmark receipt: ", path)
+  }
+  stats::setNames(fields$value, fields$field)
+}
+receipt_fields <- lapply(receipts, read_receipt)
+names(receipt_fields) <- names(inputs)
+for (format in names(inputs)) {
+  receipt <- receipt_fields[[format]]
+  if (!identical(receipt[["artifact_id"]], ids[[format]]) ||
+      !identical(receipt[["records"]], "319349") ||
+      !identical(receipt[["samples"]], "1") ||
+      !identical(receipt[["observed_sha256"]],
+                 digest::digest(file = inputs[[format]], algo = "sha256"))) {
+    stop(format, " artifact or receipt does not match the registered workload")
+  }
+}
+if (!identical(receipt_fields$VCF[c("records", "samples", "calls", "allele_slots")],
+               receipt_fields$BCF[c("records", "samples", "calls", "allele_slots")])) {
+  stop("registered VCF and BCF denominators differ")
+}
+
+alignment_plan <- duckhtsbench::duckhts_bench_stage_plan("somalier-site-extraction")
+alignment_ids <- c(
+  panel = "somalier_site_panel",
+  reference = "somalier_site_reference",
+  reference_fai = "somalier_site_reference_fai",
+  BAM = "somalier_site_bam",
+  bam_bai = "somalier_site_bam_bai",
+  CRAM = "somalier_site_cram",
+  cram_crai = "somalier_site_cram_crai"
+)
+if (!identical(alignment_plan$id, unname(alignment_ids)) ||
+    any(!grepl("benchmark_somalier_site_extraction.Rmd",
+               alignment_plan$consumer, fixed = TRUE))) {
+  stop("Somalier site-extraction registry does not declare this benchmark consumer")
+}
+alignment_inputs <- vapply(
+  alignment_ids, duckhtsbench::duckhts_bench_artifact_path, character(1L)
+)
+alignment_receipts <- paste0(alignment_inputs, ".provenance.tsv")
+if (!all(file.exists(c(alignment_inputs, alignment_receipts)))) {
+  stop("stage the Somalier site-extraction workload before rendering")
+}
+alignment_receipt_fields <- lapply(alignment_receipts, read_receipt)
+names(alignment_receipt_fields) <- names(alignment_inputs)
+for (name in names(alignment_inputs)) {
+  receipt <- alignment_receipt_fields[[name]]
+  if (!identical(receipt[["artifact_id"]], alignment_ids[[name]]) ||
+      !identical(receipt[["panel_sites"]], "17000") ||
+      !identical(receipt[["source_reads"]], "17000") ||
+      !identical(receipt[["artifact_bytes"]],
+                 as.character(file.info(alignment_inputs[[name]])$size))) {
+    stop(name, " alignment artifact or receipt does not match the registered workload")
+  }
+}
+
+git_output <- function(args) {
+  value <- system2("git", args, stdout = TRUE, stderr = TRUE)
+  status <- attr(value, "status")
+  if (!is.null(status) && status != 0L) stop("git command failed")
+  value
+}
+revision <- git_output(c("rev-parse", "HEAD"))[[1L]]
+source_changes <- git_output(c("status", "--short", "--", "src"))
+source_state <- if (length(source_changes)) {
+  "dirty; benchmark must be rerendered after committing"
+} else {
+  "clean at recorded revision"
+}
+cpu <- readLines("/proc/cpuinfo", warn = FALSE)
+cpu <- sub("^model name[[:space:]]*:[[:space:]]*", "",
+           cpu[grepl("^model name", cpu)][[1L]])
+identity <- data.frame(
+  property = c("candidate checkout revision", "candidate source state",
+               "candidate extension", "R",
+               "DuckDB R package", "HTSlib", "CPU", "DuckDB threads",
+               "HTSlib decompression workers", "timing repetitions"),
+  value = c(revision, source_state, extension, R.version.string,
+            as.character(utils::packageVersion("duckdb")),
+            readLines("third_party/htslib/VERSION", n = 1L), cpu,
+            "VCF/BCF: 1; BAM/CRAM: same as worker_count (1, 2, 4)", "0",
+            "5 fresh processes per format and worker count; one untimed warm materialization")
+)
+knitr::kable(identity)
+
+artifact_identity <- do.call(rbind, lapply(names(inputs), function(format) {
+  receipt <- receipt_fields[[format]]
+  data.frame(
+    format = format,
+    release = receipt[["release"]],
+    records = as.numeric(receipt[["records"]]),
+    samples = as.numeric(receipt[["samples"]]),
+    bytes = file.info(inputs[[format]])$size,
+    stringsAsFactors = FALSE
+  )
+}))
+rownames(artifact_identity) <- NULL
+knitr::kable(artifact_identity)
+
+alignment_artifact_identity <- data.frame(
+  format = c("BAM", "CRAM"),
+  release = alignment_receipt_fields$BAM[["release"]],
+  source_reads = 17000,
+  panel_sites = 17000,
+  bytes = file.info(alignment_inputs[c("BAM", "CRAM")])$size,
+  index_bytes = file.info(alignment_inputs[c("bam_bai", "cram_crai")])$size,
+  stringsAsFactors = FALSE
+)
+knitr::kable(alignment_artifact_identity)
+
+panel_sql <- paste(
+  "CREATE TEMP TABLE panel AS",
+  "WITH candidate_sites AS (",
+  "SELECT CHROM AS region, POS AS position, REF, ALT[1] AS ALT",
+  "FROM read_bcf(%s, scan_mode := 'sequential', decompression_threads := 0)",
+  "WHERE len(REF) = 1 AND len(ALT) = 1 AND len(ALT[1]) = 1",
+  "AND REF <> ALT[1] AND REF IN ('A','C','G','T')",
+  "AND ALT[1] IN ('A','C','G','T')",
+  "), unique_sites AS (",
+  "SELECT *, row_number() OVER (PARTITION BY region, position ORDER BY REF, ALT) AS occurrence",
+  "FROM candidate_sites",
+  "), selected AS (",
+  "SELECT * FROM unique_sites WHERE occurrence = 1",
+  "ORDER BY region, position, REF, ALT LIMIT 17000",
+  ") SELECT 'GRCh38'::VARCHAR AS assembly,",
+  "row_number() OVER (ORDER BY region, position, REF, ALT) - 1 AS site_index,",
+  "region, position, least(REF, ALT) AS allele_a, greatest(REF, ALT) AS allele_b",
+  "FROM selected"
+)
+
+measure_one <- function(extension, input, panel_source, format, repetition,
+                        panel_sql, threads) {
+  con <- DBI::dbConnect(duckdb::duckdb(
+    config = list(allow_unsigned_extensions = "true")))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  quote <- function(value) as.character(DBI::dbQuoteString(con, value))
+  DBI::dbExecute(con, paste("LOAD", quote(extension)))
+  DBI::dbExecute(con, sprintf("SET threads=%d", threads))
+  DBI::dbExecute(con, "SET memory_limit='4GB'")
+  DBI::dbExecute(con, sprintf(panel_sql, quote(panel_source)))
+  panel <- DBI::dbGetQuery(con, paste(
+    "SELECT count(*) AS sites, min(site_index) AS first_site,",
+    "max(site_index) AS last_site, count(DISTINCT (region, position)) AS positions,",
+    "duckhts_somalier_panel_sha256('panel') AS panel_sha256 FROM panel GROUP BY ALL"))
+  if (panel$sites[[1L]] != 17000 || panel$first_site[[1L]] != 0 ||
+      panel$last_site[[1L]] != 16999 || panel$positions[[1L]] != 17000) {
+    stop("derived panel contract changed")
+  }
+  sql <- sprintf(paste(
+    "CREATE OR REPLACE TEMP TABLE extracted AS",
+    "SELECT * FROM duckhts_somalier_vcf_counts(%s, 'panel')"), quote(input))
+  DBI::dbExecute(con, sql)
+  elapsed <- unname(system.time(DBI::dbExecute(con, sql))[["elapsed"]])
+  counts <- DBI::dbGetQuery(con, paste(
+    "SELECT count(*) AS output_rows, count(DISTINCT sample_id) AS output_samples,",
+    "count(DISTINCT site_index) AS output_sites,",
+    "count(*) FILTER (WHERE status = 'measured') AS measured_rows,",
+    "count(*) FILTER (WHERE status <> 'measured') AS unavailable_rows",
+    "FROM extracted"))
+  if (counts$output_rows[[1L]] != 17000 || counts$output_samples[[1L]] != 1 ||
+      counts$output_sites[[1L]] != 17000 || counts$measured_rows[[1L]] != 17000 ||
+      counts$unavailable_rows[[1L]] != 0) {
+    stop("extraction denominator or status changed")
+  }
+  status <- readLines("/proc/self/status", warn = FALSE)
+  high_water <- status[grepl("^VmHWM:[[:space:]]", status)]
+  if (length(high_water) != 1L) stop("Linux VmHWM is unavailable")
+  peak_rss_kib <- as.numeric(sub(
+    "^VmHWM:[[:space:]]*([0-9]+)[[:space:]]+kB$", "\\1", high_water))
+  if (!is.finite(peak_rss_kib)) stop("could not parse Linux VmHWM")
+  data.frame(format = format, repetition = repetition, elapsed_seconds = elapsed,
+             peak_rss_mib = peak_rss_kib / 1024,
+             input_records = 319349, panel_sites = panel$sites[[1L]],
+             output_samples = counts$output_samples[[1L]],
+             output_rows = counts$output_rows[[1L]],
+             measured_rows = counts$measured_rows[[1L]],
+             unavailable_rows = counts$unavailable_rows[[1L]],
+             panel_sha256 = panel$panel_sha256[[1L]], stringsAsFactors = FALSE)
+}
+
+threads <- 1L
+repetitions <- 5L
+measurements <- list()
+for (format in names(inputs)) {
+  for (repetition in seq_len(repetitions)) {
+    measurements[[length(measurements) + 1L]] <- callr::r(
+      measure_one,
+      args = list(extension = extension, input = inputs[[format]],
+                  panel_source = inputs[["VCF"]], format = format,
+                  repetition = repetition, panel_sql = panel_sql,
+                  threads = threads),
+      show = FALSE
+    )
+  }
+}
+measurements <- do.call(rbind, measurements)
+if (length(unique(measurements$panel_sha256)) != 1L) {
+  stop("panel identity changed between processes")
+}
+
+summary <- do.call(rbind, lapply(split(measurements, measurements$format), function(rows) {
+  data.frame(
+    format = rows$format[[1L]],
+    input_records = rows$input_records[[1L]],
+    panel_sites = rows$panel_sites[[1L]],
+    output_samples = rows$output_samples[[1L]],
+    output_rows = rows$output_rows[[1L]],
+    measured_rows = rows$measured_rows[[1L]],
+    unavailable_rows = rows$unavailable_rows[[1L]],
+    threads = threads,
+    median_seconds = median(rows$elapsed_seconds),
+    minimum_seconds = min(rows$elapsed_seconds),
+    maximum_seconds = max(rows$elapsed_seconds),
+    median_peak_rss_mib = median(rows$peak_rss_mib),
+    maximum_peak_rss_mib = max(rows$peak_rss_mib),
+    input_records_per_second = rows$input_records[[1L]] /
+      median(rows$elapsed_seconds),
+    output_rows_per_second = rows$output_rows[[1L]] /
+      median(rows$elapsed_seconds),
+    stringsAsFactors = FALSE
+  )
+}))
+rownames(summary) <- NULL
+knitr::kable(summary, digits = 3)
+
+validation <- callr::r(function(extension, inputs, panel_sql) {
+  con <- DBI::dbConnect(duckdb::duckdb(
+    config = list(allow_unsigned_extensions = "true")))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  quote <- function(value) as.character(DBI::dbQuoteString(con, value))
+  DBI::dbExecute(con, paste("LOAD", quote(extension)))
+  DBI::dbExecute(con, "SET threads=1")
+  DBI::dbExecute(con, sprintf(panel_sql, quote(inputs[["VCF"]])))
+  for (format in names(inputs)) {
+    DBI::dbExecute(con, sprintf(
+      "CREATE TEMP TABLE %s_evidence AS SELECT * FROM duckhts_somalier_vcf_counts(%s, 'panel')",
+      tolower(format), quote(inputs[[format]])))
+  }
+  differences <- DBI::dbGetQuery(con, paste(
+    "SELECT count(*) AS n FROM (",
+    "(SELECT * EXCLUDE(source_path) FROM vcf_evidence",
+    " EXCEPT ALL SELECT * EXCLUDE(source_path) FROM bcf_evidence)",
+    "UNION ALL",
+    "(SELECT * EXCLUDE(source_path) FROM bcf_evidence",
+    " EXCEPT ALL SELECT * EXCLUDE(source_path) FROM vcf_evidence))"))$n[[1L]]
+  data.frame(comparison = "VCF.gz versus BCF complete typed rows",
+             left_rows = DBI::dbGetQuery(con, "SELECT count(*) n FROM vcf_evidence")$n[[1L]],
+             right_rows = DBI::dbGetQuery(con, "SELECT count(*) n FROM bcf_evidence")$n[[1L]],
+             symmetric_difference_rows = differences)
+}, args = list(extension = extension, inputs = inputs, panel_sql = panel_sql), show = FALSE)
+if (validation$symmetric_difference_rows[[1L]] != 0) {
+  stop("VCF and BCF extracted relations differ")
+}
+knitr::kable(validation)
+
+worker_capability <- callr::r(function(extension) {
+  con <- DBI::dbConnect(duckdb::duckdb(
+    config = list(allow_unsigned_extensions = "true")))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  quote <- function(value) as.character(DBI::dbQuoteString(con, value))
+  DBI::dbExecute(con, paste("LOAD", quote(extension)))
+  functions <- DBI::dbGetQuery(con, paste(
+    "SELECT parameters FROM duckdb_functions()",
+    "WHERE function_name = 'duckhts_somalier_bam_counts'"
+  ))
+  nrow(functions) == 1L && "worker_count" %in% functions$parameters[[1L]]
+}, args = list(extension = extension), show = FALSE)
+if (!isTRUE(worker_capability)) {
+  stop(paste(
+    "candidate duckhts_somalier_bam_counts() does not expose worker_count;",
+    "the required 1/2/4-worker benchmark cannot run"
+  ))
+}
+
+measure_alignment_one <- function(extension, source, index, reference,
+                                  reference_index, panel, format,
+                                  repetition, worker_count) {
+  con <- DBI::dbConnect(duckdb::duckdb(
+    config = list(allow_unsigned_extensions = "true")))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  quote <- function(value) as.character(DBI::dbQuoteString(con, value))
+  DBI::dbExecute(con, paste("LOAD", quote(extension)))
+  DBI::dbExecute(con, sprintf("SET threads=%d", worker_count))
+  DBI::dbExecute(con, "SET memory_limit='4GB'")
+  panel_counts <- DBI::dbGetQuery(con, paste(
+    "SELECT count(*) AS sites, count(DISTINCT (region, position)) AS positions,",
+    "min(site_index) AS first_site, max(site_index) AS last_site FROM read_parquet(",
+    quote(panel), ")"
+  ))
+  if (panel_counts$sites[[1L]] != 17000 ||
+      panel_counts$positions[[1L]] != 17000 ||
+      panel_counts$first_site[[1L]] != 0 || panel_counts$last_site[[1L]] != 16999) {
+    stop("synthetic alignment panel contract changed")
+  }
+  sql <- sprintf(paste(
+    "CREATE OR REPLACE TEMP TABLE extracted AS SELECT * FROM",
+    "duckhts_somalier_bam_counts(%s, NULL, 'synthetic', %s,",
+    "panel_parquet := %s, index_path := %s, reference_index_path := %s,",
+    "decompression_threads := 0, worker_count := %d)"
+  ), quote(source), quote(reference), quote(panel), quote(index),
+  quote(reference_index), worker_count)
+  DBI::dbExecute(con, sql)
+  elapsed <- unname(system.time(DBI::dbExecute(con, sql))[["elapsed"]])
+  counts <- DBI::dbGetQuery(con, paste(
+    "SELECT count(*) AS output_rows, count(DISTINCT sample_id) AS output_samples,",
+    "count(DISTINCT site_index) AS output_sites,",
+    "count(*) FILTER (WHERE status = 'measured') AS measured_rows,",
+    "count(*) FILTER (WHERE status <> 'measured') AS unavailable_rows,",
+    "sum(a) AS a, sum(b) AS b, sum(other) AS other, sum(a + b + other) AS observed_bases",
+    "FROM extracted"
+  ))
+  if (counts$output_rows[[1L]] != 17000 || counts$output_samples[[1L]] != 1 ||
+      counts$output_sites[[1L]] != 17000 || counts$measured_rows[[1L]] != 17000 ||
+      counts$unavailable_rows[[1L]] != 0 || counts$a[[1L]] != 8500 ||
+      counts$b[[1L]] != 8500 || counts$other[[1L]] != 0 ||
+      counts$observed_bases[[1L]] != 17000) {
+    stop("alignment extraction denominator, status, or count contract changed")
+  }
+  status <- readLines("/proc/self/status", warn = FALSE)
+  high_water <- status[grepl("^VmHWM:[[:space:]]", status)]
+  if (length(high_water) != 1L) stop("Linux VmHWM is unavailable")
+  peak_rss_kib <- as.numeric(sub(
+    "^VmHWM:[[:space:]]*([0-9]+)[[:space:]]+kB$", "\\1", high_water))
+  if (!is.finite(peak_rss_kib)) stop("could not parse Linux VmHWM")
+  data.frame(
+    format = format, repetition = repetition, worker_count = worker_count,
+    elapsed_seconds = elapsed, peak_rss_mib = peak_rss_kib / 1024,
+    source_reads = 17000, panel_sites = panel_counts$sites[[1L]],
+    output_samples = counts$output_samples[[1L]],
+    output_rows = counts$output_rows[[1L]],
+    measured_rows = counts$measured_rows[[1L]],
+    unavailable_rows = counts$unavailable_rows[[1L]],
+    observed_bases = counts$observed_bases[[1L]], stringsAsFactors = FALSE
+  )
+}
+
+worker_counts <- c(1L, 2L, 4L)
+alignment_measurements <- list()
+for (format in c("BAM", "CRAM")) {
+  index_name <- if (format == "BAM") "bam_bai" else "cram_crai"
+  for (worker_count in worker_counts) {
+    for (repetition in seq_len(repetitions)) {
+      alignment_measurements[[length(alignment_measurements) + 1L]] <- callr::r(
+        measure_alignment_one,
+        args = list(
+          extension = extension, source = alignment_inputs[[format]],
+          index = alignment_inputs[[index_name]],
+          reference = alignment_inputs[["reference"]],
+          reference_index = alignment_inputs[["reference_fai"]],
+          panel = alignment_inputs[["panel"]], format = format,
+          repetition = repetition, worker_count = worker_count
+        ),
+        show = FALSE
+      )
+    }
+  }
+}
+alignment_measurements <- do.call(rbind, alignment_measurements)
+alignment_groups <- split(
+  alignment_measurements,
+  interaction(alignment_measurements$format,
+              alignment_measurements$worker_count, drop = TRUE)
+)
+alignment_summary <- do.call(rbind, lapply(alignment_groups, function(rows) {
+  data.frame(
+    format = rows$format[[1L]], source_reads = rows$source_reads[[1L]],
+    panel_sites = rows$panel_sites[[1L]],
+    output_samples = rows$output_samples[[1L]], output_rows = rows$output_rows[[1L]],
+    measured_rows = rows$measured_rows[[1L]],
+    unavailable_rows = rows$unavailable_rows[[1L]],
+    worker_count = rows$worker_count[[1L]],
+    median_seconds = median(rows$elapsed_seconds),
+    minimum_seconds = min(rows$elapsed_seconds),
+    maximum_seconds = max(rows$elapsed_seconds),
+    median_peak_rss_mib = median(rows$peak_rss_mib),
+    maximum_peak_rss_mib = max(rows$peak_rss_mib),
+    source_reads_per_second = rows$source_reads[[1L]] /
+      median(rows$elapsed_seconds),
+    output_rows_per_second = rows$output_rows[[1L]] /
+      median(rows$elapsed_seconds), stringsAsFactors = FALSE
+  )
+}))
+alignment_summary <- alignment_summary[
+  order(alignment_summary$format, alignment_summary$worker_count), , drop = FALSE
+]
+rownames(alignment_summary) <- NULL
+knitr::kable(alignment_summary, digits = 3)
+
+alignment_validation <- callr::r(function(extension, inputs) {
+  con <- DBI::dbConnect(duckdb::duckdb(
+    config = list(allow_unsigned_extensions = "true")))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  quote <- function(value) as.character(DBI::dbQuoteString(con, value))
+  DBI::dbExecute(con, paste("LOAD", quote(extension)))
+  DBI::dbExecute(con, "SET threads=4")
+  for (format in c("BAM", "CRAM")) {
+    index_name <- if (format == "BAM") "bam_bai" else "cram_crai"
+    for (worker_count in c(1L, 2L, 4L)) {
+      DBI::dbExecute(con, sprintf(paste(
+        "CREATE TEMP TABLE %s_w%d AS SELECT * FROM",
+        "duckhts_somalier_bam_counts(%s, NULL, 'synthetic', %s,",
+        "panel_parquet := %s, index_path := %s, reference_index_path := %s,",
+        "decompression_threads := 0, worker_count := %d)"
+      ), tolower(format), worker_count, quote(inputs[[format]]),
+      quote(inputs[["reference"]]), quote(inputs[["panel"]]),
+      quote(inputs[[index_name]]),
+      quote(inputs[["reference_fai"]]), worker_count))
+    }
+  }
+  compare <- function(left, right, comparison, excluded_columns = "none") {
+    projection <- if (excluded_columns == "none") "*" else "* EXCLUDE(source_path)"
+    differences <- DBI::dbGetQuery(con, sprintf(paste(
+      "SELECT count(*) AS n FROM (",
+      "(SELECT %s FROM %s EXCEPT ALL SELECT %s FROM %s)",
+      "UNION ALL",
+      "(SELECT %s FROM %s EXCEPT ALL SELECT %s FROM %s))"
+    ), projection, left, projection, right,
+    projection, right, projection, left))$n[[1L]]
+    data.frame(
+      comparison = comparison, excluded_columns = excluded_columns,
+      left_rows = DBI::dbGetQuery(
+        con, paste("SELECT count(*) n FROM", left))$n[[1L]],
+      right_rows = DBI::dbGetQuery(
+        con, paste("SELECT count(*) n FROM", right))$n[[1L]],
+      symmetric_difference_rows = differences, stringsAsFactors = FALSE
+    )
+  }
+  validations <- list()
+  for (format in c("BAM", "CRAM")) {
+    for (worker_count in c(2L, 4L)) {
+      validations[[length(validations) + 1L]] <- compare(
+        paste0(tolower(format), "_w1"),
+        paste0(tolower(format), "_w", worker_count),
+        sprintf("%s worker_count 1 versus %d", format, worker_count)
+      )
+    }
+  }
+  validations[[length(validations) + 1L]] <- compare(
+    "bam_w4", "cram_w4", "BAM versus CRAM at worker_count 4", "source_path"
+  )
+  do.call(rbind, validations)
+}, args = list(extension = extension, inputs = alignment_inputs), show = FALSE)
+if (any(alignment_validation$symmetric_difference_rows != 0)) {
+  stop("alignment extraction relations differ across formats or worker counts")
+}
+knitr::kable(alignment_validation)
+```
+
+## Result
+
+At one DuckDB thread, median complete materialization was
+`r sprintf("%.3f", summary$median_seconds[summary$format == "VCF"])` seconds from
+VCF.gz and
+`r sprintf("%.3f", summary$median_seconds[summary$format == "BCF"])` seconds from
+BCF. Both runs consumed 319,349 physical records and emitted exactly 17,000
+measured rows for one sample. Median whole-process peak RSS was
+`r sprintf("%.1f", summary$median_peak_rss_mib[summary$format == "VCF"])` MiB
+for VCF.gz and
+`r sprintf("%.1f", summary$median_peak_rss_mib[summary$format == "BCF"])` MiB
+for BCF. The exact bidirectional `EXCEPT ALL` comparison,
+excluding only the intentionally different source path, found
+`r validation$symmetric_difference_rows[[1L]]` differing rows.
+
+This is the first recorded workload for the extraction surface, so there is no
+identical historical baseline and no before/after speedup claim. The comparison
+shows encoding and worker-count measurements within the same candidate build.
+
+For the synthetic aligned-read workload, the measured BAM medians for worker
+counts 1, 2, and 4 were
+`r paste(sprintf("%.3f", alignment_summary$median_seconds[alignment_summary$format == "BAM"]), collapse = ", ")`
+seconds; the corresponding CRAM medians were
+`r paste(sprintf("%.3f", alignment_summary$median_seconds[alignment_summary$format == "CRAM"]), collapse = ", ")`
+seconds. Every timed materialization consumed 17,000 source reads across 17,000
+panel sites and emitted 17,000 measured rows for one sample. Whole-process
+median peak RSS for BAM was
+`r paste(sprintf("%.1f", alignment_summary$median_peak_rss_mib[alignment_summary$format == "BAM"]), collapse = ", ")`
+MiB at worker counts 1, 2, and 4; CRAM used
+`r paste(sprintf("%.1f", alignment_summary$median_peak_rss_mib[alignment_summary$format == "CRAM"]), collapse = ", ")`
+MiB. The four exact worker-count comparisons, which excluded no columns,
+found at most
+`r max(alignment_validation$symmetric_difference_rows[alignment_validation$excluded_columns == "none"])`
+differing rows. The BAM-versus-CRAM comparison at four workers excluded only
+the intentionally different source path and found
+`r alignment_validation$symmetric_difference_rows[alignment_validation$excluded_columns == "source_path"]`
+differing rows.
+
+These measurements do not establish a general scaling result. They describe
+this small synthetic sparse-panel workload on the recorded machine and candidate
+binary. The report does not measure a multi-sample cohort, remote I/O, output
+persisted to Parquet, whole-genome alignments, or downstream sketch,
+relatedness, CHARR, or contamination computation.

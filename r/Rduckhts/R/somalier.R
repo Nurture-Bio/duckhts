@@ -1,3 +1,251 @@
+#' Import an Already Selected Somalier Sites VCF or BCF
+#'
+#' Convert an existing Somalier-compatible sites file into the canonical typed
+#' panel and population-frequency relation used by DuckHTS extraction,
+#' relatedness, and contamination functions. REF and ALT are oriented into
+#' lexical A/B order and alternate-allele frequency is flipped with the alleles,
+#' so `population_b_af` always describes `allele_b`. Exact Somalier v0.3.4 X/Y
+#' aliases are excluded, matching its autosomal frequency importer.
+#'
+#' This function does not select sites from a population VCF. Somalier's
+#' `find-sites` algorithm has separate AF/AN, QC, interval-exclusion, and spacing
+#' semantics and is not implied by importing its output.
+#'
+#' @param con A DuckDB connection with DuckHTS loaded.
+#' @param path One already selected sites VCF/BCF path or URI. `INFO/AF` must be
+#'   declared `Number=A,Type=Float` and every retained record must be one
+#'   canonical biallelic SNV with one finite AF value.
+#' @param assembly Nonempty assembly identifier attached to every site.
+#' @param max_sites Positive input-site limit, at most 100,000,000.
+#' @param table_name Optional output table. `NULL` returns a data frame.
+#' @param overwrite Whether an existing output table may be replaced.
+#' @return A data frame if `table_name` is `NULL`; otherwise invisible `TRUE`.
+#' @export
+rduckhts_somalier_import_sites <- function(
+  con, path, assembly, max_sites = 1000000,
+  table_name = NULL, overwrite = FALSE
+) {
+  .somalier_validate_output(table_name, overwrite)
+  .somalier_scalar_text(path, "path")
+  .somalier_scalar_text(assembly, "assembly")
+  if (nchar(assembly, type = "bytes") > 1024L) {
+    stop("assembly must be at most 1,024 bytes", call. = FALSE)
+  }
+  max_sites <- .somalier_bounded_whole_number(
+    max_sites, "max_sites", 1, 100000000
+  )
+  query <- sprintf(
+    paste0(
+      "SELECT * FROM duckhts_somalier_import_sites(%s, %s, max_sites := %s)"
+    ),
+    sql_quote_string(con, path), sql_quote_string(con, assembly), max_sites
+  )
+  .somalier_publish_query(con, query, table_name, overwrite)
+}
+
+#' Extract Panel-Aligned Counts from VCF or BCF
+#'
+#' Produce the complete sample-by-panel count relation consumed by the
+#' Somalier-derived relatedness and contamination functions. `FORMAT/AD` must
+#' declare `Number=R,Type=Integer`; A and B slots are matched by exact REF/ALT
+#' identity, and `other` sums only the remaining declared-allele slots. Missing
+#' sites and unavailable AD remain rows with three NULL counts, distinct from
+#' measured zero depth. The panel can be any typed table/view or ordinary
+#' Parquet file with the canonical six panel identity columns.
+#'
+#' @param con A DuckDB connection with DuckHTS loaded.
+#' @param path One VCF/BCF path or URI.
+#' @param panel_table Name of the ordered panel table or view.
+#' @param panel_parquet Ordinary panel Parquet path, instead of `panel_table`.
+#' @param samples Optional HTSlib sample selector: comma-separated inclusion,
+#'   leading `^` exclusion, `"-"` for all, or `""` for none.
+#' @param filter_policy Record FILTER policy: `"pass_or_unapplied"` makes named
+#'   failures unavailable, `"include_all"` uses their AD, and `"error"` rejects
+#'   a selected panel record with a named failure.
+#' @param table_name Optional output table. `NULL` returns a data frame.
+#' @param overwrite Whether an existing output table may be replaced.
+#' @return A data frame if `table_name` is `NULL`; otherwise invisible `TRUE`.
+#' @export
+rduckhts_somalier_vcf_counts <- function(
+  con, path, panel_table = NULL, panel_parquet = NULL, samples = NULL,
+  filter_policy = c("pass_or_unapplied", "include_all", "error"),
+  table_name = NULL, overwrite = FALSE
+) {
+  .somalier_validate_output(table_name, overwrite)
+  .somalier_scalar_text(path, "path")
+  if (!is.null(samples)) .somalier_scalar_text(samples, "samples", allow_empty = TRUE)
+  filter_policy <- match.arg(filter_policy)
+
+  panel <- .somalier_source(con, panel_table, panel_parquet, "panel")
+  if (panel$temporary) {
+    on.exit(.somalier_drop_view(con, panel$name), add = TRUE, after = FALSE)
+  }
+  arguments <- c(
+    sql_quote_string(con, path), sql_quote_string(con, panel$name),
+    if (!is.null(samples)) paste0("samples := ", sql_quote_string(con, samples)),
+    paste0("filter_policy := ", sql_quote_string(con, filter_policy))
+  )
+  query <- paste0(
+    "SELECT * FROM duckhts_somalier_vcf_counts(",
+    paste(arguments, collapse = ", "), ")"
+  )
+  .somalier_publish_query(con, query, table_name, overwrite)
+}
+
+#' Extract Panel-Aligned Counts from BAM or CRAM
+#'
+#' Count observed A, B, and other query bases at every site in a typed panel.
+#' The panel is prepared once, then each scan worker owns one indexed
+#' multi-region scan and independent BAM/CRAM, index, reference, pileup, and
+#' overlap state. `worker_count` bounds the number of DuckDB-scheduled panel
+#' shards; the connection's thread setting bounds how many can run concurrently.
+#' `decompression_threads` separately controls htslib decompression workers per
+#' source handle.
+#' Valid uncovered sites are measured zero depth; reference or alignment-header
+#' mismatches remain rows with NULL counts and a named status. The panel can be
+#' a committed table/view or an ordinary Parquet file. Caller-local temporary
+#' relations and uncommitted changes are not visible during panel preparation.
+#' One retained-connection preparation slot is shared by concurrent calls;
+#' nested or concurrent preparation errors and callers may retry.
+#'
+#' @param con A DuckDB connection with DuckHTS loaded.
+#' @param source_path One indexed BAM/CRAM path or URI.
+#' @param sample_id Nonempty sample identity assigned to the extracted rows.
+#' @param reference_path Reference FASTA matching the panel and alignments.
+#' @param panel_table Name of a committed ordered panel table or view.
+#' @param panel_parquet Ordinary panel Parquet path, instead of `panel_table`.
+#' @param index_path Optional explicit BAM/CRAM index path.
+#' @param reference_index_path Optional explicit FASTA index path.
+#' @param min_mapq Minimum alignment mapping quality.
+#' @param min_baseq Minimum observed-base quality. Missing qualities pass only
+#'   when this is zero.
+#' @param require_flags SAM flag bits that every retained alignment must have.
+#' @param exclude_flags SAM flag bits that exclude an alignment.
+#' @param overlap_policy Either `"hileup_v0.1.0"` encounter-order mate
+#'   suppression or `"none"`.
+#' @param decompression_threads Number of htslib decompression worker threads.
+#' @param worker_count Number of independently schedulable panel shards, from
+#'   1 through 64. Each nonempty shard opens its own reader/reference state.
+#' @param max_depth Maximum admitted pileup depth before an explicit error.
+#' @param max_overlap_qnames Per-site, per-job capacity for overlap-suppression
+#'   names.
+#' @param max_sites Maximum panel cardinality.
+#' @param max_region_bytes Per-job capacity for the indexed multi-region request.
+#' @param remote_block_bytes Remote alignment block size per worker handle.
+#' @param remote_cache_bytes Remote alignment cache size per worker handle.
+#' @param reference_cache_bytes Remote reference cache size per worker handle.
+#' @param table_name Optional output table. `NULL` returns a data frame.
+#' @param overwrite Whether an existing output table may be replaced.
+#' @return A data frame ordered by `site_index` if `table_name` is `NULL`;
+#'   otherwise invisible `TRUE`.
+#' @export
+rduckhts_somalier_bam_counts <- function(
+  con, source_path, sample_id, reference_path,
+  panel_table = NULL, panel_parquet = NULL,
+  index_path = NULL, reference_index_path = NULL,
+  min_mapq = 1, min_baseq = 0, require_flags = 0, exclude_flags = 1796,
+  overlap_policy = c("hileup_v0.1.0", "none"), decompression_threads = 0,
+  worker_count = 1, max_depth = 100000, max_overlap_qnames = 100000,
+  max_sites = 1000000,
+  max_region_bytes = 67108864, remote_block_bytes = 1048576,
+  remote_cache_bytes = 67108864, reference_cache_bytes = 67108864,
+  table_name = NULL, overwrite = FALSE
+) {
+  .somalier_validate_output(table_name, overwrite)
+  .somalier_scalar_text(source_path, "source_path")
+  .somalier_scalar_text(sample_id, "sample_id")
+  .somalier_scalar_text(reference_path, "reference_path")
+  if (nchar(sample_id, type = "bytes") > 1024L) {
+    stop("sample_id must be at most 1,024 bytes", call. = FALSE)
+  }
+  if (!is.null(index_path)) .somalier_scalar_text(index_path, "index_path")
+  if (!is.null(reference_index_path)) {
+    .somalier_scalar_text(reference_index_path, "reference_index_path")
+  }
+  overlap_policy <- match.arg(overlap_policy)
+
+  min_mapq <- .somalier_bounded_whole_number(min_mapq, "min_mapq", 0, 255)
+  min_baseq <- .somalier_bounded_whole_number(min_baseq, "min_baseq", 0, 255)
+  require_flags <- .somalier_bounded_whole_number(
+    require_flags, "require_flags", 0, 65535
+  )
+  exclude_flags <- .somalier_bounded_whole_number(
+    exclude_flags, "exclude_flags", 0, 65535
+  )
+  decompression_threads <- .somalier_bounded_whole_number(
+    decompression_threads, "decompression_threads", 0, .Machine$integer.max
+  )
+  worker_count <- .somalier_bounded_whole_number(
+    worker_count, "worker_count", 1, 64
+  )
+  max_depth <- .somalier_bounded_whole_number(
+    max_depth, "max_depth", 1, .Machine$integer.max - 1
+  )
+  max_overlap_qnames <- .somalier_bounded_whole_number(
+    max_overlap_qnames, "max_overlap_qnames", 0, .Machine$integer.max
+  )
+  max_sites <- .somalier_bounded_whole_number(
+    max_sites, "max_sites", 1, 100000000
+  )
+  max_region_bytes <- .somalier_bounded_whole_number(
+    max_region_bytes, "max_region_bytes", 1, .Machine$integer.max
+  )
+  remote_block_bytes <- .somalier_bounded_whole_number(
+    remote_block_bytes, "remote_block_bytes", 0, .Machine$integer.max
+  )
+  remote_cache_bytes <- .somalier_bounded_whole_number(
+    remote_cache_bytes, "remote_cache_bytes", 0, .Machine$integer.max
+  )
+  reference_cache_bytes <- .somalier_bounded_whole_number(
+    reference_cache_bytes, "reference_cache_bytes", 0, .Machine$integer.max
+  )
+
+  if (is.null(panel_table) == is.null(panel_parquet)) {
+    stop("panel: supply exactly one table name or Parquet path", call. = FALSE)
+  }
+  if (!is.null(panel_table)) {
+    .somalier_validate_name(panel_table, "panel_table")
+  } else {
+    .somalier_validate_name(panel_parquet, "panel_parquet")
+  }
+  arguments <- c(
+    sql_quote_string(con, source_path),
+    if (is.null(panel_table)) "NULL" else sql_quote_string(con, panel_table),
+    sql_quote_string(con, sample_id), sql_quote_string(con, reference_path),
+    if (!is.null(panel_parquet)) {
+      paste0("panel_parquet := ", sql_quote_string(con, panel_parquet))
+    },
+    if (!is.null(index_path)) {
+      paste0("index_path := ", sql_quote_string(con, index_path))
+    },
+    if (!is.null(reference_index_path)) {
+      paste0(
+        "reference_index_path := ",
+        sql_quote_string(con, reference_index_path)
+      )
+    },
+    paste0("min_mapq := ", min_mapq),
+    paste0("min_baseq := ", min_baseq),
+    paste0("require_flags := ", require_flags),
+    paste0("exclude_flags := ", exclude_flags),
+    paste0("overlap_policy := ", sql_quote_string(con, overlap_policy)),
+    paste0("decompression_threads := ", decompression_threads),
+    paste0("worker_count := ", worker_count),
+    paste0("max_depth := ", max_depth),
+    paste0("max_overlap_qnames := ", max_overlap_qnames),
+    paste0("max_sites := ", max_sites),
+    paste0("max_region_bytes := ", max_region_bytes),
+    paste0("remote_block_bytes := ", remote_block_bytes),
+    paste0("remote_cache_bytes := ", remote_cache_bytes),
+    paste0("reference_cache_bytes := ", reference_cache_bytes)
+  )
+  query <- paste0(
+    "SELECT * FROM duckhts_somalier_bam_counts(",
+    paste(arguments, collapse = ", "), ") ORDER BY site_index"
+  )
+  .somalier_publish_query(con, query, table_name, overwrite)
+}
+
 #' Prepare Somalier-Derived Sample Sketches
 #'
 #' Build packed, panel-verified relatedness sketches from measured A/B/other
@@ -389,6 +637,15 @@ rduckhts_somalier_matched_contamination <- function(
   invisible(value)
 }
 
+.somalier_scalar_text <- function(value, name, allow_empty = FALSE) {
+  if (!is.character(value) || length(value) != 1L || is.na(value) ||
+      (!allow_empty && !nzchar(value))) {
+    qualifier <- if (allow_empty) "one non-missing string" else "one nonempty string"
+    stop(name, " must be ", qualifier, call. = FALSE)
+  }
+  invisible(value)
+}
+
 .somalier_validate_output <- function(table_name, overwrite) {
   if (!is.null(table_name)) .somalier_validate_name(table_name, "table_name")
   if (!is.logical(overwrite) || length(overwrite) != 1L || is.na(overwrite)) {
@@ -402,6 +659,19 @@ rduckhts_somalier_matched_contamination <- function(
       value < 1 || value > maximum || value != floor(value)) {
     stop(name, " must be one positive, exactly representable whole number <= ",
          format(maximum, scientific = FALSE), call. = FALSE)
+  }
+  value
+}
+
+.somalier_bounded_whole_number <- function(value, name, minimum, maximum) {
+  if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
+      value < minimum || value > maximum || value != floor(value)) {
+    stop(
+      name, " must be one exactly representable whole number in [",
+      format(minimum, scientific = FALSE), ", ",
+      format(maximum, scientific = FALSE), "]",
+      call. = FALSE
+    )
   }
   value
 }

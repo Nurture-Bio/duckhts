@@ -3,6 +3,7 @@
 DUCKDB_EXTENSION_EXTERN
 #include "include/bcf_genotypes.h"
 #include "include/bcf_field_vector.h"
+#include "include/bcf_filter_vector.h"
 #include "include/duckdb_alloc.h"
 #include "include/duckdb_list.h"
 #include "include/region_list.h"
@@ -12,7 +13,17 @@ DUCKDB_EXTENSION_EXTERN
 #include <string.h>
 #include <strings.h>
 
-enum { GENO_RECORD_INDEX, GENO_CHROM, GENO_POS, GENO_ID, GENO_REF, GENO_ALT, GENO_CALLS, GENO_COLUMNS };
+enum {
+    GENO_RECORD_INDEX,
+    GENO_CHROM,
+    GENO_POS,
+    GENO_ID,
+    GENO_REF,
+    GENO_ALT,
+    GENO_FILTER,
+    GENO_CALLS,
+    GENO_COLUMNS
+};
 
 typedef struct {
     char *name;
@@ -31,6 +42,7 @@ typedef struct {
     int decompression_threads;
     int non_reference_only;
     int raw_gt;
+    int include_filter;
     int catalog;
     geno_format_field_t *fields;
     int field_count;
@@ -197,6 +209,7 @@ static void geno_bind_schema(duckdb_bind_info info, const geno_bind_t *bind) {
         duckdb_bind_add_result_column(info, "ID", text);
         duckdb_bind_add_result_column(info, "REF", text);
         duckdb_bind_add_result_column(info, "ALT", alts);
+        if (bind->include_filter) duckdb_bind_add_result_column(info, "FILTER", alts);
         duckdb_bind_add_result_column(info, "calls", calls);
         duckdb_destroy_logical_type(&ordinal);
         duckdb_destroy_logical_type(&position);
@@ -255,6 +268,9 @@ static void geno_bind(duckdb_bind_info info, int catalog) {
         value = duckdb_bind_get_named_parameter(info, "raw_gt");
         bind->raw_gt = value && !duckdb_is_null_value(value) && duckdb_get_bool(value);
         if (value) duckdb_destroy_value(&value);
+        value = duckdb_bind_get_named_parameter(info, "include_filter");
+        bind->include_filter = value && !duckdb_is_null_value(value) && duckdb_get_bool(value);
+        if (value) duckdb_destroy_value(&value);
     }
     if (!duckhts_bcf_scan_open(&metadata, bind->path, NULL, 0, DUCKHTS_HTS_IO_PROFILE_METADATA,
             catalog ? "read_bcf_samples" : "read_geno", error, sizeof(error)) ||
@@ -300,6 +316,18 @@ static void geno_global_init(duckdb_init_info info) {
     duckdb_init_set_max_threads(info, 1);
 }
 
+static int geno_column_kind(const geno_bind_t *bind, idx_t column) {
+    if (column <= GENO_ALT) return (int)column;
+    if (bind->include_filter) {
+        if (column == GENO_FILTER) return GENO_FILTER;
+        if (column == GENO_CALLS) return GENO_CALLS;
+    } else if (column == GENO_FILTER) {
+        /* FILTER is absent, so the physical column at this index is calls. */
+        return GENO_CALLS;
+    }
+    return -1;
+}
+
 static void geno_local_init(duckdb_init_info info) {
     const geno_bind_t *bind = duckdb_init_get_bind_data(info);
     geno_local_t *local = duckhts_alloc_array(1, sizeof(*local));
@@ -312,10 +340,16 @@ static void geno_local_init(duckdb_init_info info) {
     }
     for (idx_t i = 0; i < local->column_count; i++) {
         idx_t col = duckdb_init_get_column_index(info, i);
-        local->columns[i] = col;
+        int kind = bind->catalog ? (int)col : geno_column_kind(bind, col);
+        if (kind < 0) {
+            snprintf(error, sizeof(error), "read_geno: invalid projected column");
+            goto fail;
+        }
+        local->columns[i] = (idx_t)kind;
         if (!bind->catalog) {
-            if (col == GENO_CALLS) local->needs_calls = 1;
-            if (col == GENO_ID || col == GENO_REF || col == GENO_ALT) local->unpack_mask |= BCF_UN_STR;
+            if (kind == GENO_CALLS) local->needs_calls = 1;
+            if (kind == GENO_ID || kind == GENO_REF || kind == GENO_ALT) local->unpack_mask |= BCF_UN_STR;
+            if (kind == GENO_FILTER) local->unpack_mask |= BCF_UN_FLT;
         }
     }
     if (!bind->catalog) {
@@ -515,6 +549,10 @@ static void geno_read(duckdb_function_info info, duckdb_data_chunk output) {
             case GENO_ALT:
                 if (!geno_write_alts(vector, rows, record)) goto list_error;
                 break;
+            case GENO_FILTER:
+                if (!duckhts_bcf_filter_write(vector, rows, local->scan.hdr, record,
+                                               error, sizeof(error))) goto fail;
+                break;
             case GENO_CALLS:
                 if (!geno_write_calls(vector, rows, bind, &local->genotypes, local->formats,
                         &local->scan)) goto list_error;
@@ -557,6 +595,7 @@ void register_read_geno_functions(duckdb_connection connection) {
             duckdb_table_function_add_named_parameter(function, "decompression_threads", bigint);
             duckdb_table_function_add_named_parameter(function, "non_reference_only", boolean);
             duckdb_table_function_add_named_parameter(function, "raw_gt", boolean);
+            duckdb_table_function_add_named_parameter(function, "include_filter", boolean);
             duckdb_table_function_add_named_parameter(function, "format_fields", fields);
         }
         duckdb_table_function_set_bind(function, catalog ? geno_samples_bind : geno_read_bind);

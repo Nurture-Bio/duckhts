@@ -231,6 +231,29 @@ manifest[[length(manifest) + 1]] <- render_fixture(
 )
 
 manifest[[length(manifest) + 1]] <- render_fixture(
+  filename = "somalier_sites.vcf",
+  section = "mapping",
+  purpose = paste(
+    "Somalier sites import with lexical allele orientation, flipped AF,",
+    "source-order independence and autosomal scope"
+  ),
+  contigs = c("chr2", "chr1", "chrX"),
+  info_defs = list(
+    tag_def("AF", "A", "Float", "Alternate allele frequency")
+  ),
+  filter_defs = list(
+    filter_def("q10", "Retained named filter in an already selected sites file")
+  ),
+  records = c(
+    "chr2\t20\tref_is_b\tT\tC\t.\tPASS\tAF=0.30",
+    "chr1\t30\talt_is_b\tA\tG\t.\tq10\tAF=0.25",
+    "chr1\t10\tref_is_b\tG\tA\t.\tPASS\tAF=0.80",
+    "chrX\t100\texcluded_sex\tA\tC\t.\tPASS\tAF=0.40"
+  ),
+  extra_lines = c("##duckhts_fixture_section=somalier_sites")
+)
+
+manifest[[length(manifest) + 1]] <- render_fixture(
   filename = "parallel_empty_contigs.vcf",
   section = "mapping",
   purpose = "Indexed parallel-scan regression with leading empty contigs before live records",
@@ -397,7 +420,7 @@ manifest[[length(manifest) + 1]] <- render_fixture(
 manifest[[length(manifest) + 1]] <- render_fixture(
   filename = "bcf_filter_list_regression.vcf",
   section = "regression",
-  purpose = "read_bcf FILTER list-materialization regression for multi-entry and PASS values",
+  purpose = "FILTER list materialization for unapplied, PASS and multi-entry values",
   contigs = c("chr1"),
   filter_defs = list(
     filter_def("PASS", "All filters passed"),
@@ -411,7 +434,9 @@ manifest[[length(manifest) + 1]] <- render_fixture(
   records = vapply(
     seq_len(5000L),
     function(pos) {
-      filter_value <- if (pos %% 13L == 0L) {
+      filter_value <- if (pos == 17L) {
+        "."
+      } else if (pos %% 13L == 0L) {
         "q10;q20"
       } else if (pos %% 7L == 0L) {
         "q20"

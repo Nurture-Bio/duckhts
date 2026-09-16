@@ -1,0 +1,14 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##source=duckhts/test/scripts/vcfpp.R
+##duckhts_fixture_section=somalier_sites
+##contig=<ID=chr2>
+##contig=<ID=chr1>
+##contig=<ID=chrX>
+##INFO=<ID=AF,Number=A,Type=Float,Description="Alternate allele frequency">
+##FILTER=<ID=q10,Description="Retained named filter in an already selected sites file">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr2	20	ref_is_b	T	C	.	PASS	AF=0.3
+chr1	30	alt_is_b	A	G	.	q10	AF=0.25
+chr1	10	ref_is_b	G	A	.	PASS	AF=0.8
+chrX	100	excluded_sex	A	C	.	PASS	AF=0.4

@@ -86,6 +86,14 @@ test_record_major_genotypes <- function() {
     "SELECT count(*) AS n, min(record_index)::INTEGER AS first_record,",
     "max(record_index)::INTEGER AS last_record, sum(len(calls))::INTEGER AS calls FROM many_records")),
     data.frame(n = 5000, first_record = 0L, last_record = 4999L, calls = 5000L))
+  rduckhts_geno(con, "filtered_records", fixture("bcf_filter_list_regression.vcf"),
+                include_filter = TRUE, overwrite = TRUE)
+  expect_equal(dbGetQuery(con, paste(
+    "SELECT POS::INTEGER AS POS, FILTER::VARCHAR AS filter FROM filtered_records",
+    "WHERE POS IN (1, 13) ORDER BY POS")),
+    data.frame(POS = c(1L, 13L), filter = c("[PASS]", "[q10, q20]")))
+  expect_error(rduckhts_geno(con, path = fixture("geno_calls.vcf"), include_filter = NA),
+               pattern = "include_filter must be TRUE or FALSE")
 
   for (extension in c("vcf", "bcf", "vcf.gz")) {
     for (policy in c("null", "warn", "error")) {

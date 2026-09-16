@@ -1,0 +1,85 @@
+#ifndef DUCKHTS_BAM_SITE_COUNTS_H
+#define DUCKHTS_BAM_SITE_COUNTS_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <htslib/sam.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Somalier v0.3.4 obtains BAM evidence through hileup v0.1.0 at commit
+ * 3133320d9660620a4a7f4da5647c85bf2b2738a6 (MIT, Brent Pedersen).
+ * The hileup policy below preserves its encounter-order mate suppression.
+ * Records and qnames are borrowed for the duration of one reduction call. */
+
+typedef enum duckhts_bam_site_overlap_policy {
+    DUCKHTS_BAM_SITE_OVERLAP_NONE = 0,
+    DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0 = 1
+} duckhts_bam_site_overlap_policy_t;
+
+typedef enum duckhts_bam_site_status {
+    DUCKHTS_BAM_SITE_OK = 0,
+    DUCKHTS_BAM_SITE_INVALID_ARGUMENT,
+    DUCKHTS_BAM_SITE_INVALID_PILEUP,
+    DUCKHTS_BAM_SITE_COUNT_OVERFLOW,
+    DUCKHTS_BAM_SITE_SCRATCH_EXHAUSTED
+} duckhts_bam_site_status_t;
+
+/* pos0 is zero-based. A and B are distinct uppercase A/C/G/T alleles in
+ * lexical order, matching the canonical Somalier panel orientation. */
+typedef struct duckhts_bam_site {
+    hts_pos_t pos0;
+    char allele_a;
+    char allele_b;
+} duckhts_bam_site_t;
+
+typedef struct duckhts_bam_site_count_config {
+    uint8_t min_baseq;
+    duckhts_bam_site_overlap_policy_t overlap_policy;
+} duckhts_bam_site_count_config_t;
+
+typedef struct duckhts_bam_site_counts {
+    uint32_t allele_a;
+    uint32_t allele_b;
+    uint32_t other;
+} duckhts_bam_site_counts_t;
+
+/* Entries borrow qname storage from pileup records. The caller owns the entry
+ * array and keeps every input bam1_t alive until reduction returns. */
+typedef struct duckhts_bam_site_overlap_entry {
+    const char *qname;
+    size_t qname_len;
+    uint64_t qname_hash;
+} duckhts_bam_site_overlap_entry_t;
+
+typedef struct duckhts_bam_site_overlap_scratch {
+    duckhts_bam_site_overlap_entry_t *entries;
+    size_t capacity;
+} duckhts_bam_site_overlap_scratch_t;
+
+/* MAPQ and general SAM-flag filtering belong to the reader adapter. This
+ * kernel skips deletion/refskip entries, applies base quality, uppercases the
+ * observed BAM base, and counts every non-A/B observation as other. Missing
+ * QUAL (0xff) is accepted only when min_baseq is zero.
+ *
+ * overlap_scratch may be NULL for OVERLAP_NONE. Hileup overlap mode requires
+ * a scratch descriptor; zero capacity is valid when no record needs tracking.
+ * counts is assigned only on success. */
+duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
+    const duckhts_bam_site_t *site,
+    const bam_pileup1_t *pileup,
+    size_t pileup_count,
+    const duckhts_bam_site_count_config_t *config,
+    duckhts_bam_site_overlap_scratch_t *overlap_scratch,
+    duckhts_bam_site_counts_t *counts);
+
+const char *duckhts_bam_site_status_string(duckhts_bam_site_status_t status);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

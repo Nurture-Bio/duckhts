@@ -19,11 +19,31 @@ LIMIT 1;
 ----
 [q10, q20]
 
+query II
+SELECT FILTER IS NULL, FILTER = ['PASS']
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf')
+WHERE POS IN (1, 17)
+ORDER BY POS;
+----
+0	1
+1	NULL
+
+# Vector validity must be restored when the same row offset is reused in a
+# later output chunk after an unapplied FILTER dot.
+query IT
+SELECT POS, FILTER::VARCHAR
+FROM read_bcf('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf')
+WHERE POS IN (17, 2065)
+ORDER BY POS;
+----
+17	NULL
+2065	[q20]
+
 query TT
 SELECT COUNT(*), SUM(length(FILTER))
 FROM read_bcf('__WORKING_DIRECTORY__/test/data/bcf_filter_list_regression.vcf');
 ----
-5000	5384
+5000	5383
 
 query TT
 SELECT list_extract(FILTER, 1) AS f1, list_extract(FILTER, 2) AS f2

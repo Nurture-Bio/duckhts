@@ -490,6 +490,7 @@
       "description": "Read VCF/BCF with header-typed INFO/FORMAT, typed CSQ/ANN/BCSQ annotations, sample selection and optional tidy sample rows.",
       "details": {
         "Types": "INFO/FORMAT Type and Number determine SQL types and scalar/list shape, including nonstandard declarations for named tags; no schema repair is inferred. additional_csq_column_types overrides typed annotation subfields. Missing numeric/string list positions are NULL; numeric vector-end padding terminates lists. Absent fields are NULL; explicit numeric missing lists are [NULL], without inferred allele/genotype cardinality. Tidy rows repeat complete record annotation across output chunks.",
+        "FILTER": "FILTER is VARCHAR[] in header order. PASS is [PASS], an unapplied dot is NULL, and named failures retain their identifiers.",
         "Errors": "decode_error_policy is null, warn or error for header/payload type mismatches and oversized numeric scalars. Multiple scalar elements before vector-end padding count as malformed, including missing elements. FORMAT null/warn withholds that tag for every selected sample on the record.",
         "Samples": "HTSlib selectors: NULL/'-' keeps all, empty string keeps none, comma-separated names include, leading '^' excludes. Unknown names error. Selection retains header order; read_bcf_samples() supplies original-header indices/names.",
         "Regions": "Comma-separated indexed regions use a union iterator, emitting each physical record once across overlaps. NULL/empty region means no filter; empty list items and malformed known-contig intervals error. Unknown contigs follow HTSlib's skip policy.",
@@ -504,7 +505,7 @@
       "name": "read_geno",
       "kind": "table",
       "category": "Readers",
-      "signature": "read_geno(path, region := NULL, index_path := NULL, samples := NULL, non_reference_only := FALSE, scan_mode := 'auto', decompression_threads := 0, decode_error_policy := 'null', format_fields := NULL, raw_gt := FALSE)",
+      "signature": "read_geno(path, region := NULL, index_path := NULL, samples := NULL, non_reference_only := FALSE, scan_mode := 'auto', decompression_threads := 0, decode_error_policy := 'null', format_fields := NULL, raw_gt := FALSE, include_filter := FALSE)",
       "returns": "table",
       "r_wrapper": "rduckhts_geno",
       "description": "Read one row per VCF/BCF record with typed arbitrary-ploidy GT/PS calls, selected FORMAT fields and optional original VCF genotype text.",
@@ -513,6 +514,7 @@
         "Selection": "samples uses read_bcf's selectors. non_reference_only removes calls without a called ALT, never records. Zero selected samples yields empty calls on every row. Calls decode only when projected; no normalization, depth or phase inference is performed.",
         "Ordering": "Full scans stream in physical input order regardless of index availability, with one scan worker and separate HTSlib decompression threads. record_index is zero-based and scan-local, not a persistent file locator. Indexed region unions restart at zero in HTSlib iterator order; overlapping regions visit a physical record once while preserving distinct duplicates. Use ORDER BY record_index when order matters. Sequential mode rejects regions.",
         "FORMAT": "format_fields adds header-typed members in calls.format, such as AD/DP/GQ; NULL/[] preserves default schema. Header Type/Number determine scalar/list shape. Missing elements retain ordinals, vector-end padding terminates lists, absent fields are NULL and explicit numeric missing lists are [NULL], without inferred A/R/G padding. Missing GT does not hide selected values unless the call is filtered. Unknown, empty, NULL or case-insensitively duplicate selections error. Lookup uses exact header spelling: GT/PS cannot be reselected; declared lowercase gt/ps are distinct tags.",
+        "FILTER": "include_filter := TRUE adds the same physical record's FILTER as VARCHAR[]. PASS is [PASS], an unapplied dot is NULL, and named failing filters retain header order. FALSE preserves the default output schema.",
         "Errors": "Header/type/cardinality mismatches follow decode_error_policy. Scalar cardinality excludes vector-end padding, including after sample selection, but counts missing elements. Multiple scalar elements error or make that FORMAT tag NULL for every selected sample under null/warn; list cardinality is not inferred. Physical read/allocation failures always error.",
         "Raw GT": "raw_gt := TRUE appends calls.raw_gt VARCHAR after any format struct, preserving exact original VCF separators, leading phase markers and allele spelling. Absent GT is NULL; literal '.' stays text. FALSE preserves the default schema. BCF rejects TRUE even when calls is unprojected. Text follows original-header sample selection and scan ordinals, including region unions; it does not emulate a downstream parser."
       },
@@ -837,6 +839,57 @@
       "examples": [
         "SELECT duckhts_fastq_qc(SEQUENCE, QUALITY) AS qc FROM read_fastq('reads.fastq.gz');",
         "WITH q AS (SELECT duckhts_fastq_qc(SEQUENCE, QUALITY) AS qc FROM read_fastq('reads.fastq.gz')) SELECT cycle.* FROM q, UNNEST(qc.cycles) AS u(cycle);"
+      ]
+    },
+    {
+      "name": "duckhts_somalier_import_sites",
+      "kind": "table_macro",
+      "category": "Sample Identity",
+      "signature": "duckhts_somalier_import_sites(path, assembly_name, max_sites := 1000000)",
+      "returns": "table",
+      "r_wrapper": "rduckhts_somalier_import_sites",
+      "description": "Import an already selected Somalier sites VCF/BCF as one canonical panel and population-frequency relation.",
+      "details": {
+        "Orientation": "Each autosomal biallelic SNV is oriented into lexical allele_a/allele_b order. INFO/AF is the source ALT frequency and is transformed with REF/ALT, so population_b_af always describes allele_b. Dense zero-based site_index follows Somalier v0.3.4's lexical region then position order.",
+        "Input": "INFO/AF must declare Number=A,Type=Float. Retained records must be distinct uppercase A/C/G/T biallelic SNVs with one finite AF in [0,1]. Exact Somalier v0.3.4 X/Y aliases are excluded. Existing FILTER values are retained as provenance because this imports an already selected sites file; it does not apply selection policy.",
+        "Scope": "The returned relation directly satisfies the canonical panel and population-frequency contracts and retains source REF, ALT, ALT frequency and FILTER. This is not Somalier find-sites: population AF/AN and QC filtering, interval exclusions, linkage spacing and target-frequency ranking are a separate panel-selection method. max_sites is an explicit input limit."
+      },
+      "examples": [
+        "CREATE TABLE fingerprint_panel AS SELECT * FROM duckhts_somalier_import_sites('sites.vcf.gz', 'GRCh38');"
+      ]
+    },
+    {
+      "name": "duckhts_somalier_vcf_counts",
+      "kind": "table_macro",
+      "category": "Sample Identity",
+      "signature": "duckhts_somalier_vcf_counts(path, panel_table, samples := NULL, filter_policy := 'pass_or_unapplied')",
+      "returns": "table",
+      "r_wrapper": "rduckhts_somalier_vcf_counts",
+      "description": "Extract a complete panel-aligned A/B/other count relation from VCF/BCF FORMAT/AD.",
+      "details": {
+        "Panel and samples": "panel_table is the canonical typed panel relation with one assembly, dense zero-based site_index, region, one-based position and lexical uppercase allele_a/allele_b. Output has exactly one row per selected header sample and panel ordinal, including absent source records. samples uses HTSlib selection syntax and source_sample_index retains the original zero-based header ordinal.",
+        "AD mapping": "FORMAT/AD must declare Number=R,Type=Integer. Exact REF/ALT identity selects A and B; remaining declared-allele AD slots are summed as other. Counts are never inferred from GT or DP. Missing records, alleles or AD produce three NULL counts and a named unavailable status; three zeros are measured evidence. Duplicate source records or allele identities, malformed cardinality and negative counts error.",
+        "Scope and FILTER": "Symbolic alleles are unavailable in this scope. filter_policy='pass_or_unapplied' accepts PASS and dot but makes named failures unavailable; 'include_all' uses their AD; 'error' rejects them. source_method, count_scope, status, FILTER, record/sample ordinals and matched allele slots preserve extraction provenance. Full scans are sequential and retain physical source-record identity; Parquet is optional downstream storage, not an input requirement."
+      },
+      "examples": [
+        "CREATE TABLE allele_counts AS SELECT * FROM duckhts_somalier_vcf_counts('cohort.bcf', 'fingerprint_panel');"
+      ]
+    },
+    {
+      "name": "duckhts_somalier_bam_counts",
+      "kind": "table",
+      "category": "Sample Identity",
+      "signature": "duckhts_somalier_bam_counts(source_path, panel_table, sample_id, reference_path, panel_parquet := NULL, index_path := NULL, reference_index_path := NULL, min_mapq := 1, min_baseq := 0, require_flags := 0, exclude_flags := 1796, overlap_policy := 'hileup_v0.1.0', decompression_threads := 0, worker_count := 1, max_depth := 100000, max_overlap_qnames := 100000, max_sites := 1000000, max_region_bytes := 67108864, remote_block_bytes := 1048576, remote_cache_bytes := 67108864, reference_cache_bytes := 67108864)",
+      "returns": "table",
+      "r_wrapper": "rduckhts_somalier_bam_counts",
+      "description": "Extract complete panel-aligned A/B/other base counts from one indexed BAM or CRAM source.",
+      "details": {
+        "Execution": "Exactly one of panel_table or panel_parquet supplies the canonical typed six-column panel. The panel is materialized and validated once, then worker_count partitions it into at most 64 DuckDB scan jobs. Each worker-local job owns one alignment handle, index, multi-region iterator, pileup, reference handle and bounded overlap workspace; no mutable htslib or faidx state is shared. DuckDB's connection thread setting limits concurrent jobs. decompression_threads separately controls htslib workers per alignment handle. Parallel output order is unspecified; use ORDER BY site_index when order matters.",
+        "Evidence": "A and B are exact uppercase panel bases; other counts every other observed base. Valid uncovered sites emit measured 0/0/0. Missing reference contigs or positions, reference mismatches, alignment-header contig absence and positions beyond a declared alignment contig emit NULL counts with a named unavailable status. Deletions and reference skips are not observed bases. MAPQ, base quality, required/excluded flags and overlap suppression are explicit per-call settings.",
+        "Limits and transport": "panel_table must name a committed table or view visible to the database; caller-local TEMP objects and uncommitted changes are not visible to panel preparation. One retained-connection preparation slot is shared by concurrent calls: nested or concurrent preparation returns a busy error and callers may retry. panel_parquet reads an ordinary Parquet file directly. max_sites bounds the shared panel. max_depth, max_overlap_qnames and max_region_bytes bound each active scan job; concurrent workspace can therefore grow with worker_count. remote_block_bytes, remote_cache_bytes and reference_cache_bytes apply per worker-owned handle, and zero disables that cache override. Explicit non-colocated BAM/CRAM and FASTA indexes are honored; CRAM keeps the alignment file's original @SQ lengths and does not create a default FASTA-index sidecar. overlap_policy='hileup_v0.1.0' pins encounter-order mate suppression only, while 'none' counts every retained observation."
+      },
+      "examples": [
+        "CREATE TABLE allele_counts AS SELECT * FROM duckhts_somalier_bam_counts('sample.bam', 'fingerprint_panel', 'sample-1', 'reference.fa');"
       ]
     },
     {
