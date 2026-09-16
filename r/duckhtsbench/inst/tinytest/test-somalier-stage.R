@@ -131,6 +131,20 @@ test_somalier_stage <- function() {
     alignment_paths, paste0(alignment_paths, ".provenance.tsv")
   ))$mtime, alignment_mtimes)
 
+  bam_bytes <- readBin(alignment_paths[["bam"]], "raw",
+                       n = file.info(alignment_paths[["bam"]])$size)
+  corrupted_bam <- bam_bytes
+  last_byte <- length(corrupted_bam)
+  corrupted_bam[[last_byte]] <- as.raw(bitwXor(
+    as.integer(corrupted_bam[[last_byte]]), 1L
+  ))
+  writeBin(corrupted_bam, alignment_paths[["bam"]])
+  expect_error(
+    stage_alignment(), "existing Somalier site-extraction provenance is invalid"
+  )
+  writeBin(bam_bytes, alignment_paths[["bam"]])
+  expect_identical(stage_alignment(), alignment_paths)
+
   samtools <- Sys.which("samtools")
   Sys.setenv(DUCKHTS_CACHE_DIR = file.path(cache, "alignment-regeneration"))
   regenerated_alignment_paths <- stage_alignment()
@@ -187,6 +201,8 @@ test_somalier_stage <- function() {
   expect_equal(alignment_fields[["panel_sites"]], "17000")
   expect_equal(alignment_fields[["source_reads"]], "17000")
   expect_equal(alignment_fields[["read_length"]], "101")
+  expect_equal(alignment_fields[["artifact_sha256"]],
+               digest::digest(file = alignment_paths[["bam"]], algo = "sha256"))
 
   con <- DBI::dbConnect(duckdb::duckdb())
   table <- function(path) sprintf("read_parquet(%s)", as.character(DBI::dbQuoteString(con, path)))

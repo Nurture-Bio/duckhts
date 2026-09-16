@@ -412,7 +412,9 @@ duckhts_bench_stage_somalier_site_extraction <- function(
           !identical(fields[["panel_sites"]], "17000") ||
           !identical(fields[["source_reads"]], "17000") ||
           !identical(fields[["artifact_bytes"]],
-                     as.character(file.info(paths[[name]])$size))) {
+                     as.character(file.info(paths[[name]])$size)) ||
+          !identical(fields[["artifact_sha256"]],
+                     digest::digest(file = paths[[name]], algo = "sha256"))) {
         stop("existing Somalier site-extraction provenance is invalid: ",
              paths[[name]], call. = FALSE)
       }
@@ -495,9 +497,11 @@ duckhts_bench_stage_somalier_site_extraction <- function(
     provenance <- duckhts_bench_provenance_fields(ids[[name]], paths[[name]])
     provenance <- rbind(provenance, data.frame(
       field = c("generator", "panel_sites", "source_reads", "contigs",
-                "read_length", "artifact_bytes", "samtools_version", "r_version"),
+                "read_length", "artifact_bytes", "artifact_sha256",
+                "samtools_version", "r_version"),
       value = c("somalier-site-extraction-v1", "17000", "17000", "22", "101",
-                as.character(file.info(paths[[name]])$size), samtools_version,
+                as.character(file.info(paths[[name]])$size),
+                digest::digest(file = paths[[name]], algo = "sha256"), samtools_version,
                 as.character(getRversion())),
       stringsAsFactors = FALSE
     ))
