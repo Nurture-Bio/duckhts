@@ -1,7 +1,6 @@
 # Rduckhts 1.5.2-0.1.5
 
-Release notes in preparation. This package bundles DuckHTS 1.5.2; the entries
-below describe implemented package behavior, not a completed release submission.
+This package bundles DuckHTS 1.5.2.
 
 ## Sample identity and contamination
 

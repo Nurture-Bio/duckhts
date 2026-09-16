@@ -2,8 +2,7 @@
 
 # duckhts 1.5.2
 
-Release notes in preparation. DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share
-the same extension release; publication remains pending.
+DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.
 
 ## Sample identity and contamination
 
