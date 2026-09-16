@@ -546,9 +546,9 @@ for BCF. The exact bidirectional `EXCEPT ALL` comparison,
 excluding only the intentionally different source path, found
 `r validation$symmetric_difference_rows[[1L]]` differing rows.
 
-This is the first recorded workload for the extraction surface, so there is no
-identical historical baseline and no before/after speedup claim. The comparison
-shows encoding and worker-count measurements within the same candidate build.
+There is no pre-feature historical baseline for this extraction surface, so the
+report makes no feature speedup claim. The comparison shows encoding and
+worker-count measurements within the same candidate build.
 
 For the synthetic aligned-read workload, the measured BAM medians for worker
 counts 1, 2, and 4 were
@@ -568,6 +568,14 @@ differing rows. The BAM-versus-CRAM comparison at four workers excluded only
 the intentionally different source path and found
 `r alignment_validation$symmetric_difference_rows[alignment_validation$excluded_columns == "source_path"]`
 differing rows.
+
+The nearest identical rendering before overlap-name hash indexing used code
+revision `5db3d6735f666b3b0dee8facd5619365052b853c`. Its BAM medians at one, two,
+and four workers were 0.108, 0.109, and 0.106 seconds; CRAM medians were 0.110,
+0.115, and 0.130 seconds. The current values are reported above. This synthetic
+input has one unpaired read per site, so it checks the surrounding sparse scan
+but does not exercise high-depth mate-name tracking. No checked-in benchmark
+currently isolates that path, and this report makes no hash-index speedup claim.
 
 These measurements do not establish a general scaling result. They describe
 this small synthetic sparse-panel workload on the recorded machine and candidate
