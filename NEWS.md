@@ -6,6 +6,8 @@ DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.
 
 ## Sample identity and contamination
 
+- Document a runnable R workflow from bundled VCF `FORMAT/AD` extraction through
+  packed sketches, relatedness, CHARR, and directional matched contamination.
 - Add `duckhts_somalier_import_sites()` to turn an already selected sites
   VCF/BCF into one canonical panel and population-frequency relation. Lexical
   A/B orientation and population frequency are transformed together; this
