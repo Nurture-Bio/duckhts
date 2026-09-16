@@ -78,6 +78,9 @@ test_somalier_vcf_count_extraction <- function() {
   bcf_counts <- rduckhts_somalier_vcf_counts(
     con, bcf, panel_table = "bcf_extraction_panel", samples = "S2"
   )
+  bcf_counts <- bcf_counts[order(bcf_counts$site_index), , drop = FALSE]
+  rownames(bcf_counts) <- NULL
+  expect_equal(bcf_counts$site_index, 0:1)
   expect_equal(bcf_counts$a, c(4, NA))
   expect_equal(bcf_counts$b, c(5, NA))
   expect_equal(bcf_counts$status, c("measured", "unavailable_no_record"))
