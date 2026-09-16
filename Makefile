@@ -204,7 +204,9 @@ test-somalier-native-ubsan:
 
 .PHONY: test-bam-site-counts
 test-bam-site-counts:
-	cmake --build cmake_build/release --target duckhts_bam_site_counts_test
+	@if [ "$(LINUX_CI_IN_DOCKER)" != 0 ]; then \
+		cmake --build cmake_build/release --target duckhts_bam_site_counts_test; \
+	fi
 	./cmake_build/release/duckhts_bam_site_counts_test
 
 .PHONY: test-somalier-extraction-http
