@@ -23,7 +23,7 @@ chr1	13	.	A	C	50	q10;q20	.	GT	0/1
 chr1	14	.	A	C	50	q20	.	GT	0/1
 chr1	15	.	A	C	50	q10	.	GT	0/1
 chr1	16	.	A	C	50	PASS	.	GT	0/1
-chr1	17	.	A	C	50	PASS	.	GT	0/1
+chr1	17	.	A	C	50	.	.	GT	0/1
 chr1	18	.	A	C	50	PASS	.	GT	0/1
 chr1	19	.	A	C	50	PASS	.	GT	0/1
 chr1	20	.	A	C	50	q10	.	GT	0/1

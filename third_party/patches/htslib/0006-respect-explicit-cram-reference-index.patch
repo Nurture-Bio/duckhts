@@ -1,0 +1,80 @@
+diff --git a/cram/cram_io.c b/cram/cram_io.c
+index bb97909..6ce1b9a 100644
+--- a/cram/cram_io.c
++++ b/cram/cram_io.c
+@@ -2262,13 +2262,14 @@ static refs_t *refs_create(void) {
+  * Returns a BGZF handle on success;
+  *         NULL on failure.
+  */
+-static BGZF *bgzf_open_ref(char *fn, char *mode, int is_md5) {
++static BGZF *bgzf_open_ref(char *fn, char *mode, int is_md5,
++                           int build_default_fai) {
+     BGZF *fp;
+
+     if (strncmp(fn, "file://", 7) == 0)
+         fn += 7;
+
+-    if (!is_md5 && !hisremote(fn)) {
++    if (build_default_fai && !is_md5 && !hisremote(fn)) {
+         char fai_file[PATH_MAX];
+
+         snprintf(fai_file, PATH_MAX, "%s.fai", fn);
+@@ -2327,6 +2328,7 @@ static refs_t *refs_load_fai(refs_t *r_orig, const char *fn, int is_err) {
+         if (!(r->fn = string_ndup(r->pool, fn, fn_delim - fn)))
+             goto err;
+         fn_delim += strlen(HTS_IDX_DELIM);
++        r->explicit_fai = 1;
+         snprintf(fai_fn, PATH_MAX, "%s", fn_delim);
+     } else {
+         /* An index file was provided, instead of the actual reference file */
+@@ -2335,16 +2337,18 @@ static refs_t *refs_load_fai(refs_t *r_orig, const char *fn, int is_err) {
+                 if (!(r->fn = string_ndup(r->pool, fn, fn_l-4)))
+                     goto err;
+             }
++            r->explicit_fai = 1;
+             snprintf(fai_fn, PATH_MAX, "%s", fn);
+         } else {
+         /* Only the reference file provided. Get the index file name from it */
+             if (!(r->fn = string_dup(r->pool, fn)))
+                 goto err;
++            r->explicit_fai = 0;
+             snprintf(fai_fn, PATH_MAX, "%.*s.fai", PATH_MAX-5, fn);
+         }
+     }
+
+-    if (!(r->fp = bgzf_open_ref(r->fn, "r", 0))) {
++    if (!(r->fp = bgzf_open_ref(r->fn, "r", 0, !r->explicit_fai))) {
+         hts_log_error("Failed to open reference file '%s'", r->fn);
+         goto err;
+     }
+@@ -3119,7 +3123,8 @@ static char *cram_get_ref(cram_fd *fd, int id, hts_pos_t start, hts_pos_t end) {
+             if (bgzf_close(r->fp) != 0)
+                 return NULL;
+         r->fn = e->fn;
+-        if (!(r->fp = bgzf_open_ref(r->fn, "r", is_md5)))
++        if (!(r->fp = bgzf_open_ref(r->fn, "r", is_md5,
++                                    !r->explicit_fai)))
+             return NULL;
+     }
+
+@@ -3324,7 +3329,8 @@ static char *cram_get_ref_locked(cram_fd *fd, int id, hts_pos_t start,
+             if (bgzf_close(fd->refs->fp) != 0)
+                 return NULL;
+         fd->refs->fn = r->fn;
+-        if (!(fd->refs->fp = bgzf_open_ref(fd->refs->fn, "r", r->is_md5))) {
++        if (!(fd->refs->fp = bgzf_open_ref(fd->refs->fn, "r", r->is_md5,
++                                           !fd->refs->explicit_fai))) {
+             pthread_mutex_unlock(&fd->refs->lock);
+             pthread_mutex_unlock(&fd->ref_lock);
+             return NULL;
+diff --git a/cram/cram_structs.h b/cram/cram_structs.h
+index 6c66617..ba6a4e4 100644
+--- a/cram/cram_structs.h
++++ b/cram/cram_structs.h
+@@ -693,6 +693,7 @@ struct refs_t {
+
+     char *fn;              // current file opened
+     BGZF *fp;              // and the hFILE* to go with it.
++    int explicit_fai;      // do not infer or build fn.fai
+
+     int count;             // how many cram_fd sharing this refs struct

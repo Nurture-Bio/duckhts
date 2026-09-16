@@ -10,10 +10,11 @@ mapping	phased_genotype_fields.vcf	Phased and arbitrary-ploidy GT plus PL/GP/DS/
 mapping	genotype_ploidy_edge_cases.vcf	Compact GT-only haploid/phased/polyploid/large-allele fixture for read_bcf projection tests
 mapping	tidy_chunk_boundary.vcf	Single-record 2053-sample fixture that exercises GT and CSQ record ownership across DuckDB output chunks
 mapping	test_vep_tidy.vcf	Compact CSQ plus two-sample FORMAT fixture for read_bcf VEP-cache reuse across tidy sample rows
-regression	bcf_filter_list_regression.vcf	read_bcf FILTER list-materialization regression for multi-entry and PASS values
+regression	bcf_filter_list_regression.vcf	FILTER list materialization for unapplied, PASS and multi-entry values
 regression	malformed_bad_pos.vcf	Valid first record followed by malformed POS to verify BCF/VCF scan errors are surfaced instead of treated as EOF
 regression	bcf_cache_lifecycle.vcf	Synthetic three-record cache reset, missing fields, growing FORMAT arrays, ploidy and CSQ descriptor reuse
 spec	spec_standard_corrections.vcf	Nonstandard Number declarations remain header-faithful without implicit schema repair
 mapping	geno_format.vcf	Selected FORMAT values retain sample and allele ordinals, missing items, absent GT and physical duplicates
 spec	bcf_scalar_counts.vcf	Numeric scalar overflow, missing elements, list controls and per-record recovery
 mapping	geno_format_case.vcf	Case-sensitive FORMAT tag identity and case-insensitive DuckDB member collisions
+mapping	somalier_sites.vcf	Somalier sites import with lexical allele orientation, flipped AF, source-order independence and autosomal scope

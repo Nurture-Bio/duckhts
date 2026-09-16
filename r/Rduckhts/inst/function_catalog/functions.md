@@ -118,6 +118,9 @@ This section is generated from `functions.yaml`.
 
 | Function | Kind | R helper | Description |
 | --- | --- | --- | --- |
+| [`duckhts_somalier_import_sites`](reference.md#duckhts_somalier_import_sites) | table_macro | `rduckhts_somalier_import_sites` | Import an already selected Somalier sites VCF/BCF as one canonical panel and population-frequency relation. |
+| [`duckhts_somalier_vcf_counts`](reference.md#duckhts_somalier_vcf_counts) | table_macro | `rduckhts_somalier_vcf_counts` | Extract a complete panel-aligned A/B/other count relation from VCF/BCF FORMAT/AD. |
+| [`duckhts_somalier_bam_counts`](reference.md#duckhts_somalier_bam_counts) | table | `rduckhts_somalier_bam_counts` | Extract complete panel-aligned A/B/other base counts from one indexed BAM or CRAM source. |
 | [`duckhts_somalier_panel_sha256`](reference.md#duckhts_somalier_panel_sha256) | scalar_macro |  | Derive a stable SHA-256 identity for an ordered biallelic sample-fingerprinting panel. |
 | [`duckhts_somalier_frequency_sha256`](reference.md#duckhts_somalier_frequency_sha256) | scalar_macro |  | Derive a stable identity for panel-aligned population-B allele frequencies. |
 | [`duckhts_somalier_classify`](reference.md#duckhts_somalier_classify) | scalar |  | Classify one measured A/B/other count tuple for Somalier-derived autosomal relatedness. |

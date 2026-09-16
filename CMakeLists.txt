@@ -474,6 +474,7 @@ message(STATUS "htslib link libs: ${HTSLIB_LINK_LIBS}")
 
 # Test-only copied-API interposition; never linked into the extension/package.
 set(DUCKHTS_BCF_INFO_OOM_ENABLED OFF)
+set(DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED OFF)
 if(UNIX AND NOT DUCKDB_WASM_EXTENSION)
     add_executable(duckhts_bcf_scan_test EXCLUDE_FROM_ALL
         test/scripts/bcf_scan_test.c src/bcf_scan.c src/bcf_genotypes.c
@@ -495,10 +496,40 @@ if(UNIX AND NOT DUCKDB_WASM_EXTENSION)
         target_include_directories(duckhts_bcf_info_oom_test PRIVATE ${HTSLIB_SRC_DIR})
         target_link_options(duckhts_bcf_info_oom_test PRIVATE -Wl,--wrap=realloc)
         target_link_libraries(duckhts_bcf_info_oom_test PRIVATE ${HTSLIB_LINK_LIBS})
+
+        if(NOT CMAKE_VERSION VERSION_LESS "3.14")
+            include(CheckCSourceCompiles)
+            set(_duckhts_required_flags "${CMAKE_REQUIRED_FLAGS}")
+            set(_duckhts_required_link_options "${CMAKE_REQUIRED_LINK_OPTIONS}")
+            set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fsanitize=address")
+            list(APPEND CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=address)
+            check_c_source_compiles("int main(void) { return 0; }"
+                DUCKHTS_ADDRESS_SANITIZER_LINKS)
+            set(CMAKE_REQUIRED_FLAGS "${_duckhts_required_flags}")
+            set(CMAKE_REQUIRED_LINK_OPTIONS "${_duckhts_required_link_options}")
+        else()
+            set(DUCKHTS_ADDRESS_SANITIZER_LINKS OFF)
+        endif()
+        if(DUCKHTS_ADDRESS_SANITIZER_LINKS)
+            set(DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED ON)
+            add_executable(duckhts_hts_region_ownership_test EXCLUDE_FROM_ALL
+                test/scripts/hts_region_ownership_test.c)
+            target_compile_features(duckhts_hts_region_ownership_test PRIVATE c_std_11)
+            target_compile_options(duckhts_hts_region_ownership_test PRIVATE
+                -UNDEBUG -fsanitize=address -fno-omit-frame-pointer)
+            target_include_directories(duckhts_hts_region_ownership_test PRIVATE ${HTSLIB_SRC_DIR})
+            target_link_options(duckhts_hts_region_ownership_test PRIVATE
+                -Wl,--wrap=calloc -fsanitize=address)
+            target_link_libraries(duckhts_hts_region_ownership_test PRIVATE ${HTSLIB_LINK_LIBS})
+        else()
+            message(STATUS "HTS region ownership probe disabled: ASan is not linkable")
+        endif()
     endif()
 endif()
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/duckhts_bcf_info_oom.enabled"
     CONTENT "${DUCKHTS_BCF_INFO_OOM_ENABLED}\n")
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/duckhts_hts_region_ownership.enabled"
+    CONTENT "${DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED}\n")
 
 # Host-neutral region parsing probe: real HTSlib, no DuckDB headers or runtime.
 if(NOT DUCKDB_WASM_EXTENSION)
@@ -515,6 +546,17 @@ if(NOT DUCKDB_WASM_EXTENSION)
     target_include_directories(duckhts_somalier_native_test PRIVATE src/include)
     if(NOT WIN32)
         target_link_libraries(duckhts_somalier_native_test PRIVATE m)
+    endif()
+
+    add_executable(duckhts_bam_site_counts_test EXCLUDE_FROM_ALL
+        test/scripts/bam_site_counts_test.c src/bam_site_counts.c)
+    target_compile_features(duckhts_bam_site_counts_test PRIVATE c_std_11)
+    target_include_directories(duckhts_bam_site_counts_test PRIVATE
+        src/include ${HTSLIB_SRC_DIR})
+    target_link_libraries(duckhts_bam_site_counts_test PRIVATE ${HTSLIB_LINK_LIBS})
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(duckhts_bam_site_counts_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror)
     endif()
 endif()
 

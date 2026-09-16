@@ -52,7 +52,13 @@ test_bcf_filter_list_fetch_regression <- function() {
     )
   )
   expect_equal(summary$n_rows[1], 5000L)
-  expect_equal(summary$filter_items[1], 5384L)
+  expect_equal(summary$filter_items[1], 5383L)
+  filter_states <- dbGetQuery(con, sprintf(paste(
+    "SELECT POS::INTEGER AS POS, FILTER::VARCHAR AS filter",
+    "FROM read_bcf(%s) WHERE POS IN (1, 17, 2065) ORDER BY POS"), quoted_bcf))
+  expect_equal(filter_states, data.frame(
+    POS = c(1L, 17L, 2065L), filter = c("[PASS]", NA, "[q20]")
+  ))
 
 }
 

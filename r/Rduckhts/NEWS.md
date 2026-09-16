@@ -5,6 +5,25 @@ below describe implemented package behavior, not a completed release submission.
 
 ## Sample identity and contamination
 
+- Add `rduckhts_somalier_import_sites()` for converting an already selected
+  sites VCF/BCF into the typed panel and population-frequency relation, with
+  allele and frequency orientation kept together.
+- Add `rduckhts_somalier_bam_counts()` for panel-aligned BAM/CRAM A/B/other
+  extraction with explicit reference/index inputs, read/base filters, overlap
+  policy, resource limits and transport settings. A committed panel relation or
+  Parquet file is prepared once; `worker_count` controls native DuckDB scan
+  jobs with isolated reader/reference state and bounded hash-indexed overlap
+  names, while `decompression_threads` separately controls htslib workers per
+  handle. Indexed requests use resolved reference IDs, preserving valid contig
+  names that contain region-expression punctuation. Returned data frames are
+  ordered by site index; caller TEMP panels and uncommitted changes are not
+  visible during retained-connection panel preparation.
+- CRAM extraction preserves the alignment file's original `@SQ` lengths and
+  accepts a non-colocated explicit FASTA index without creating a default
+  reference sidecar.
+- Add `rduckhts_somalier_vcf_counts()` for complete panel-aligned VCF/BCF
+  `FORMAT/AD` evidence with exact allele-slot mapping, explicit FILTER policy,
+  unavailable-site rows and source record/sample provenance.
 - Add `rduckhts_somalier_sketches()` and
   `rduckhts_somalier_relatedness()` for panel-checked count evidence,
   reusable packed sketches and selected-pair statistics. Tables or ordinary
@@ -45,6 +64,11 @@ below describe implemented package behavior, not a completed release submission.
   `format_fields = c("AD", "DP", "GQ")`, including values on records without GT.
   Header types/cardinalities and missing elements remain intact. Single-file
   and multi-file BCF wrappers also support per-call sample selection.
+- Use `include_filter = TRUE` to retain the same physical VCF/BCF record's
+  FILTER beside typed calls; PASS, unapplied dot and named failures remain
+  distinguishable without a separate reader join.
+- Preserve an unapplied FILTER dot as NULL in bundled `read_bcf()` rather than
+  reporting it as `[PASS]`.
 - Use `raw_gt = TRUE` to retain exact original VCF genotype text, including
   leading phase markers and literal missing alleles. BCF rejects this option
   because it does not store the original text.

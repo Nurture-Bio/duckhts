@@ -1334,6 +1334,9 @@ in.
 
 The iterator will return all reads overlapping the given regions.  If a read
 overlaps more than one region, it will only be returned once.
+
+On success the iterator owns @p reglist and should be freed with
+hts_itr_destroy().  On failure ownership of @p reglist remains with the caller.
  */
 HTSLIB_EXPORT
 hts_itr_t *sam_itr_regions(const hts_idx_t *idx, sam_hdr_t *hdr, hts_reglist_t *reglist, unsigned int regcount);

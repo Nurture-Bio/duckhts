@@ -1,0 +1,312 @@
+# name: test/sql/somalier_extract_bam.test
+# description: Typed sparse panel counts from one BAM/CRAM multi-region scan
+# group: [duckhts]
+
+require duckhts
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE somalier_bam_panel(
+  assembly VARCHAR,
+  site_index UBIGINT,
+  region VARCHAR,
+  position UBIGINT,
+  allele_a VARCHAR,
+  allele_b VARCHAR
+);
+
+statement ok
+INSERT INTO somalier_bam_panel VALUES
+  ('WBcel235', 0, 'CHROMOSOME_I', 1, 'A', 'G'),
+  ('WBcel235', 1, 'CHROMOSOME_I', 914, 'A', 'C'),
+  ('WBcel235', 2, 'CHROMOSOME_I', 2, 'A', 'G'),
+  ('WBcel235', 3, 'NOT_IN_REFERENCE', 1, 'A', 'C');
+
+# An uncovered valid site is measured zero. Missing reference sequence and a
+# reference/allele mismatch are unavailable rather than fabricated zeros.
+query TTTTTTTTT
+SELECT site_index::VARCHAR, region, position::VARCHAR,
+       allele_a, allele_b, a::VARCHAR, b::VARCHAR, other::VARCHAR,
+       status
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel',
+  'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+)
+ORDER BY site_index;
+----
+0	CHROMOSOME_I	1	A	G	0	0	0	measured
+1	CHROMOSOME_I	914	A	C	1	0	0	measured
+2	CHROMOSOME_I	2	A	G	NULL	NULL	NULL	unavailable_reference_mismatch
+3	NOT_IN_REFERENCE	1	A	C	NULL	NULL	NULL	unavailable_reference_contig
+
+query I
+SELECT count(*)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel',
+  'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+)
+WHERE sample_id = 'sample-1'
+  AND assembly = 'WBcel235'
+  AND source_method = 'bam_cram_pileup'
+  AND count_scope = 'observed_query_bases_after_explicit_filters'
+  AND source_path LIKE '%/test/data/range.bam'
+  AND overlap_policy = 'hileup_v0.1.0';
+----
+4
+
+# Region planning uses resolved TIDs and half-open coordinates directly. A
+# valid SAM reference name containing HTSlib's text-quote terminator remains
+# exact rather than being reparsed as a region expression.
+statement ok
+CREATE TABLE somalier_brace_panel AS
+SELECT 'synthetic' AS assembly, 0::UBIGINT AS site_index,
+       'ctg}part' AS region, 10::UBIGINT AS position,
+       'A' AS allele_a, 'G' AS allele_b;
+
+query TTTT
+SELECT a::VARCHAR, b::VARCHAR, other::VARCHAR, status
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/somalier_brace.bam',
+  'somalier_brace_panel', 'brace-sample',
+  '__WORKING_DIRECTORY__/test/data/somalier_brace.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/somalier_brace.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/somalier_brace.fa.fai'
+);
+----
+1	0	0	measured
+
+# worker_count changes only execution. Native DuckDB local states own
+# independent BAM/index/reference/pileup state and share one prepared panel.
+statement ok
+CREATE TEMP TABLE somalier_one_worker AS
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai',
+  worker_count := 1
+);
+
+statement ok
+CREATE TEMP TABLE somalier_four_workers AS
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai',
+  worker_count := 4
+);
+
+query I
+SELECT count(*) FROM (
+  (SELECT * FROM somalier_one_worker EXCEPT ALL
+   SELECT * FROM somalier_four_workers)
+  UNION ALL
+  (SELECT * FROM somalier_four_workers EXCEPT ALL
+   SELECT * FROM somalier_one_worker)
+);
+----
+0
+
+# Empty overprovisioned shards do not duplicate or drop sites.
+query I
+SELECT count(*)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  worker_count := 8
+);
+----
+4
+
+# Colocated BAM and FASTA indexes are inferred when optional paths are NULL.
+query I
+SELECT count(*)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel',
+  'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa'
+);
+----
+4
+
+# The CRAM path owns a separate decoder/reference state and produces the same
+# complete panel relation, including unavailable rows.
+statement ok
+CREATE TEMP TABLE somalier_bam_rows AS
+SELECT * EXCLUDE(source_path)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+);
+
+statement ok
+CREATE TEMP TABLE somalier_cram_rows AS
+SELECT * EXCLUDE(source_path)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.cram',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.cram.crai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+);
+
+query I
+SELECT count(*) FROM (
+  (SELECT * FROM somalier_bam_rows EXCEPT ALL
+   SELECT * FROM somalier_cram_rows)
+  UNION ALL
+  (SELECT * FROM somalier_cram_rows EXCEPT ALL
+   SELECT * FROM somalier_bam_rows)
+);
+----
+0
+
+# MAPQ is per-call and changes evidence, not site availability.
+query TTTT
+SELECT a::VARCHAR, b::VARCHAR, other::VARCHAR, status
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai',
+  min_mapq := 24
+)
+WHERE site_index = 1;
+----
+0	0	0	measured
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai',
+  overlap_policy := 'unspecified'
+);
+----
+overlap_policy must be
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai',
+  max_region_bytes := 8
+);
+----
+max_region_bytes
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  worker_count := 0
+);
+----
+worker_count must be an integer in [1, 64]
+
+# Native parallel preparation uses a retained connection. Caller-local TEMP
+# relations are deliberately not a second panel transport contract.
+statement ok
+CREATE TEMP TABLE somalier_temp_panel AS SELECT * FROM somalier_bam_panel;
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_temp_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa'
+);
+----
+does not exist
+
+# A committed view may invoke other table functions, but it cannot recursively
+# use this function as the panel source for another extraction.
+statement ok
+CREATE VIEW somalier_nested_panel AS
+SELECT assembly, site_index, region, position, allele_a, allele_b
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+);
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_nested_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+);
+----
+panel preparation is busy or recursive
+
+# A failed nested preparation releases the slot for the next ordinary query.
+query I
+SELECT count(*)
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/ce.fa.fai'
+);
+----
+4
+
+# A valid FAI does not turn a truncated reference read into biological
+# unavailability: transport/read failure aborts extraction.
+statement ok
+COPY (VALUES ('>CHROMOSOME_I'), ('AAAAAAAAAA'))
+TO '__WORKING_DIRECTORY__/test_somalier_truncated.fa'
+  (FORMAT CSV, HEADER FALSE, QUOTE '', ESCAPE '');
+
+statement ok
+COPY (VALUES (E'CHROMOSOME_I\t1000\t14\t10\t11'))
+TO '__WORKING_DIRECTORY__/test_somalier_truncated.fa.fai'
+  (FORMAT CSV, HEADER FALSE, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test_somalier_truncated.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/range.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test_somalier_truncated.fa.fai'
+);
+----
+reference lookup failed
+
+statement error
+SELECT * FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/range.bam',
+  'somalier_bam_panel', 'sample-1',
+  '__WORKING_DIRECTORY__/test/data/ce.fa',
+  worker_count := 1.5
+);
+----
+worker_count must be an integer in [1, 64]

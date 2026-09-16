@@ -148,7 +148,7 @@ endif
 test: test_debug
 test_debug test_release: test-function-catalog
 test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
-test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom
+test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-bam-site-counts test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom test-hts-region-ownership
 test_release: test-reference-cache
 ifneq ($(filter linux_%,$(or $(DUCKDB_PLATFORM),$(shell sed -n '1p' configure/platform.txt 2>/dev/null))),)
 test_release: test-reader-alloc
@@ -202,6 +202,17 @@ test-somalier-native-asan:
 test-somalier-native-ubsan:
 	$(call run_somalier_native_test,-O1 -fsanitize=undefined -fno-omit-frame-pointer,UBSAN_OPTIONS=print_stacktrace=1)
 
+.PHONY: test-bam-site-counts
+test-bam-site-counts:
+	@if [ "$(LINUX_CI_IN_DOCKER)" != 0 ]; then \
+		cmake --build cmake_build/release --target duckhts_bam_site_counts_test; \
+	fi
+	./cmake_build/release/duckhts_bam_site_counts_test
+
+.PHONY: test-somalier-extraction-http
+test-somalier-extraction-http: release
+	Rscript test/scripts/somalier_extraction_http.R build/release/duckhts.duckdb_extension
+
 test-somalier-r-release:
 	scripts/test_somalier_release_campaigns.sh
 
@@ -247,6 +258,24 @@ test-bcf-info-oom:
 			./cmake_build/release/duckhts_bcf_info_oom_test ;; \
 		OFF) echo "BCF realloc interposition requires a Linux target; reader SQL/R tests remain enabled" ;; \
 		*) echo "Invalid CMake BCF probe availability"; exit 1 ;; \
+		esac
+
+.PHONY: test-hts-region-ownership
+test-hts-region-ownership:
+	@set -e; \
+		test -f cmake_build/release/duckhts_hts_region_ownership.enabled || \
+			{ echo "Configure the release build before running the HTS region ownership probe"; exit 1; }; \
+		case "$$(cat cmake_build/release/duckhts_hts_region_ownership.enabled)" in \
+		ON) \
+			if [ "$(LINUX_CI_IN_DOCKER)" != 0 ]; then \
+				cmake --build cmake_build/release --target duckhts_hts_region_ownership_test; \
+			fi; \
+			ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 \
+				./cmake_build/release/duckhts_hts_region_ownership_test \
+				test/data/range.bam test/data/range.bam.bai \
+				test/data/range.cram test/data/range.cram.crai ;; \
+		OFF) echo "HTS region ownership interposition requires a Linux target" ;; \
+		*) echo "Invalid CMake HTS region ownership probe availability"; exit 1 ;; \
 		esac
 
 .PHONY: test-reference-cache test-reference-cache-asan test-reference-cache-ubsan test-reference-cache-tsan

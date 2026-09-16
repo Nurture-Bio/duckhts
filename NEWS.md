@@ -7,6 +7,29 @@ the same extension release; publication remains pending.
 
 ## Sample identity and contamination
 
+- Add `duckhts_somalier_import_sites()` to turn an already selected sites
+  VCF/BCF into one canonical panel and population-frequency relation. Lexical
+  A/B orientation and population frequency are transformed together; this
+  importer does not claim Somalier `find-sites` population-panel selection.
+- Add `duckhts_somalier_bam_counts()` for complete panel-aligned BAM/CRAM
+  A/B/other extraction. A committed panel relation or Parquet source is
+  prepared once, then `worker_count` controls native DuckDB scan jobs while
+  each job owns its reader, index, reference, pileup, and overlap state;
+  overlap names use a bounded hash index, and `decompression_threads`
+  separately controls htslib workers per handle.
+  Indexed requests use resolved reference IDs, so valid contig names that
+  contain region-expression punctuation remain exact.
+  Reference/header availability, measured zero depth, read/base filters,
+  overlap policy, resource limits, and remote-cache settings remain per-call.
+  Parallel SQL output is unordered; caller TEMP panels and uncommitted changes
+  are not visible through the retained preparation connection.
+- Preserve the alignment file's original `@SQ` lengths during CRAM count
+  extraction, and honor a non-colocated explicit FASTA index without creating
+  or requiring a `${reference}.fai` sidecar.
+- Add `duckhts_somalier_vcf_counts()` for complete sample-by-panel count
+  extraction from projected VCF/BCF `FORMAT/AD`. Exact allele-slot mapping,
+  multiallelic declared-other counts, FILTER policy, unavailable evidence and
+  physical record/sample provenance remain explicit typed columns.
 - Add panel-verified, Parquet-persistable count evidence sketches and fused
   Somalier-derived relatedness/concordance statistics. Canonical A/B allele
   order, site geometry, classification settings and sample identity are checked;
@@ -55,6 +78,11 @@ the same extension release; publication remains pending.
   `read_geno(format_fields := ['AD', 'DP', 'GQ'])`. Values follow header types
   and cardinalities, preserve missing elements, and remain available on records
   without GT. `read_bcf()` and `read_geno()` share projected FORMAT decoding.
+- Add `read_geno(include_filter := true)` for projection-aware access to the
+  same physical record's FILTER state. PASS, unapplied dot, and named failures
+  remain distinct without a coordinate/order join to `read_bcf()`.
+- Preserve an unapplied VCF/BCF FILTER dot as NULL in `read_bcf()` instead of
+  conflating it with `[PASS]`; named filter lists remain header-faithful.
 - Preserve original VCF genotype spelling with `read_geno(raw_gt := true)`,
   including leading phase markers and missing alleles. BCF rejects this option
   because it does not retain the original text. `read_bcf()` GT formatting

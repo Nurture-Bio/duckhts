@@ -693,6 +693,7 @@ struct refs_t {
 
     char *fn;              // current file opened
     BGZF *fp;              // and the hFILE* to go with it.
+    int explicit_fai;      // do not infer or build fn.fai
 
     int count;             // how many cram_fd sharing this refs struct
 
