@@ -17,6 +17,8 @@ the same extension release; publication remains pending.
   each job owns its reader, index, reference, pileup, and overlap state;
   overlap names use a bounded hash index, and `decompression_threads`
   separately controls htslib workers per handle.
+  Indexed requests use resolved reference IDs, so valid contig names that
+  contain region-expression punctuation remain exact.
   Reference/header availability, measured zero depth, read/base filters,
   overlap policy, resource limits, and remote-cache settings remain per-call.
   Parallel SQL output is unordered; caller TEMP panels and uncommitted changes

@@ -165,6 +165,27 @@ test_somalier_bam_count_extraction <- function() {
     c("measured", "measured", "unavailable_reference_mismatch")
   )
 
+  brace_paths <- vapply(
+    c("somalier_brace.bam", "somalier_brace.bam.bai",
+      "somalier_brace.fa", "somalier_brace.fa.fai"),
+    extdata, character(1)
+  )
+  expect_true(all(nzchar(brace_paths)) && all(file.exists(brace_paths)))
+  dbExecute(con, paste(
+    "CREATE TABLE somalier_brace_panel AS SELECT * FROM (VALUES",
+    "('synthetic', 0::UBIGINT, 'ctg}part', 10::UBIGINT, 'A', 'G'))",
+    "p(assembly, site_index, region, position, allele_a, allele_b)"
+  ))
+  brace <- rduckhts_somalier_bam_counts(
+    con, brace_paths[["somalier_brace.bam"]], "brace-sample",
+    brace_paths[["somalier_brace.fa"]], panel_table = "somalier_brace_panel",
+    index_path = brace_paths[["somalier_brace.bam.bai"]],
+    reference_index_path = brace_paths[["somalier_brace.fa.fai"]]
+  )
+  expect_equal(brace[c("region", "a", "b", "other", "status")], data.frame(
+    region = "ctg}part", a = 1, b = 0, other = 0, status = "measured"
+  ))
+
   stricter <- rduckhts_somalier_bam_counts(
     con, paths[["range.bam"]], "sample-1", paths[["ce.fa"]],
     panel_table = "bam_extraction_panel",

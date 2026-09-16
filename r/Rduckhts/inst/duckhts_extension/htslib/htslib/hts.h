@@ -1347,8 +1347,9 @@ int hts_itr_multi_cram(const hts_idx_t *idx, hts_itr_t *iter);
     @param tell         Callback to return current input file location
     @return An iterator on success; NULL on failure
 
-    The iterator struct returned by a successful call should be freed
-    via hts_itr_destroy() when it is no longer needed.
+    On success the iterator owns @p reglist and should be freed via
+    hts_itr_destroy() when it is no longer needed.  On failure ownership of
+    @p reglist remains with the caller.
  */
 HTSLIB_EXPORT
 hts_itr_t *hts_itr_regions(const hts_idx_t *idx, hts_reglist_t *reglist, int count, hts_name2id_f getid, void *hdr, hts_itr_multi_query_func *itr_specific, hts_readrec_func *readrec, hts_seek_func *seek, hts_tell_func *tell);

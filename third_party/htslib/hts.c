@@ -4250,6 +4250,8 @@ hts_itr_t *hts_itr_regions(const hts_idx_t *idx, hts_reglist_t *reglist, int cou
                 if (itr->reg_list[i].tid < 0) {
                     if (itr->reg_list[i].tid < -1) {
                         hts_log_error("Failed to parse header");
+                        itr->reg_list = NULL;
+                        itr->n_reg = 0;
                         hts_itr_destroy(itr);
                         return NULL;
                     } else {
@@ -4262,6 +4264,8 @@ hts_itr_t *hts_itr_regions(const hts_idx_t *idx, hts_reglist_t *reglist, int cou
         qsort(itr->reg_list, itr->n_reg, sizeof(hts_reglist_t), compare_regions);
         if (itr_specific(idx, itr) != 0) {
             hts_log_error("Failed to create the multi-region iterator!");
+            itr->reg_list = NULL;
+            itr->n_reg = 0;
             hts_itr_destroy(itr);
             itr = NULL;
         }

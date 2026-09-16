@@ -14,7 +14,8 @@ below describe implemented package behavior, not a completed release submission.
   Parquet file is prepared once; `worker_count` controls native DuckDB scan
   jobs with isolated reader/reference state and bounded hash-indexed overlap
   names, while `decompression_threads` separately controls htslib workers per
-  handle. Returned data frames are
+  handle. Indexed requests use resolved reference IDs, preserving valid contig
+  names that contain region-expression punctuation. Returned data frames are
   ordered by site index; caller TEMP panels and uncommitted changes are not
   visible during retained-connection panel preparation.
 - CRAM extraction preserves the alignment file's original `@SQ` lengths and

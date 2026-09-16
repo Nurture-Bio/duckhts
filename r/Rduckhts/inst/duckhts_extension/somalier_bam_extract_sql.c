@@ -241,64 +241,64 @@ static bool read_reference_base(const faidx_t *fai,
     return true;
 }
 
-static bool build_region_array(const bam_extract_site_t *sites,
-                               const bam_extract_order_t *order,
-                               size_t count, uint64_t max_region_bytes,
-                               char ***regions_out, char **storage_out,
-                               const char **error) {
-    char **regions = NULL;
-    char *storage = NULL;
-    size_t required = 0u;
-    size_t offset = 0u;
+static bool build_region_list(const bam_extract_order_t *order,
+                              size_t count, uint64_t max_region_bytes,
+                              hts_reglist_t **regions_out,
+                              unsigned int *region_count_out,
+                              const char **error) {
+    hts_reglist_t *regions = NULL;
+    size_t region_count = 0u;
+    size_t required;
 
     if (count == 0u) {
         *regions_out = NULL;
-        *storage_out = NULL;
+        *region_count_out = 0u;
         return true;
     }
-    if (count > UINT_MAX || count > SIZE_MAX / sizeof(*regions)) {
+    if (count > INT_MAX || count > SIZE_MAX / sizeof(hts_pair_pos_t)) {
         *error = "duckhts_somalier_bam_counts: panel has too many indexed regions";
         return false;
     }
     for (size_t i = 0u; i < count; i++) {
-        const bam_extract_site_t *site = &sites[order[i].site_offset];
-        size_t item = (size_t)site->region_length + 48u;
-        if (item > SIZE_MAX - required || required + item > max_region_bytes) {
-            *error = "duckhts_somalier_bam_counts: region text exceeds max_region_bytes";
+        if (i == 0u || order[i].tid != order[i - 1u].tid) region_count++;
+    }
+    if (!checked_size_product(region_count, sizeof(*regions), &required) ||
+        count > (SIZE_MAX - required) / sizeof(hts_pair_pos_t) ||
+        required + count * sizeof(hts_pair_pos_t) > max_region_bytes) {
+        *error = "duckhts_somalier_bam_counts: indexed region workspace exceeds max_region_bytes";
+        return false;
+    }
+    regions = calloc(region_count, sizeof(*regions));
+    if (!regions) {
+        *error = "duckhts_somalier_bam_counts: out of memory allocating multi-region workspace";
+        return false;
+    }
+    for (size_t begin = 0u, group = 0u; begin < count; group++) {
+        size_t end = begin + 1u;
+        size_t interval_count;
+
+        while (end < count && order[end].tid == order[begin].tid) end++;
+        interval_count = end - begin;
+        regions[group].intervals = calloc(interval_count,
+                                          sizeof(*regions[group].intervals));
+        if (!regions[group].intervals) {
+            *error = "duckhts_somalier_bam_counts: out of memory allocating region intervals";
+            hts_reglist_free(regions, (int)region_count);
             return false;
         }
-        required += item;
-    }
-    regions = duckdb_malloc(count * sizeof(*regions));
-    storage = duckdb_malloc(required);
-    if (!regions || !storage) {
-        *error = "duckhts_somalier_bam_counts: out of memory allocating multi-region workspace";
-        goto fail;
-    }
-    for (size_t i = 0u; i < count; i++) {
-        const bam_extract_site_t *site = &sites[order[i].site_offset];
-        int written;
-        regions[i] = storage + offset;
-        storage[offset++] = '{';
-        memcpy(storage + offset, site->region, site->region_length);
-        offset += site->region_length;
-        written = snprintf(storage + offset, required - offset,
-                           "}:%" PRIu64 "-%" PRIu64,
-                           site->position1, site->position1);
-        if (written < 0 || (size_t)written >= required - offset) {
-            *error = "duckhts_somalier_bam_counts: could not format indexed region";
-            goto fail;
+        regions[group].tid = order[begin].tid;
+        regions[group].count = (uint32_t)interval_count;
+        regions[group].min_beg = order[begin].pos0;
+        regions[group].max_end = order[end - 1u].pos0 + 1;
+        for (size_t i = begin; i < end; i++) {
+            regions[group].intervals[i - begin].beg = order[i].pos0;
+            regions[group].intervals[i - begin].end = order[i].pos0 + 1;
         }
-        offset += (size_t)written + 1u;
+        begin = end;
     }
     *regions_out = regions;
-    *storage_out = storage;
+    *region_count_out = (unsigned int)region_count;
     return true;
-
-fail:
-    if (regions) duckdb_free(regions);
-    if (storage) duckdb_free(storage);
-    return false;
 }
 
 static bool scan_sites(samFile *fp, sam_hdr_t *header, hts_idx_t *index,
@@ -310,31 +310,26 @@ static bool scan_sites(samFile *fp, sam_hdr_t *header, hts_idx_t *index,
     duckhts_bam_site_overlap_slot_t *overlap_slots = NULL;
     duckhts_bam_site_overlap_scratch_t overlap_scratch = {0};
     duckhts_bam_site_count_config_t count_config;
-    char **regions = NULL;
-    char *region_storage = NULL;
+    hts_reglist_t *regions = NULL;
+    unsigned int region_count = 0u;
     size_t cursor = 0u;
     bool ok = false;
 
     if (available_count == 0u) return true;
-    if (!build_region_array(sites, order, available_count,
-                            bind->max_region_bytes, &regions,
-                            &region_storage, error)) {
+    if (!build_region_list(order, available_count, bind->max_region_bytes,
+                           &regions, &region_count, error)) {
         return false;
     }
     reader.fp = fp;
     reader.min_mapq = bind->min_mapq;
     reader.require_flags = (uint16_t)bind->require_flags;
     reader.exclude_flags = (uint16_t)bind->exclude_flags;
-    reader.iterator = sam_itr_regarray(index, header, regions,
-                                       (unsigned int)available_count);
-    duckdb_free(regions);
-    duckdb_free(region_storage);
-    regions = NULL;
-    region_storage = NULL;
+    reader.iterator = sam_itr_regions(index, header, regions, region_count);
     if (!reader.iterator) {
         *error = "duckhts_somalier_bam_counts: could not construct one multi-region iterator";
         goto cleanup;
     }
+    regions = NULL;
     if (bind->overlap_policy == DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0 &&
         bind->max_overlap_qnames != 0u) {
         size_t overlap_bytes;
@@ -416,8 +411,7 @@ cleanup:
     if (pileup) bam_plp_destroy(pileup);
     if (reader.iterator) hts_itr_destroy(reader.iterator);
     if (overlap_slots) duckdb_free(overlap_slots);
-    if (regions) duckdb_free(regions);
-    if (region_storage) duckdb_free(region_storage);
+    if (regions) hts_reglist_free(regions, (int)region_count);
     return ok;
 }
 

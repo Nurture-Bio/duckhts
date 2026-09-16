@@ -64,6 +64,27 @@ WHERE sample_id = 'sample-1'
 ----
 4
 
+# Region planning uses resolved TIDs and half-open coordinates directly. A
+# valid SAM reference name containing HTSlib's text-quote terminator remains
+# exact rather than being reparsed as a region expression.
+statement ok
+CREATE TABLE somalier_brace_panel AS
+SELECT 'synthetic' AS assembly, 0::UBIGINT AS site_index,
+       'ctg}part' AS region, 10::UBIGINT AS position,
+       'A' AS allele_a, 'G' AS allele_b;
+
+query TTTT
+SELECT a::VARCHAR, b::VARCHAR, other::VARCHAR, status
+FROM duckhts_somalier_bam_counts(
+  '__WORKING_DIRECTORY__/test/data/somalier_brace.bam',
+  'somalier_brace_panel', 'brace-sample',
+  '__WORKING_DIRECTORY__/test/data/somalier_brace.fa',
+  index_path := '__WORKING_DIRECTORY__/test/data/somalier_brace.bam.bai',
+  reference_index_path := '__WORKING_DIRECTORY__/test/data/somalier_brace.fa.fai'
+);
+----
+1	0	0	measured
+
 # worker_count changes only execution. Native DuckDB local states own
 # independent BAM/index/reference/pileup state and share one prepared panel.
 statement ok

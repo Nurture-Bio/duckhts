@@ -474,6 +474,7 @@ message(STATUS "htslib link libs: ${HTSLIB_LINK_LIBS}")
 
 # Test-only copied-API interposition; never linked into the extension/package.
 set(DUCKHTS_BCF_INFO_OOM_ENABLED OFF)
+set(DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED OFF)
 if(UNIX AND NOT DUCKDB_WASM_EXTENSION)
     add_executable(duckhts_bcf_scan_test EXCLUDE_FROM_ALL
         test/scripts/bcf_scan_test.c src/bcf_scan.c src/bcf_genotypes.c
@@ -495,10 +496,23 @@ if(UNIX AND NOT DUCKDB_WASM_EXTENSION)
         target_include_directories(duckhts_bcf_info_oom_test PRIVATE ${HTSLIB_SRC_DIR})
         target_link_options(duckhts_bcf_info_oom_test PRIVATE -Wl,--wrap=realloc)
         target_link_libraries(duckhts_bcf_info_oom_test PRIVATE ${HTSLIB_LINK_LIBS})
+
+        set(DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED ON)
+        add_executable(duckhts_hts_region_ownership_test EXCLUDE_FROM_ALL
+            test/scripts/hts_region_ownership_test.c)
+        target_compile_features(duckhts_hts_region_ownership_test PRIVATE c_std_11)
+        target_compile_options(duckhts_hts_region_ownership_test PRIVATE
+            -UNDEBUG -fsanitize=address -fno-omit-frame-pointer)
+        target_include_directories(duckhts_hts_region_ownership_test PRIVATE ${HTSLIB_SRC_DIR})
+        target_link_options(duckhts_hts_region_ownership_test PRIVATE
+            -Wl,--wrap=calloc -fsanitize=address)
+        target_link_libraries(duckhts_hts_region_ownership_test PRIVATE ${HTSLIB_LINK_LIBS})
     endif()
 endif()
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/duckhts_bcf_info_oom.enabled"
     CONTENT "${DUCKHTS_BCF_INFO_OOM_ENABLED}\n")
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/duckhts_hts_region_ownership.enabled"
+    CONTENT "${DUCKHTS_HTS_REGION_OWNERSHIP_ENABLED}\n")
 
 # Host-neutral region parsing probe: real HTSlib, no DuckDB headers or runtime.
 if(NOT DUCKDB_WASM_EXTENSION)
