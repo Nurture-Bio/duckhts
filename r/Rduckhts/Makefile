@@ -20,14 +20,12 @@ deps:
 build:
 	R CMD build .
 
-.PHONY: install check build rd test test-integration clean cran-ready help
+.PHONY: install check check-cran build rd test test-integration clean cran-ready help
 
 install: build
 	THREADS=4 R CMD INSTALL $(PKG_NAME)_$(PKG_VERSION).tar.gz
 
-.PHONY: check
-
-check: build
+check check-cran: build
 	R CMD check --as-cran  $(PKG_NAME)_$(PKG_VERSION).tar.gz
 readme:
 	python3 ../../scripts/render_function_catalog.py ../..
