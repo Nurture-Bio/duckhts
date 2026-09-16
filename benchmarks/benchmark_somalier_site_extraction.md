@@ -48,8 +48,8 @@ DUCKHTS_EXTENSION=build/release/duckhts.duckdb_extension \
 
 | property                     | value                                                                           |
 |:-----------------------------|:--------------------------------------------------------------------------------|
-| candidate checkout revision  | 268b5e443b47b822f2973f0076d4b793df39fd68                                        |
-| candidate source state       | dirty; benchmark must be rerendered after committing                            |
+| candidate checkout revision  | 5db3d6735f666b3b0dee8facd5619365052b853c                                        |
+| candidate source state       | clean at recorded revision                                                      |
 | candidate extension          | /root/duckhts/build/release/duckhts.duckdb_extension                            |
 | R                            | R version 4.6.0 (2026-04-24)                                                    |
 | DuckDB R package             | 1.5.3                                                                           |
@@ -71,8 +71,8 @@ DUCKHTS_EXTENSION=build/release/duckhts.duckdb_extension \
 
 | format | input_records | panel_sites | output_samples | output_rows | measured_rows | unavailable_rows | threads | median_seconds | minimum_seconds | maximum_seconds | median_peak_rss_mib | maximum_peak_rss_mib | input_records_per_second | output_rows_per_second |
 |:-------|--------------:|------------:|---------------:|------------:|--------------:|-----------------:|--------:|---------------:|----------------:|----------------:|--------------------:|---------------------:|-------------------------:|-----------------------:|
-| BCF    |        319349 |       17000 |              1 |       17000 |         17000 |                0 |       1 |          0.581 |           0.581 |           0.593 |             344.734 |              345.102 |                 549654.0 |               29259.90 |
-| VCF    |        319349 |       17000 |              1 |       17000 |         17000 |                0 |       1 |          0.830 |           0.823 |           0.842 |             344.547 |              346.387 |                 384757.8 |               20481.93 |
+| BCF    |        319349 |       17000 |              1 |       17000 |         17000 |                0 |       1 |          0.582 |           0.576 |           0.589 |             343.305 |              344.320 |                 548709.6 |               29209.62 |
+| VCF    |        319349 |       17000 |              1 |       17000 |         17000 |                0 |       1 |          0.839 |           0.825 |           0.890 |             344.695 |              345.199 |                 380630.5 |               20262.22 |
 
 | comparison                            | left_rows | right_rows | symmetric_difference_rows |
 |:--------------------------------------|----------:|-----------:|--------------------------:|
@@ -80,12 +80,12 @@ DUCKHTS_EXTENSION=build/release/duckhts.duckdb_extension \
 
 | format | source_reads | panel_sites | output_samples | output_rows | measured_rows | unavailable_rows | worker_count | median_seconds | minimum_seconds | maximum_seconds | median_peak_rss_mib | maximum_peak_rss_mib | source_reads_per_second | output_rows_per_second |
 |:-------|-------------:|------------:|---------------:|------------:|--------------:|-----------------:|-------------:|---------------:|----------------:|----------------:|--------------------:|---------------------:|------------------------:|-----------------------:|
-| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            1 |          0.107 |           0.104 |           0.113 |             158.020 |              158.430 |                158878.5 |               158878.5 |
-| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            2 |          0.102 |           0.101 |           0.111 |             165.543 |              168.828 |                166666.7 |               166666.7 |
-| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            4 |          0.101 |           0.101 |           0.106 |             169.289 |              171.469 |                168316.8 |               168316.8 |
-| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            1 |          0.111 |           0.110 |           0.112 |             158.109 |              158.621 |                153153.2 |               153153.2 |
-| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            2 |          0.116 |           0.109 |           0.126 |             166.137 |              169.875 |                146551.7 |               146551.7 |
-| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            4 |          0.123 |           0.120 |           0.133 |             173.703 |              175.301 |                138211.4 |               138211.4 |
+| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            1 |          0.108 |           0.104 |           0.112 |             157.895 |              158.145 |                157407.4 |               157407.4 |
+| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            2 |          0.109 |           0.105 |           0.114 |             166.953 |              169.406 |                155963.3 |               155963.3 |
+| BAM    |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            4 |          0.106 |           0.103 |           0.110 |             172.266 |              173.824 |                160377.4 |               160377.4 |
+| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            1 |          0.110 |           0.109 |           0.114 |             158.402 |              158.785 |                154545.5 |               154545.5 |
+| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            2 |          0.115 |           0.111 |           0.118 |             167.254 |              169.059 |                147826.1 |               147826.1 |
+| CRAM   |        17000 |       17000 |              1 |       17000 |         17000 |                0 |            4 |          0.130 |           0.124 |           0.136 |             174.059 |              175.949 |                130769.2 |               130769.2 |
 
 | comparison                        | excluded_columns | left_rows | right_rows | symmetric_difference_rows |
 |:----------------------------------|:-----------------|----------:|-----------:|--------------------------:|
@@ -97,10 +97,10 @@ DUCKHTS_EXTENSION=build/release/duckhts.duckdb_extension \
 
 ## Result
 
-At one DuckDB thread, median complete materialization was 0.830 seconds
-from VCF.gz and 0.581 seconds from BCF. Both runs consumed 319,349
+At one DuckDB thread, median complete materialization was 0.839 seconds
+from VCF.gz and 0.582 seconds from BCF. Both runs consumed 319,349
 physical records and emitted exactly 17,000 measured rows for one
-sample. Median whole-process peak RSS was 344.5 MiB for VCF.gz and 344.7
+sample. Median whole-process peak RSS was 344.7 MiB for VCF.gz and 343.3
 MiB for BCF. The exact bidirectional `EXCEPT ALL` comparison, excluding
 only the intentionally different source path, found 0 differing rows.
 
@@ -110,14 +110,14 @@ The comparison shows encoding and worker-count measurements within the
 same candidate build.
 
 For the synthetic aligned-read workload, the measured BAM medians for
-worker counts 1, 2, and 4 were 0.107, 0.102, 0.101 seconds; the
-corresponding CRAM medians were 0.111, 0.116, 0.123 seconds. Every timed
+worker counts 1, 2, and 4 were 0.108, 0.109, 0.106 seconds; the
+corresponding CRAM medians were 0.110, 0.115, 0.130 seconds. Every timed
 materialization consumed 17,000 source reads across 17,000 panel sites
 and emitted 17,000 measured rows for one sample. Whole-process median
-peak RSS for BAM was 158.0, 165.5, 169.3 MiB at worker counts 1, 2, and
-4; CRAM used 158.1, 166.1, 173.7 MiB. The four exact worker-count
-comparisons, which excluded no columns, found at most 0 differing rows.
-The BAM-versus-CRAM comparison at four workers excluded only the
+peak RSS for BAM was 157.9, 167.0, 172.3 MiB at worker counts 1, 2, and
+4; CRAM used 158.4, 167.3, 174.1 MiB. The four exact worker-count
+comparisons, which excluded no columns, found 0 differing rows. The
+BAM-versus-CRAM comparison at four workers excluded only the
 intentionally different source path and found 0 differing rows.
 
 These measurements do not establish a general scaling result. They

@@ -562,7 +562,7 @@ median peak RSS for BAM was
 MiB at worker counts 1, 2, and 4; CRAM used
 `r paste(sprintf("%.1f", alignment_summary$median_peak_rss_mib[alignment_summary$format == "CRAM"]), collapse = ", ")`
 MiB. The four exact worker-count comparisons, which excluded no columns,
-found at most
+found
 `r max(alignment_validation$symmetric_difference_rows[alignment_validation$excluded_columns == "none"])`
 differing rows. The BAM-versus-CRAM comparison at four workers excluded only
 the intentionally different source path and found
