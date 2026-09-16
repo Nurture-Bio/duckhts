@@ -33,7 +33,7 @@ This section is generated from `functions.yaml`.
 | [`duckvep_model_drop`](reference.md#duckvep_model_drop) | scalar |  | Remove a named resident DuckVEP consequence model and release its transcript and regulation-feature interval indexes, sequences, and cached worker state. Returns FALSE when the name is absent or the model is in use by an annotation vector. |
 | [`duckvep_allele_geometry`](reference.md#duckvep_allele_geometry) | scalar |  | Separate uploaded, VEP-116 feature and minimized-edit geometry for one literal biallelic allele. |
 | [`duckvep_transcript_projection`](reference.md#duckvep_transcript_projection) | table_macro |  | Project independent literal alleles and existing DuckVEP annotations into typed, unshifted VEP-116 transcript display fields. |
-| [`duckvep_repeat_sequence`](reference.md#duckvep_repeat_sequence) | scalar_macro |  | Expand a caller-asserted exact ordered repeat description into a bounded literal sequence. |
+| [`duckvep_repeat_alleles`](reference.md#duckvep_repeat_alleles) | scalar_macro |  | Prepare bounded literal reference and alternate alleles from exact ordered repeat descriptions. |
 | [`duckvep_breakend_geometry`](reference.md#duckvep_breakend_geometry) | scalar |  | Parse one raw VCF 4.5 breakend ALT into mate coordinates, orientation and retained replacement sequence. |
 | [`duckvep_haplotypes`](reference.md#duckvep_haplotypes) | table | `rduckhts_haplotypes` | Replay literal phased CDS/protein paths with carriers, source contributors, coding blocks, aligned differences and optional protein HGVS. |
 | [`duckvep_phase_call`](reference.md#duckvep_phase_call) | scalar |  | Assign decoded GT/PS allele slots to haplotype lanes under strict or pinned VEP-116 phase policy. |

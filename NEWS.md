@@ -126,10 +126,11 @@ the same extension release; publication remains pending.
   Replacement sequence includes retained local bases; it is not inserted-only
   sequence. Correct the paired-BND consequence union when one endpoint supplies
   truncation and another defaults to intergenic.
-- Add `duckvep_repeat_sequence()` for bounded expansion of exact ordered repeat
-  descriptions, including interruptions. The caller must assert sequence
-  completeness. Summary-only, incomplete and fractional-count descriptions
-  return explicit statuses instead of an invented allele.
+- Add `duckvep_repeat_alleles()` for bounded preparation of exact ordered
+  reference and alternate repeat descriptions, including interruptions. One
+  fact returns both sequences, base lengths, signed length change and length
+  direction. Summary-only, incomplete and fractional-count descriptions
+  return explicit statuses instead of an invented event.
 
 ## DuckVEP haplotype foundation — alpha
 
