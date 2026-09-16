@@ -173,18 +173,31 @@ duckvep_register_so_terms(duckdb_connection connection)
 }
 
 static bool
-duckvep_register_repeat_sequence(duckdb_connection connection)
+duckvep_register_repeat_alleles(duckdb_connection connection)
 {
 	static const char *const sql[] = {
-		"CREATE OR REPLACE MACRO duckvep_repeat_sequence(components, sequence_exact, ",
-		"max_sequence_bases := 5000) AS (",
-		"WITH input AS (SELECT CAST(sequence_exact AS BOOLEAN) AS exact, ",
-		"CAST(max_sequence_bases AS DOUBLE) AS capacity, ",
-		"max_sequence_bases <> trunc(max_sequence_bases) AS fractional_capacity, ",
-		"coalesce(list_bool_or(list_transform(components, c -> ",
-		"c.count <> trunc(c.count))), false) AS fractional, ",
-		"list_transform(components, c -> struct_pack(unit := CAST(c.unit AS VARCHAR), ",
-		"count := CAST(c.count AS DOUBLE))) AS parts), ",
+		"CREATE OR REPLACE MACRO duckvep_repeat_alleles(reference_components, ",
+		"alternate_components, sequence_exact, max_allele_bases := 5000) AS (",
+		"WITH raw_input AS MATERIALIZED (SELECT ",
+		"reference_components AS ref_arg, alternate_components AS alt_arg, ",
+		"sequence_exact AS exact_arg, max_allele_bases AS capacity_arg), ",
+		"input AS (SELECT CAST(exact_arg AS BOOLEAN) AS exact, ",
+		"CAST(capacity_arg AS DOUBLE) AS capacity, ",
+		"capacity_arg <> trunc(capacity_arg) AS fractional_capacity, ",
+		"list_transform(ref_arg, c -> struct_pack(",
+		"unit := CAST(c.unit AS VARCHAR), count := CAST(c.count AS DOUBLE))) AS ref_parts, ",
+		"list_transform(alt_arg, c -> struct_pack(",
+		"unit := CAST(c.unit AS VARCHAR), count := CAST(c.count AS DOUBLE))) AS alt_parts, ",
+		"coalesce(list_bool_or(list_transform(ref_arg, c -> ",
+		"c.count <> trunc(c.count))), false) AS ref_fractional, ",
+		"coalesce(list_bool_or(list_transform(alt_arg, c -> ",
+		"c.count <> trunc(c.count))), false) AS alt_fractional FROM raw_input), ",
+		"axes AS (SELECT exact, capacity, fractional_capacity, u.axis, u.name, ",
+		"u.parts, u.fractional FROM input, unnest([",
+		"struct_pack(axis := 0, name := 'reference', parts := ref_parts, ",
+		"fractional := ref_fractional), ",
+		"struct_pack(axis := 1, name := 'alternate', parts := alt_parts, ",
+		"fractional := alt_fractional)]) t(u)), ",
 		"facts AS (SELECT *, ",
 		"coalesce(list_bool_or(list_transform(parts, c -> c.unit IS NOT NULL AND ",
 		"NOT regexp_full_match(c.unit, '[ACGTRYSWKMBDHVNacgtryswkmbdhvn]+'))), false) AS invalid_unit, ",
@@ -193,21 +206,44 @@ duckvep_register_repeat_sequence(duckdb_connection connection)
 		"parts IS NULL OR coalesce(list_bool_or(list_transform(parts, c -> ",
 		"c.unit IS NULL OR c.count IS NULL)), false) AS incomplete, ",
 		"coalesce(list_sum(list_transform(parts, c -> length(c.unit) * c.count)), 0) AS required ",
-		"FROM input) ",
-		"SELECT CASE ",
-		"WHEN exact IS NULL THEN error('duckvep_repeat_sequence: sequence_exact is required') ",
+		"FROM axes), ",
+		"checked AS (SELECT *, CASE ",
+		"WHEN exact IS NULL THEN error('duckvep_repeat_alleles: sequence_exact is required') ",
 		"WHEN capacity IS NULL OR NOT isfinite(capacity) OR capacity < 0 ",
 		"OR capacity > 2147483647 OR fractional_capacity ",
-		"THEN error('duckvep_repeat_sequence: max_sequence_bases must be an integer from 0 through 2147483647') ",
-		"WHEN invalid_unit THEN error('duckvep_repeat_sequence: repeat units must contain non-empty IUPAC DNA') ",
-		"WHEN invalid_count THEN error('duckvep_repeat_sequence: repeat counts must be finite and nonnegative') ",
-		"WHEN NOT exact THEN struct_pack(sequence := NULL::VARCHAR, status := 'summary_only') ",
-		"WHEN incomplete THEN struct_pack(sequence := NULL::VARCHAR, status := 'incomplete_input') ",
-		"WHEN fractional THEN struct_pack(sequence := NULL::VARCHAR, status := 'nonintegral_count') ",
-		"WHEN required > capacity THEN error('duckvep_repeat_sequence: required bases ' || ",
-		"CAST(required AS VARCHAR) || ' exceeds max_sequence_bases=' || CAST(capacity AS VARCHAR)) ",
-		"ELSE struct_pack(sequence := coalesce(array_to_string(list_transform(parts, c -> ",
-		"repeat(c.unit, CAST(c.count AS BIGINT))), ''), ''), status := 'ok') END FROM facts)"
+		"THEN error('duckvep_repeat_alleles: max_allele_bases must be an integer from 0 through ",
+		"2147483647') WHEN invalid_unit THEN error('duckvep_repeat_alleles: repeat units must ",
+		"contain non-empty IUPAC DNA') WHEN invalid_count THEN error('duckvep_repeat_alleles: ",
+		"repeat counts must be finite and nonnegative') ",
+		"WHEN NOT exact THEN 'summary_only' WHEN incomplete THEN 'incomplete_input' ",
+		"WHEN fractional THEN 'nonintegral_count' ",
+		"WHEN required > capacity THEN error('duckvep_repeat_alleles: ' || name || ",
+		"' requires ' || CAST(required AS VARCHAR) || ",
+		"' bases which exceeds max_allele_bases=' || CAST(capacity AS VARCHAR)) ",
+		"ELSE 'ok' END AS status FROM facts), ",
+		"paired_status AS (SELECT CASE ",
+		"WHEN bool_or(status = 'incomplete_input') THEN 'incomplete_input' ",
+		"WHEN bool_or(status = 'nonintegral_count') THEN 'nonintegral_count' ",
+		"WHEN bool_or(status = 'summary_only') THEN 'summary_only' ELSE 'ok' END AS status ",
+		"FROM checked), expanded AS (SELECT checked.*, paired_status.status AS paired_status, ",
+		"CASE WHEN paired_status.status = 'ok' THEN ",
+		"coalesce(array_to_string(list_transform(parts, c -> ",
+		"repeat(c.unit, CAST(c.count AS BIGINT))), ''), '') ELSE NULL END AS sequence ",
+		"FROM checked CROSS JOIN paired_status), paired AS (SELECT ",
+		"max(CASE WHEN axis = 0 THEN sequence END) AS reference, ",
+		"max(CASE WHEN axis = 1 THEN sequence END) AS alternate, ",
+		"max(paired_status) AS status FROM expanded) ",
+		"SELECT CASE WHEN status = 'ok' THEN ",
+		"struct_pack(reference := reference, alternate := alternate, ",
+		"reference_length := CAST(length(reference) AS UBIGINT), ",
+		"alternate_length := CAST(length(alternate) AS UBIGINT), ",
+		"length_change := CAST(length(alternate) AS BIGINT) - CAST(length(reference) AS BIGINT), ",
+		"length_direction := CASE WHEN length(alternate) > length(reference) THEN 'GAIN' ",
+		"WHEN length(alternate) < length(reference) THEN 'LOSS' ELSE 'NEUTRAL' END, ",
+		"status := 'ok') ELSE struct_pack(reference := NULL::VARCHAR, ",
+		"alternate := NULL::VARCHAR, reference_length := NULL::UBIGINT, ",
+		"alternate_length := NULL::UBIGINT, length_change := NULL::BIGINT, ",
+		"length_direction := NULL::VARCHAR, status := status) END FROM paired)"
 	};
 
 	return duckvep_register_sql_parts(connection, sql,
@@ -682,7 +718,7 @@ register_duckvep_sql_functions(duckdb_connection connection)
 {
 	return duckvep_register_so_terms(connection) &&
 	    duckvep_register_phase_call(connection) &&
-	    duckvep_register_repeat_sequence(connection) &&
+	    duckvep_register_repeat_alleles(connection) &&
 	    duckvep_register_projection_code(connection) &&
 	    duckvep_register_annotate_relation(connection) &&
 	    duckvep_register_projection_relation(connection);

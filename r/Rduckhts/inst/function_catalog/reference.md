@@ -630,42 +630,46 @@ This adds display fields, not consequences, phased/structural projection or HGVS
 SELECT p.* FROM duckvep_transcript_projection('events', 'annotations', 'grch38_transcripts') p;
 ```
 
-## duckvep_repeat_sequence
+## duckvep_repeat_alleles
 
-Expand a caller-asserted exact ordered repeat description into a bounded literal sequence.
+Prepare bounded literal reference and alternate alleles from exact ordered repeat descriptions.
 
 Signature:
 
 ```sql
-duckvep_repeat_sequence(components, sequence_exact, max_sequence_bases := 5000)
+duckvep_repeat_alleles(reference_components, alternate_components, sequence_exact, max_allele_bases := 5000)
 ```
 
 Returns:
 
 ```
-STRUCT(sequence VARCHAR, status VARCHAR)
+STRUCT(reference VARCHAR, alternate VARCHAR, reference_length UBIGINT, alternate_length UBIGINT, length_change BIGINT, length_direction VARCHAR, status VARCHAR)
 ```
 
 ### Input
 
-components contains unit VARCHAR and numeric count fields in sequence order; prepare reference and alternate separately. Required sequence_exact asserts that the complete description, including interruptions, represents the allele. CNV:TR summary metadata does not establish exactness.
+Each component list contains unit VARCHAR and numeric count fields in sequence order. Required sequence_exact asserts that both complete descriptions, including interruptions, represent the event's literal alleles. CNV:TR summary metadata alone does not establish exactness.
+
+### Output
+
+Exact complete inputs return both literal sequences, their base lengths, signed alternate-minus-reference length_change and length_direction GAIN, LOSS or NEUTRAL. The direction describes expanded base length; it is not a copy-number inference. Empty lists and zero counts produce empty, not NULL, alleles.
 
 ### Status
 
-FALSE exactness returns NULL sequence/summary_only even for integral counts. With TRUE, missing lists/elements/units/counts return incomplete_input; fractional counts return nonintegral_count without rounding. Complete nonnegative integral counts produce ok; empty lists and zero counts produce empty, not NULL, sequence.
+FALSE exactness returns summary_only with all fact fields NULL. With TRUE, missing lists/elements/units/counts return incomplete_input; fractional counts return nonintegral_count without rounding. One unavailable allele withholds the complete event fact.
 
 ### Limits
 
-Nonempty IUPAC DNA units preserve case/ambiguity. Invalid units and negative/nonfinite counts error even in summary mode. max_sequence_bases is a per-call nonnegative integer no greater than 2147483647; check the entire concatenation before expansion and error without partial output on exhaustion.
+Nonempty IUPAC DNA units preserve case and ambiguity. Invalid units and negative or nonfinite counts error even in summary mode. max_allele_bases is a nonnegative integer no greater than 2147483647 and applies separately to each complete allele; exhaustion errors before either sequence is returned.
 
 ### Scope
 
-No RN/RUS/RUC/RB parsing, reference-count inference, FASTA validation, genomic anchoring, normalization or VEP expansion-policy certification is performed. Retain event/ALT ordinals, raw fractional counts, confidence and exactness beside the prepared allele. Use exact literal outputs with annotation/haplotype paths; keep summaries for structural consumers. ok certifies expansion, not the caller's exactness or resolution of ambiguous bases.
+No RN/RUS/RUC/RB parsing, reference-count inference, FASTA validation, genomic anchoring, normalization or VEP expansion-policy certification is performed. Retain event and ALT ordinals, raw counts, confidence and exactness beside the fact. Use ok literal outputs with annotation or haplotype paths; keep summaries for structural consumers. ok certifies expansion, not the caller's exactness or resolution of ambiguous bases.
 
 ### Examples
 
 ```sql
-SELECT (duckvep_repeat_sequence([{unit: 'CAG', count: 5}, {unit: 'CAT', count: 1}, {unit: 'CAG', count: 5}], true, max_sequence_bases := 100)).*;
+SELECT (duckvep_repeat_alleles([{unit: 'CAG', count: 10}], [{unit: 'CAG', count: 5}, {unit: 'CAT', count: 1}, {unit: 'CAG', count: 5}], true, max_allele_bases := 100)).*;
 ```
 
 ## duckvep_breakend_geometry
