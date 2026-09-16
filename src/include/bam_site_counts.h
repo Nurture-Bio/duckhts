@@ -47,18 +47,26 @@ typedef struct duckhts_bam_site_counts {
     uint32_t other;
 } duckhts_bam_site_counts_t;
 
-/* Entries borrow qname storage from pileup records. The caller owns the entry
- * array and keeps every input bam1_t alive until reduction returns. */
-typedef struct duckhts_bam_site_overlap_entry {
+/* Slots borrow qname storage from pileup records. The caller owns the hash
+ * table and keeps every input bam1_t alive until reduction returns. */
+typedef struct duckhts_bam_site_overlap_slot {
     const char *qname;
-    size_t qname_len;
     uint64_t qname_hash;
-} duckhts_bam_site_overlap_entry_t;
+    uint32_t qname_len;
+    uint32_t generation;
+} duckhts_bam_site_overlap_slot_t;
 
 typedef struct duckhts_bam_site_overlap_scratch {
-    duckhts_bam_site_overlap_entry_t *entries;
-    size_t capacity;
+    duckhts_bam_site_overlap_slot_t *slots;
+    size_t max_entries;
+    size_t slot_capacity;
+    uint32_t generation;
 } duckhts_bam_site_overlap_scratch_t;
+
+/* Returns the open-addressed table size required for max_entries active
+ * qnames, or zero when 2 * max_entries + 1 overflows size_t. */
+int duckhts_bam_site_overlap_slot_capacity(size_t max_entries,
+                                           size_t *slot_capacity);
 
 /* MAPQ and general SAM-flag filtering belong to the reader adapter. This
  * kernel skips deletion/refskip entries, applies base quality, uppercases the
@@ -66,8 +74,10 @@ typedef struct duckhts_bam_site_overlap_scratch {
  * QUAL (0xff) is accepted only when min_baseq is zero.
  *
  * overlap_scratch may be NULL for OVERLAP_NONE. Hileup overlap mode requires
- * a scratch descriptor; zero capacity is valid when no record needs tracking.
- * counts is assigned only on success. */
+ * a zero-initialized scratch descriptor and a zero-initialized slot table of
+ * at least duckhts_bam_site_overlap_slot_capacity(max_entries) slots. Zero
+ * max_entries is valid when no record needs tracking. counts is assigned only
+ * on success. */
 duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
     const duckhts_bam_site_t *site,
     const bam_pileup1_t *pileup,

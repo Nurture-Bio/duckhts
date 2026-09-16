@@ -307,7 +307,7 @@ static bool scan_sites(samFile *fp, sam_hdr_t *header, hts_idx_t *index,
                        const bam_extract_bind_t *bind, const char **error) {
     bam_extract_reader_t reader = {0};
     bam_plp_t pileup = NULL;
-    duckhts_bam_site_overlap_entry_t *overlap_entries = NULL;
+    duckhts_bam_site_overlap_slot_t *overlap_slots = NULL;
     duckhts_bam_site_overlap_scratch_t overlap_scratch = {0};
     duckhts_bam_site_count_config_t count_config;
     char **regions = NULL;
@@ -338,20 +338,24 @@ static bool scan_sites(samFile *fp, sam_hdr_t *header, hts_idx_t *index,
     if (bind->overlap_policy == DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0 &&
         bind->max_overlap_qnames != 0u) {
         size_t overlap_bytes;
-        if (!checked_size_product((size_t)bind->max_overlap_qnames,
-                                  sizeof(*overlap_entries),
+        size_t slot_capacity;
+        if (!duckhts_bam_site_overlap_slot_capacity(
+                (size_t)bind->max_overlap_qnames, &slot_capacity) ||
+            !checked_size_product(slot_capacity, sizeof(*overlap_slots),
                                   &overlap_bytes)) {
             *error = "duckhts_somalier_bam_counts: overlap scratch size overflows size_t";
             goto cleanup;
         }
-        overlap_entries = duckdb_malloc(overlap_bytes);
-        if (!overlap_entries) {
+        overlap_slots = duckdb_malloc(overlap_bytes);
+        if (!overlap_slots) {
             *error = "duckhts_somalier_bam_counts: out of memory allocating overlap scratch";
             goto cleanup;
         }
+        memset(overlap_slots, 0, overlap_bytes);
+        overlap_scratch.slot_capacity = slot_capacity;
     }
-    overlap_scratch.entries = overlap_entries;
-    overlap_scratch.capacity = bind->max_overlap_qnames;
+    overlap_scratch.slots = overlap_slots;
+    overlap_scratch.max_entries = bind->max_overlap_qnames;
     count_config.min_baseq = (uint8_t)bind->min_baseq;
     count_config.overlap_policy = bind->overlap_policy;
 
@@ -411,7 +415,7 @@ static bool scan_sites(samFile *fp, sam_hdr_t *header, hts_idx_t *index,
 cleanup:
     if (pileup) bam_plp_destroy(pileup);
     if (reader.iterator) hts_itr_destroy(reader.iterator);
-    if (overlap_entries) duckdb_free(overlap_entries);
+    if (overlap_slots) duckdb_free(overlap_slots);
     if (regions) duckdb_free(regions);
     if (region_storage) duckdb_free(region_storage);
     return ok;

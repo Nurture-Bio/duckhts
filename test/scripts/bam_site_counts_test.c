@@ -89,6 +89,36 @@ static int counts_equal(const duckhts_bam_site_counts_t *counts,
            counts->other == other;
 }
 
+static uint64_t test_qname_hash(const char *qname) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+
+    while (*qname != '\0') {
+        hash ^= (uint8_t)*qname++;
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static int find_collision_names(char names[3][32], size_t slot_capacity) {
+    size_t target = slot_capacity - 1u;
+    size_t found = 0u;
+    unsigned int candidate;
+
+    for (candidate = 0u; candidate < 10000u && found < 3u; candidate++) {
+        char name[32];
+        size_t bucket;
+
+        if (snprintf(name, sizeof(name), "collision-%u", candidate) < 0) {
+            return 0;
+        }
+        bucket = (size_t)(test_qname_hash(name) % slot_capacity);
+        if (bucket != target) continue;
+        memcpy(names[found], name, strlen(name) + 1u);
+        found++;
+    }
+    return found == 3u;
+}
+
 static int test_base_and_quality_reduction(test_records_t *records) {
     const duckhts_bam_site_t site = {100, 'A', 'G'};
     duckhts_bam_site_count_config_t config = {
@@ -137,8 +167,8 @@ static int test_primary_mate_encounter_order(test_records_t *records) {
     duckhts_bam_site_count_config_t config = {
         0, DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0
     };
-    duckhts_bam_site_overlap_entry_t entries[2];
-    duckhts_bam_site_overlap_scratch_t scratch = {entries, 2};
+    duckhts_bam_site_overlap_slot_t slots[5] = {{0}};
+    duckhts_bam_site_overlap_scratch_t scratch = {slots, 2, 5, 0};
     duckhts_bam_site_counts_t counts;
     duckhts_bam_site_status_t status;
     bam_pileup1_t pileup[2];
@@ -181,8 +211,8 @@ static int test_supplementary_encounter_order(test_records_t *records) {
     const duckhts_bam_site_count_config_t config = {
         0, DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0
     };
-    duckhts_bam_site_overlap_entry_t entries[2];
-    duckhts_bam_site_overlap_scratch_t scratch = {entries, 2};
+    duckhts_bam_site_overlap_slot_t slots[5] = {{0}};
+    duckhts_bam_site_overlap_scratch_t scratch = {slots, 2, 5, 0};
     duckhts_bam_site_counts_t counts;
     duckhts_bam_site_status_t status;
     bam_pileup1_t pileup[2];
@@ -224,8 +254,8 @@ static int test_exact_qname_and_scratch_limit(test_records_t *records) {
     const duckhts_bam_site_count_config_t config = {
         0, DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0
     };
-    duckhts_bam_site_overlap_entry_t entries[2];
-    duckhts_bam_site_overlap_scratch_t scratch = {entries, 2};
+    duckhts_bam_site_overlap_slot_t slots[5] = {{0}};
+    duckhts_bam_site_overlap_scratch_t scratch = {slots, 2, 5, 0};
     duckhts_bam_site_counts_t counts = {0, 0, 0};
     duckhts_bam_site_status_t status;
     bam_pileup1_t pileup[3];
@@ -249,7 +279,7 @@ static int test_exact_qname_and_scratch_limit(test_records_t *records) {
     CHECK(status == DUCKHTS_BAM_SITE_OK);
     CHECK(counts_equal(&counts, 1, 1, 0));
 
-    scratch.capacity = 1;
+    scratch.max_entries = 1;
     counts.allele_a = 7;
     counts.allele_b = 8;
     counts.other = 9;
@@ -259,6 +289,54 @@ static int test_exact_qname_and_scratch_limit(test_records_t *records) {
     CHECK(counts_equal(&counts, 7, 8, 9));
     CHECK(strcmp(duckhts_bam_site_status_string(status),
                  "overlap scratch exhausted") == 0);
+    return 0;
+}
+
+static int test_hash_collision_removal(test_records_t *records) {
+    const duckhts_bam_site_t site = {105, 'A', 'G'};
+    const duckhts_bam_site_count_config_t config = {
+        0, DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0
+    };
+    duckhts_bam_site_overlap_slot_t slots[9] = {{0}};
+    duckhts_bam_site_overlap_scratch_t scratch = {slots, 4, 9, 0};
+    duckhts_bam_site_counts_t counts;
+    duckhts_bam_site_status_t status;
+    bam_pileup1_t pileup[6];
+    char names[3][32];
+    const char bases[3] = {'A', 'G', 'C'};
+    size_t slot_capacity;
+    size_t i;
+
+    CHECK(duckhts_bam_site_overlap_slot_capacity(4u, &slot_capacity));
+    CHECK(slot_capacity == 9u);
+    CHECK(!duckhts_bam_site_overlap_slot_capacity(
+        SIZE_MAX / 2u + 1u, &slot_capacity));
+    CHECK(find_collision_names(names, 9u));
+    for (i = 0u; i < 3u; i++) {
+        bam1_t *upstream = make_record(
+            records, names[i], BAM_FPAIRED | BAM_FREAD1,
+            100, 103, BAM_CMATCH, 10, bases[i], 30);
+        bam1_t *downstream = make_record(
+            records, names[i], BAM_FPAIRED | BAM_FREAD2,
+            103, 100, BAM_CMATCH, 10, 'G', 30);
+        CHECK(upstream && downstream);
+        pileup[i] = observation(upstream, 5);
+        pileup[i + 3u] = observation(downstream, 2);
+    }
+    {
+        bam_pileup1_t middle = pileup[3];
+        pileup[3] = pileup[4];
+        pileup[4] = middle;
+    }
+    CHECK((test_qname_hash(names[0]) % 9u) ==
+          (test_qname_hash(names[1]) % 9u));
+    CHECK((test_qname_hash(names[1]) % 9u) ==
+          (test_qname_hash(names[2]) % 9u));
+
+    status = duckhts_bam_site_count_pileup(
+        &site, pileup, 6u, &config, &scratch, &counts);
+    CHECK(status == DUCKHTS_BAM_SITE_OK);
+    CHECK(counts_equal(&counts, 1, 1, 1));
     return 0;
 }
 
@@ -314,6 +392,7 @@ int main(void) {
     if (status == 0) status = test_primary_mate_encounter_order(&records);
     if (status == 0) status = test_supplementary_encounter_order(&records);
     if (status == 0) status = test_exact_qname_and_scratch_limit(&records);
+    if (status == 0) status = test_hash_collision_removal(&records);
     if (status == 0) status = test_invalid_and_overflow_status(&records);
     destroy_records(&records);
 

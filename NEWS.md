@@ -15,7 +15,8 @@ the same extension release; publication remains pending.
   A/B/other extraction. A committed panel relation or Parquet source is
   prepared once, then `worker_count` controls native DuckDB scan jobs while
   each job owns its reader, index, reference, pileup, and overlap state;
-  `decompression_threads` separately controls htslib workers per handle.
+  overlap names use a bounded hash index, and `decompression_threads`
+  separately controls htslib workers per handle.
   Reference/header availability, measured zero depth, read/base filters,
   overlap policy, resource limits, and remote-cache settings remain per-call.
   Parallel SQL output is unordered; caller TEMP panels and uncommitted changes

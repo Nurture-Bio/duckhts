@@ -86,23 +86,107 @@ static uint64_t qname_hash(const char *qname, size_t qname_len) {
     return hash;
 }
 
-static int overlap_find(const duckhts_bam_site_overlap_entry_t *entries,
-                        size_t used,
+int duckhts_bam_site_overlap_slot_capacity(size_t max_entries,
+                                           size_t *slot_capacity) {
+    if (!slot_capacity || max_entries > (SIZE_MAX - 1u) / 2u) return 0;
+    *slot_capacity = max_entries == 0u ? 0u : max_entries * 2u + 1u;
+    return 1;
+}
+
+static size_t overlap_probe_distance(size_t home,
+                                     size_t position,
+                                     size_t capacity) {
+    return position >= home ? position - home : capacity - home + position;
+}
+
+static int overlap_begin(duckhts_bam_site_overlap_scratch_t *scratch) {
+    size_t required;
+
+    if (!scratch ||
+        !duckhts_bam_site_overlap_slot_capacity(scratch->max_entries,
+                                                &required) ||
+        scratch->slot_capacity < required ||
+        scratch->slot_capacity > SIZE_MAX / sizeof(*scratch->slots) ||
+        (required != 0u && !scratch->slots)) {
+        return 0;
+    }
+    scratch->generation++;
+    if (scratch->generation == 0u) {
+        memset(scratch->slots, 0,
+               scratch->slot_capacity * sizeof(*scratch->slots));
+        scratch->generation = 1u;
+    }
+    return 1;
+}
+
+static int overlap_find(const duckhts_bam_site_overlap_scratch_t *scratch,
                         const char *qname,
                         size_t qname_len,
                         uint64_t hash,
-                        size_t *found_index) {
-    size_t i;
+                        size_t *found_slot) {
+    size_t index;
+    size_t scanned;
 
-    for (i = 0; i < used; i++) {
-        const duckhts_bam_site_overlap_entry_t *entry = &entries[i];
-        if (entry->qname_hash == hash && entry->qname_len == qname_len &&
-            memcmp(entry->qname, qname, qname_len) == 0) {
-            *found_index = i;
+    if (scratch->slot_capacity == 0u) return 0;
+    index = (size_t)(hash % scratch->slot_capacity);
+    for (scanned = 0u; scanned < scratch->slot_capacity; scanned++) {
+        const duckhts_bam_site_overlap_slot_t *slot = &scratch->slots[index];
+        if (slot->generation != scratch->generation) return 0;
+        if (slot->qname_hash == hash && slot->qname_len == qname_len &&
+            memcmp(slot->qname, qname, qname_len) == 0) {
+            *found_slot = index;
             return 1;
         }
+        index++;
+        if (index == scratch->slot_capacity) index = 0u;
     }
     return 0;
+}
+
+static int overlap_insert(duckhts_bam_site_overlap_scratch_t *scratch,
+                          const char *qname,
+                          size_t qname_len,
+                          uint64_t hash) {
+    size_t index;
+    size_t scanned;
+
+    if (qname_len > UINT32_MAX || scratch->slot_capacity == 0u) return 0;
+    index = (size_t)(hash % scratch->slot_capacity);
+    for (scanned = 0u; scanned < scratch->slot_capacity; scanned++) {
+        duckhts_bam_site_overlap_slot_t *slot = &scratch->slots[index];
+        if (slot->generation != scratch->generation) {
+            slot->qname = qname;
+            slot->qname_hash = hash;
+            slot->qname_len = (uint32_t)qname_len;
+            slot->generation = scratch->generation;
+            return 1;
+        }
+        index++;
+        if (index == scratch->slot_capacity) index = 0u;
+    }
+    return 0;
+}
+
+static void overlap_remove(duckhts_bam_site_overlap_scratch_t *scratch,
+                           size_t removed_slot) {
+    size_t hole = removed_slot;
+    size_t next = removed_slot;
+
+    for (;;) {
+        size_t home;
+
+        next++;
+        if (next == scratch->slot_capacity) next = 0u;
+        if (scratch->slots[next].generation != scratch->generation) break;
+        home = (size_t)(scratch->slots[next].qname_hash %
+                        scratch->slot_capacity);
+        if (overlap_probe_distance(home, hole, scratch->slot_capacity) <
+            overlap_probe_distance(home, next, scratch->slot_capacity)) {
+            scratch->slots[hole] = scratch->slots[next];
+            hole = next;
+        }
+    }
+    memset(&scratch->slots[hole], 0, sizeof(scratch->slots[hole]));
 }
 
 static int hileup_tracks_mate(const bam1_t *record, hts_pos_t site_pos0) {
@@ -149,8 +233,7 @@ duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
     }
 #endif
     if (config->overlap_policy == DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0) {
-        if (!overlap_scratch ||
-            (overlap_scratch->capacity != 0 && !overlap_scratch->entries)) {
+        if (!overlap_begin(overlap_scratch)) {
             return DUCKHTS_BAM_SITE_INVALID_ARGUMENT;
         }
     }
@@ -173,7 +256,7 @@ duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
         if (config->overlap_policy == DUCKHTS_BAM_SITE_OVERLAP_HILEUP_V0_1_0) {
             const char *qname;
             size_t qname_len;
-            size_t found_index;
+            size_t found_slot;
             uint64_t hash;
 
             if (!record_qname(record, &qname, &qname_len)) {
@@ -181,13 +264,10 @@ duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
             }
             hash = qname_hash(qname, qname_len);
             if (record->core.tid == record->core.mtid &&
-                overlap_find(overlap_scratch->entries, overlap_used,
-                             qname, qname_len, hash, &found_index)) {
+                overlap_find(overlap_scratch, qname, qname_len,
+                             hash, &found_slot)) {
                 overlap_used--;
-                if (found_index != overlap_used) {
-                    overlap_scratch->entries[found_index] =
-                        overlap_scratch->entries[overlap_used];
-                }
+                overlap_remove(overlap_scratch, found_slot);
                 continue;
             }
         }
@@ -216,16 +296,18 @@ duckhts_bam_site_status_t duckhts_bam_site_count_pileup(
             const char *qname;
             size_t qname_len;
 
-            if (overlap_used == overlap_scratch->capacity) {
+            uint64_t hash;
+
+            if (overlap_used == overlap_scratch->max_entries) {
                 return DUCKHTS_BAM_SITE_SCRATCH_EXHAUSTED;
             }
             if (!record_qname(record, &qname, &qname_len)) {
                 return DUCKHTS_BAM_SITE_INVALID_PILEUP;
             }
-            overlap_scratch->entries[overlap_used].qname = qname;
-            overlap_scratch->entries[overlap_used].qname_len = qname_len;
-            overlap_scratch->entries[overlap_used].qname_hash =
-                qname_hash(qname, qname_len);
+            hash = qname_hash(qname, qname_len);
+            if (!overlap_insert(overlap_scratch, qname, qname_len, hash)) {
+                return DUCKHTS_BAM_SITE_SCRATCH_EXHAUSTED;
+            }
             overlap_used++;
         }
     }
