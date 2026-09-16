@@ -155,6 +155,12 @@ if [ "$(uname -s)" = Linux ]; then
   if [ "$sanitizer" = asan ]; then
     ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
       LD_PRELOAD="$(${CC:-cc} -print-file-name=libasan.so)" "$build_dir/duckhts_bcf_info_oom_test"
+    cmake --build "$build_dir" --target duckhts_hts_region_ownership_test -j2
+    ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+      LD_PRELOAD="$(${CC:-cc} -print-file-name=libasan.so)" \
+      "$build_dir/duckhts_hts_region_ownership_test" \
+        test/data/range.bam test/data/range.bam.bai \
+        test/data/range.cram test/data/range.cram.crai
   else
     "${runtime[@]}" "$build_dir/duckhts_bcf_info_oom_test"
   fi
