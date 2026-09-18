@@ -83,3 +83,30 @@ SELECT DISTINCT seqname
 FROM read_genbank('__WORKING_DIRECTORY__/test/data/lambda.gb');
 ----
 NC_001416.1
+
+# A SQL NULL path is a VARCHAR-typed value whose string is NULL. This used to reach
+# strdup(NULL) and take the process down rather than raising a bind error.
+statement error
+SELECT count(*) FROM read_genbank(NULL::VARCHAR);
+----
+read_genbank requires a file path
+
+# Converting a record ONTO its own input truncates the file the parser is about to
+# read, so the source is destroyed and nothing is produced. overwrite is for replacing
+# a stale output, never for consuming the input. The paths here differ as strings and
+# name the same file, which is why the check compares the files themselves.
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_inplace.gb',
+  overwrite := TRUE
+);
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/tmp_inplace.gb',
+  output_path := '__WORKING_DIRECTORY__/test/./tmp_inplace.gb',
+  overwrite := TRUE
+);
+----
+is the input file

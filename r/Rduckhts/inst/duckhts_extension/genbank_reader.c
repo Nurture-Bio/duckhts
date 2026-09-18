@@ -642,10 +642,17 @@ static void read_genbank_bind(duckdb_bind_info info) {
     if (!bd) { duckdb_bind_set_error(info, "Out of memory"); return; }
 
     duckdb_value val = duckdb_bind_get_parameter(info, 0);
-    if (val && duckdb_get_type_id(duckdb_get_value_type(val)) == DUCKDB_TYPE_VARCHAR) {
+    /* A SQL NULL is a VARCHAR-typed value whose `duckdb_get_varchar` is NULL, so the type
+     * check alone is not enough: `read_genbank(NULL::VARCHAR)` reached `strdup(NULL)` and
+     * took the process down instead of raising the bind error below. `genbank_to_fasta`
+     * already guards this way. */
+    if (val && !duckdb_is_null_value(val)
+        && duckdb_get_type_id(duckdb_get_value_type(val)) == DUCKDB_TYPE_VARCHAR) {
         const char *path = duckdb_get_varchar(val);
-        bd->file_path = strdup(path);
-        duckdb_free((void *)path);
+        if (path) {
+            bd->file_path = strdup(path);
+            duckdb_free((void *)path);
+        }
     }
     if (val) duckdb_destroy_value(&val);
     if (!bd->file_path || bd->file_path[0] == '\0') {
@@ -874,6 +881,26 @@ static void genbank_to_fasta_bind(duckdb_bind_info info) {
         if (stat(output_path, &st) == 0) {
             char err[512];
             snprintf(err, sizeof(err), "genbank_to_fasta: output '%s' already exists (use overwrite := TRUE)", output_path);
+            duckdb_bind_set_error(info, err);
+            duckdb_free(input_path); duckdb_free(output_path);
+            return;
+        }
+    }
+
+    /* Writing onto the input destroys it: `fopen(output, "wb")` below truncates the file the
+     * parser is about to read, so the source is lost and no FASTA is produced. `overwrite`
+     * is meant to let a caller replace a stale OUTPUT, never to consume its own input.
+     *
+     * Compare the files, not the strings, so "./x.gb" and "x.gb" are caught. A remote input
+     * (hts_open takes s3:// and http://) does not stat, and cannot collide with a local
+     * output, so a failed stat is not an error here. */
+    {
+        struct stat si, so;
+        if (stat(input_path, &si) == 0 && stat(output_path, &so) == 0
+            && si.st_dev == so.st_dev && si.st_ino == so.st_ino) {
+            char err[512];
+            snprintf(err, sizeof(err),
+                     "genbank_to_fasta: output '%s' is the input file", output_path);
             duckdb_bind_set_error(info, err);
             duckdb_free(input_path); duckdb_free(output_path);
             return;
