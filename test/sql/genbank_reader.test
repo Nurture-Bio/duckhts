@@ -110,3 +110,39 @@ SELECT * FROM genbank_to_fasta(
 );
 ----
 is the input file
+
+# MULTI-RECORD. A concatenated GenBank is two records in one file, and the header and
+# sequence state must reset at each `//`. phix174_x2.gb is phix174 twice: 37 features
+# each, and two FASTA records out.
+query I
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174_x2.gb');
+----
+74
+
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174_x2.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_x2.fa',
+  overwrite := TRUE
+);
+
+query TI
+SELECT NAME, length(SEQUENCE)::INTEGER FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_x2.fa');
+----
+NC_001422.1	5386
+NC_001422.1	5386
+
+# BGZIPPED INPUT. I/O goes through htslib's hFILE, so a bgzipped record reads in place
+# with no separate decompression step. Compressed here rather than shipping a second
+# binary fixture, so the two paths are provably the same bytes.
+statement ok
+SELECT * FROM bgzip(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_phix.gb.gz',
+  keep := TRUE, overwrite := TRUE
+);
+
+query I
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/tmp_phix.gb.gz');
+----
+37

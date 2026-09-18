@@ -501,7 +501,11 @@ static int gb_parse_features(htsFile *fp, gb_rows_t *rows, char *errbuf, size_t 
     long feat_counter = 0;
     int in_features = 0, in_feature = 0;
 
-    while (hts_getline(fp, '\n', &line) >= 0) {
+    /* hts_getline returns -1 for EOF and <= -2 for a read error (hts.h). Treating both as
+     * "done" turns a truncated or corrupt input into a silently short feature table that
+     * the scan then reports as a complete, successful read. */
+    int gl;
+    while ((gl = hts_getline(fp, '\n', &line)) >= 0) {
         if (line.l == 0) continue;
         const char *s = line.s;
 
@@ -619,7 +623,13 @@ static int gb_parse_features(htsFile *fp, gb_rows_t *rows, char *errbuf, size_t 
     free(feat.loc.s);
     free(feat.qbuf.s);
     free(line.s);
-    (void)errbuf; (void)errsz;
+    if (gl < -1) {
+        /* The BGZF layer reports a bad block without setting errno, so "Success" would be
+         * appended to a failure message. Only name a cause when there is one. */
+        snprintf(errbuf, errsz, "read failed after %ld features%s%s", feat_counter,
+                 errno ? ": " : "", errno ? strerror(errno) : "");
+        return 0;
+    }
     return 1;
 }
 
@@ -724,8 +734,19 @@ static void read_genbank_init(duckdb_init_info info) {
         return;
     }
     char err[256] = "";
-    gb_parse_features(fp, &id->rows, err, sizeof(err));
+    int parsed = gb_parse_features(fp, &id->rows, err, sizeof(err));
     hts_close(fp);
+    /* A partial parse must fail the query rather than publish the features it happened to
+     * reach: a short read is indistinguishable from a small file once the rows are handed on. */
+    if (!parsed) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "read_genbank: %s: %s",
+                 bd->file_path, err[0] ? err : "failed to read input");
+        duckdb_init_set_error(info, msg);
+        gb_rows_free(&id->rows);
+        free(id);
+        return;
+    }
 
     id->cursor = 0;
     id->n_projected = duckdb_init_get_column_count(info);
@@ -833,18 +854,24 @@ static char *gb2fa_default_output(const char *in) {
 }
 
 /* Write one record: ">name description" then sequence wrapped at line_width. */
-static void gb2fa_write_record(FILE *out, const char *contig, const char *def,
-                               kstring_t *seq, int line_width) {
-    fputc('>', out);
-    fputs(contig[0] ? contig : "unknown", out);
-    if (def && def[0]) { fputc(' ', out); fputs(def, out); }
-    fputc('\n', out);
+/* Returns 1 on success, 0 if any write failed. A full disk or a broken pipe must not be
+ * reported as a written record; the caller removes the partial file and raises the error. */
+static int gb2fa_write_record(FILE *out, const char *contig, const char *def,
+                              kstring_t *seq, int line_width) {
+    if (fputc('>', out) == EOF) return 0;
+    if (fputs(contig[0] ? contig : "unknown", out) == EOF) return 0;
+    if (def && def[0]) {
+        if (fputc(' ', out) == EOF) return 0;
+        if (fputs(def, out) == EOF) return 0;
+    }
+    if (fputc('\n', out) == EOF) return 0;
     size_t n = seq->l;
     for (size_t i = 0; i < n; i += (size_t)line_width) {
         size_t w = (n - i < (size_t)line_width) ? (n - i) : (size_t)line_width;
-        fwrite(seq->s + i, 1, w, out);
-        fputc('\n', out);
+        if (fwrite(seq->s + i, 1, w, out) != w) return 0;
+        if (fputc('\n', out) == EOF) return 0;
     }
+    return 1;
 }
 
 static void genbank_to_fasta_bind(duckdb_bind_info info) {
@@ -931,15 +958,19 @@ static void genbank_to_fasta_bind(duckdb_bind_info info) {
     char locus[256] = "", accession[256] = "", version[256] = "", contig[256] = "";
     int in_origin = 0, in_def = 0, have_record = 0;
     int64_t records = 0;
+    int wrote_ok = 1;
 
-    while (hts_getline(fp, '\n', &line) >= 0) {
+    /* Same EOF-vs-error distinction as the feature parser: a short read here would otherwise
+     * publish a truncated FASTA and still report success = true. */
+    int gl;
+    while ((gl = hts_getline(fp, '\n', &line)) >= 0) {
         if (line.l == 0) continue;
         const char *s = line.s;
 
         if (s[0] == '/' && s[1] == '/') {
             if (have_record && seq.l > 0) {
                 snprintf(contig, sizeof(contig), "%s", version[0] ? version : (accession[0] ? accession : locus));
-                gb2fa_write_record(out, contig, def.s ? def.s : "", &seq, line_width);
+                if (!gb2fa_write_record(out, contig, def.s ? def.s : "", &seq, line_width)) { wrote_ok = 0; break; }
                 records++;
             }
             seq.l = 0; if (seq.s) seq.s[0] = '\0';
@@ -980,13 +1011,31 @@ static void genbank_to_fasta_bind(duckdb_bind_info info) {
     }
     if (have_record && seq.l > 0) {
         snprintf(contig, sizeof(contig), "%s", version[0] ? version : (accession[0] ? accession : locus));
-        gb2fa_write_record(out, contig, def.s ? def.s : "", &seq, line_width);
-        records++;
+        if (gb2fa_write_record(out, contig, def.s ? def.s : "", &seq, line_width)) records++;
+        else wrote_ok = 0;
     }
 
     free(line.s); free(seq.s); free(def.s);
-    fclose(out);
+    /* fclose flushes: a disk that filled during the last buffered write fails HERE, not at
+     * any fwrite, so ignoring it is how a truncated FASTA gets reported as success. */
+    int closed_ok = (fclose(out) == 0);
     hts_close(fp);
+
+    /* A partial FASTA is worse than none: it is a valid-looking file with silently missing
+     * sequence. Remove it and fail the query. */
+    if (gl < -1 || !wrote_ok || !closed_ok) {
+        char err[512];
+        if (gl < -1)
+            snprintf(err, sizeof(err), "genbank_to_fasta: read failed on %s%s%s",
+                     input_path, errno ? ": " : "", errno ? strerror(errno) : "");
+        else
+            snprintf(err, sizeof(err), "genbank_to_fasta: write failed on %s: %s",
+                     output_path, strerror(errno));
+        duckdb_bind_set_error(info, err);
+        unlink(output_path);
+        duckdb_free(input_path); duckdb_free(output_path);
+        return;
+    }
 
     if (records == 0) {
         duckdb_bind_set_error(info, "genbank_to_fasta: no sequence records found in input");
