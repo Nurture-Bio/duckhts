@@ -1,5 +1,11 @@
 # duckhtsbench 0.0.0.9000
 
+- register the `genbank-reader` workload: the NCBI RefSeq E. coli K-12 MG1655
+  assembly archive pinned by NCBI's published MD5, SHA-256 and byte size, with
+  its uncompressed `.gbff` as a derived artifact, staged by
+  `duckhts_bench_stage_genbank()`; rendering resolves the staged path without
+  network access
+
 - repin the Ensembl-116 GRCh38 model after removal of the redundant short-tail
   column and use its logical hash in the registered cache path, allowing fresh
   compilation without reusing or overwriting the previous model artifact
