@@ -1,0 +1,11 @@
+LOCUS       NOSEQ                    100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   NOSEQ
+VERSION     NOSEQ.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     gene            1..30
+                     /locus_tag="n1"
+CONTIG      join(AB000001.1:1..100)
+//

@@ -53,7 +53,7 @@ test_genbank <- function() {
     paste(
       "SELECT start::INTEGER AS start, \"end\"::INTEGER AS end",
       "FROM phix_features",
-      "WHERE regexp_extract(attributes, 'ID=([^;]*)', 1) = 'CDS-1'",
+      "WHERE regexp_extract(attributes, 'ID=([^;]*)', 1) = 'CDS-2'",
       "ORDER BY start"
     )
   )
@@ -127,6 +127,73 @@ test_genbank <- function() {
     rduckhts_genbank_to_fasta(con, genbank_path, line_width = 0),
     "line_width must be a positive whole number"
   )
+
+  # Refusing to overwrite leaves the existing output untouched.
+  expect_error(
+    rduckhts_genbank_to_fasta(con, genbank_path, output_path = fasta_path),
+    "already exists"
+  )
+  expect_equal(
+    dbGetQuery(
+      con,
+      paste0(
+        "SELECT length(SEQUENCE)::INTEGER AS bp FROM read_fasta(",
+        as.character(dbQuoteString(con, fasta_path)),
+        ")"
+      )
+    )$bp,
+    5386L
+  )
 }
+
+test_genbank_semantics <- function() {
+  con <- rduckhts_connect()
+  on.exit(dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  # Segments come out in biological order with the CDS phase carried across
+  # them: complement(join(1..4,10..17)) reads 10..17 first (phase 0), then
+  # 1..4 (phase 1); join(complement(10..17),complement(1..4)) with
+  # /codon_start=2 starts at phase 1 and continues at 2.
+  phase_path <- system.file(
+    "extdata",
+    "genbank_phase.gb",
+    package = "Rduckhts",
+    mustWork = TRUE
+  )
+  expect_silent(rduckhts_genbank(con, "phase_features", phase_path))
+  rows <- dbGetQuery(
+    con,
+    paste(
+      "SELECT regexp_extract(attributes, 'locus_tag=([^;]*)', 1) AS tag,",
+      "start::INTEGER AS start, \"end\"::INTEGER AS end, strand, frame",
+      "FROM phase_features"
+    )
+  )
+  expect_equal(rows$tag, c("p1", "p1", "p2", "p2", "p3", "p3", "p4", "p4", "p5", "p5"))
+  expect_equal(rows$start, c(1L, 10L, 10L, 1L, 10L, 1L, 1L, 10L, 10L, 1L))
+  expect_equal(rows$strand, c("+", "+", "-", "-", "-", "-", "+", "+", "-", "-"))
+  expect_equal(rows$frame, c("0", "2", "0", "1", "1", "2", "0", "2", ".", "."))
+
+  # Parent links by /locus_tag whichever of the gene and its child comes first.
+  order_path <- system.file(
+    "extdata",
+    "genbank_gene_order.gb",
+    package = "Rduckhts",
+    mustWork = TRUE
+  )
+  expect_silent(rduckhts_genbank(con, "order_features", order_path))
+  parents <- dbGetQuery(
+    con,
+    paste(
+      "SELECT feature, start::INTEGER AS start,",
+      "regexp_extract(attributes, 'Parent=([^;]*)', 1) AS parent",
+      "FROM order_features ORDER BY start, feature"
+    )
+  )
+  expect_equal(parents$feature, c("CDS", "gene", "CDS", "gene", "tRNA"))
+  expect_equal(parents$parent, c("gene-g1", "", "gene-g2", "", ""))
+}
+
+test_genbank_semantics()
 
 test_genbank()

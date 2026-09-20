@@ -1,0 +1,14 @@
+LOCUS       BADCS                    100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   BADCS
+VERSION     BADCS.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             join(1..4,10..17)
+                     /codon_start=7
+                     /locus_tag="p1"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//

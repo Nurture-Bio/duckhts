@@ -1,0 +1,20 @@
+LOCUS       QUALS                    100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   QUALS
+VERSION     QUALS.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             1..30
+                     /locus_tag="d1"
+                     /db_xref="GeneID:1"
+                     /product="protein one"
+                     /db_xref="UniProtKB/Swiss-Prot:P1"
+                     /pseudo
+                     /note="he said ""hi""; then a=b,
+                     and c&d 100% done"
+                     /translation="MKVLLA"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//

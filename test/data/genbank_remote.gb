@@ -1,0 +1,13 @@
+LOCUS       REM                      100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   REM
+VERSION     REM.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             join(1..30,OTHER.1:5..40)
+                     /locus_tag="r1"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//

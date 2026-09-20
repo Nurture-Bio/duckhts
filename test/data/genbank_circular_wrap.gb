@@ -1,0 +1,19 @@
+LOCUS       WRAP                     100 bp    DNA     circular PHG 01-JAN-2000
+DEFINITION  circular probe record.
+ACCESSION   WRAP
+VERSION     WRAP.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             90..10
+                     /locus_tag="w1"
+     CDS             complement(90..10)
+                     /locus_tag="w2"
+     CDS             join(90..10,20..25)
+                     /locus_tag="w3"
+     misc_feature    100^1
+                     /locus_tag="w4"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//

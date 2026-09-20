@@ -1,0 +1,23 @@
+LOCUS       WITHSEQ                   40 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  has a sequence.
+ACCESSION   WITHSEQ
+VERSION     WITHSEQ.1
+FEATURES             Location/Qualifiers
+     source          1..40
+                     /organism="probe"
+     gene            1..30
+                     /locus_tag="w1"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//
+LOCUS       NOSEQ2                   100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   NOSEQ2
+VERSION     NOSEQ2.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     gene            1..30
+                     /locus_tag="n2"
+CONTIG      join(AB000001.1:1..100)
+//

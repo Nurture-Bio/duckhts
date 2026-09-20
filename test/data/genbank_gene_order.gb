@@ -1,0 +1,21 @@
+LOCUS       ORDER                    100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   ORDER
+VERSION     ORDER.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             1..30
+                     /locus_tag="g1"
+     gene            1..30
+                     /locus_tag="g1"
+     gene            40..60
+                     /locus_tag="g2"
+     CDS             40..60
+                     /locus_tag="g2"
+     tRNA            70..80
+                     /locus_tag="orphan"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//
