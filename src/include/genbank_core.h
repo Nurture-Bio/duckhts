@@ -185,7 +185,7 @@ gb_feed_t gb_parser_feed(gb_parser_t *p, const char *line, size_t len);
 gb_status_t gb_parser_finish(gb_parser_t *p);
 
 static inline const char *gb_str(const gb_parser_t *p, gb_span_t s) {
-    return p->arena.s ? p->arena.s + s.off : "";
+    return s.len ? p->arena.s + s.off : "";
 }
 
 /* GFF3 column-9 output. Emitted attributes are ID, Name, Parent when linked,

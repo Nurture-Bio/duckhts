@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <htslib/hts_defs.h>
 #include <htslib/khash_str2int.h>
 
 #define GB_TEXT_COLUMN 21u /* INSDC column 22: location, qualifiers, continuations */
@@ -67,6 +68,8 @@ static int gb_span_eq(const gb_parser_t *p, gb_span_t a, const char *lit) {
 static int gb_span_eq_span(const gb_parser_t *p, gb_span_t a, gb_span_t b) {
     return a.len == b.len && memcmp(gb_str(p, a), gb_str(p, b), a.len) == 0;
 }
+
+static gb_feed_t gb_fail(gb_parser_t *p, gb_status_t code, const char *fmt, ...) HTS_FORMAT(HTS_PRINTF_FMT, 3, 4);
 
 static gb_feed_t gb_fail(gb_parser_t *p, gb_status_t code, const char *fmt, ...) {
     va_list ap;

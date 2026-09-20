@@ -74,8 +74,11 @@ static const char *MINIMAL =
 static void test_header_fields_and_terminator(void) {
     gb_parser_t p;
     feed_log_t log;
+    gb_span_t empty = {0, 0};
     gb_parser_init(&p, GB_MODE_FEATURES);
+    CHECK_STR(&p, empty, "");
     feed_text(&p, MINIMAL, &log);
+    CHECK_STR(&p, empty, "");
     CHECK(log.last == GB_FEED_RECORD);
     CHECK(log.records == 1);
     CHECK_STR(&p, p.locus, "TEST1");
