@@ -147,8 +147,8 @@ endif
 
 test: test_debug
 test_debug test_release: test-function-catalog
-test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
-test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-somalier-native test-bam-site-counts test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom test-hts-region-ownership
+test_debug: test-cache-paths test-duckvep-kernel test-simd-kernels test-genbank-core test-liftover-property test-liftover-fuzz-debug test-sqllogictest-debug
+test_release: test-cache-paths test-duckvep-kernel test-simd-kernels test-genbank-core test-somalier-native test-bam-site-counts test-liftover-property test-liftover-fuzz test-bcftools-filter-recovery test-sqllogictest-release test-bcf-info-oom test-hts-region-ownership
 test_release: test-reference-cache
 ifneq ($(filter linux_%,$(or $(DUCKDB_PLATFORM),$(shell sed -n '1p' configure/platform.txt 2>/dev/null))),)
 test_release: test-reader-alloc
@@ -320,6 +320,27 @@ test-liftover-property-asan:
 
 test-liftover-property-ubsan:
 	$(call run_liftover_property,-fsanitize=undefined -fno-sanitize-recover=undefined,UBSAN_OPTIONS=halt_on_error=1)
+
+# GenBank parsing core: pure C11, no DuckDB or file I/O, so it builds standalone
+# under the strict kernel flags with sanitizer variants.
+define run_genbank_core
+	@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		$${CC:-cc} -std=c11 -O1 -g -UNDEBUG -Wall -Wextra -Werror -Wpedantic \
+			-Wconversion -Wsign-conversion -Wshadow -Wstrict-prototypes $(1) \
+			-Isrc/include -isystem third_party/htslib \
+			src/genbank_core.c test/scripts/genbank_core_test.c -o "$$tmp/genbank_core_test"; \
+		$(2) "$$tmp/genbank_core_test"
+endef
+
+.PHONY: test-genbank-core test-genbank-core-asan test-genbank-core-ubsan
+test-genbank-core:
+	$(call run_genbank_core,,)
+
+test-genbank-core-asan:
+	$(call run_genbank_core,-fsanitize=address -fno-omit-frame-pointer,ASAN_OPTIONS=detect_leaks=1)
+
+test-genbank-core-ubsan:
+	$(call run_genbank_core,-fsanitize=undefined -fno-sanitize-recover=undefined,UBSAN_OPTIONS=halt_on_error=1)
 
 test-liftover-fuzz:
 	@if [ "$(DUCKDB_PLATFORM)" = "windows_amd64_mingw" ]; then \
