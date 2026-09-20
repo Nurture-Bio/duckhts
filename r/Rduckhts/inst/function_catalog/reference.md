@@ -2048,6 +2048,70 @@ Comma-separated indexed regions emit each row once across overlaps. scan_mode='s
 SELECT seqname, feature, start, "end" FROM read_gtf('annotations.gtf.gz') LIMIT 5;
 ```
 
+## read_genbank
+
+Read GenBank flat-file features in read_gff's column shape, with optional parsed qualifier MAP.
+
+Signature:
+
+```sql
+read_genbank(path, attributes_map := FALSE)
+```
+
+Returns:
+
+```
+table
+```
+
+### Mapping
+
+seqname is VERSION, else ACCESSION, else the LOCUS name; a segment on a remote accession (ACC.1:5..40) is reported under that accession. source is 'GenBank'. join()/order() give one row per segment in biological order, complement(...) sets strand '-', and the GFF3 phase of each CDS segment is carried from /codon_start across segments (absent means 1). A span whose end precedes its start on a circular record wraps the origin into two segments, and a between site n^m is the zero-length site at n. The record-level source feature is dropped, and /translation is omitted as redundant with ORIGIN.
+
+### Attributes
+
+Synthesized GFF3 keys ID, Name and Parent accompany the original qualifiers. ID is gene-<locus_tag> for genes and <key>-<n> otherwise, with n the feature's 0-based position in the file. Parent links a feature to the gene sharing its /locus_tag (or /gene) anywhere in the record. Repeated qualifiers become one key with comma-joined values, valueless qualifiers read 'true', and ; = & , % are percent-encoded. attributes_map := TRUE adds the same pairs as a MAP.
+
+### Errors
+
+Records stream one at a time, so memory follows the largest record. A record without a terminating //, a FEATURES table with no sequence section, a malformed location, an unsupported location form (one-of, gap, bond, nested join/order, a.b), an origin-spanning span on a linear record, or a /codon_start outside 1..3 is an error naming the feature and line. Table layout and these rules follow BioPython's GenBank scanner, and test/scripts/genbank_oracle_test.py diffs the reader against it.
+
+### Examples
+
+```sql
+SELECT seqname, feature, start, "end" FROM read_genbank('phix174.gb') LIMIT 5;
+```
+
+## genbank_to_fasta
+
+Write the ORIGIN sequence of each GenBank record as FASTA and return success, output_path and records_written.
+
+Signature:
+
+```sql
+genbank_to_fasta(path, output_path := NULL, line_width := 70, overwrite := FALSE)
+```
+
+Returns:
+
+```
+table
+```
+
+### Naming
+
+Records are written under the same name read_genbank reports as seqname, so feature coordinates land on the contig of that name; the DEFINITION follows without its trailing period, as in NCBI's FASTA export. A segment on a remote accession is not written.
+
+### Output
+
+output_path defaults to path with .fa appended. The FASTA is written to a temporary file beside output_path and renamed into place only after the input has been read to a clean end, so a failure never leaves a partial output and an existing file is never lost; with overwrite := FALSE an existing output is an error. Records without an ORIGIN block are skipped; zero written records is an error. line_width must be at least 1.
+
+### Examples
+
+```sql
+SELECT * FROM genbank_to_fasta('phix174.gb', output_path := 'phix174.fa');
+```
+
 ## read_tabix
 
 Read tabix-indexed text with optional header handling, inferred types and region selection.

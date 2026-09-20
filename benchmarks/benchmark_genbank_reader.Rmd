@@ -1,0 +1,438 @@
+---
+title: "GenBank reader benchmark"
+output:
+  github_document:
+    html_preview: false
+    pandoc_args: ["--wrap=preserve", "--columns=400"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+This report measures `read_genbank(...)` and `genbank_to_fasta(...)` on a real
+annotation: the NCBI RefSeq record for *Escherichia coli* K-12 MG1655
+(`NC_000913.3`), a 4,641,652 bp circular genome yielding 9,306 feature rows
+across 8 feature kinds. Fetching the record is staging work and is outside every
+timed interval.
+
+Two builds are timed on the same host in one render: the baseline is the reader
+as reviewed at f855f881, which emitted rows while streaming, and the candidate is
+the record-level parser that replaced it. The baseline and candidate read the
+same staged input under the same CPU affinity, each through its own in-memory
+DuckDB connection, baseline first.
+
+There is no earlier checked-in DuckHTS GenBank benchmark besides the previous
+render of this report. The nearest reader report is
+[`benchmark_gffbase_conformance.md`](benchmark_gffbase_conformance.md), which
+measures `read_gff(...)`. It is the closest analogue because `read_genbank`
+emits the exact column shape of `read_gff`, but the two are not numerically
+comparable: that workload reads tabix-style tabular rows, while this parses a
+GenBank flat file line by line through hFILE.
+
+`read_genbank` declares no parallel scan and streams one record at a time, so
+the one- and four-thread conditions exist to show whether threading adds
+overhead rather than to show it scales. Memory tracks the feature table of
+the largest record rather than the projection; that limit is visible in the input
+denominators below but is not itself measured here.
+
+## Reproduction
+
+The input is the duckhtsbench-registered NCBI RefSeq assembly archive
+`GCF_000005845.2_ASM584v2_genomic.gbff.gz` (workload `genbank-reader`), pinned
+by the MD5 NCBI publishes, its SHA-256 and byte size, with the uncompressed
+`.gbff` the report reads registered as a derived artifact with its own
+SHA-256. NCBI re-annotates RefSeq assemblies in place, so a later archive that
+no longer matches the registry is refused at staging rather than silently
+measured. Stage it once, with network access only in this step:
+
+``` sh
+Rscript -e 'duckhtsbench::duckhts_bench_stage_genbank()'
+```
+
+Build the baseline revision separately, for example in a worktree, and point
+`DUCKHTS_GENBANK_BASELINE_EXTENSION` and `DUCKHTS_GENBANK_BASELINE_REVISION` at
+its binary and commit. `DUCKHTS_EXTENSION` selects the candidate (default:
+`build/release/duckhts.duckdb_extension`). Then render from a tracked-clean
+revision; rendering resolves the staged path through the registry and does not
+download:
+
+``` sh
+git worktree add ../duckhts-baseline f855f881
+(cd ../duckhts-baseline && make configure && make release)
+DUCKHTS_GENBANK_BASELINE_EXTENSION=../duckhts-baseline/build/release/duckhts.duckdb_extension \
+DUCKHTS_GENBANK_BASELINE_REVISION=f855f881 \
+  taskset -c 8-11 Rscript -e 'rmarkdown::render("benchmarks/benchmark_genbank_reader.Rmd")'
+```
+
+The benchmark pins the one-thread condition to the highest logical CPU in the
+affinity mask of the rendering process and the four-thread condition to the highest
+four, so wrap the render in `taskset -c` to choose them; the table records the
+affinity each condition ran under. Input staging, extension loading,
+connection setup, warm-up, result verification, and removal of the previous
+FASTA output are excluded from timing.
+
+```{r benchmark, echo=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+  library(DBI)
+  library(duckdb)
+})
+
+sql_string <- function(x) {
+  sprintf("'%s'", gsub("'", "''", x, fixed = TRUE))
+}
+
+command_output <- function(command, args = character()) {
+  paste(system2(command, args, stdout = TRUE, stderr = TRUE), collapse = " ")
+}
+
+input_path <- duckhtsbench::duckhts_bench_stage_genbank(fetch = FALSE)[["gbff"]]
+input_path <- normalizePath(input_path, mustWork = TRUE)
+
+baseline_extension <- Sys.getenv("DUCKHTS_GENBANK_BASELINE_EXTENSION")
+baseline_revision <- Sys.getenv("DUCKHTS_GENBANK_BASELINE_REVISION")
+candidate_extension <- Sys.getenv("DUCKHTS_EXTENSION", "build/release/duckhts.duckdb_extension")
+stopifnot(
+  nzchar(baseline_revision),
+  file.exists(baseline_extension),
+  file.exists(candidate_extension)
+)
+builds <- c(
+  baseline = normalizePath(baseline_extension),
+  candidate = normalizePath(candidate_extension)
+)
+
+candidate_revision <- command_output("git", c("rev-parse", "--short=12", "HEAD"))
+candidate_src_tree <- command_output("git", c("rev-parse", "HEAD:src"))
+tracked_dirty <- length(system2(
+  "git", c("status", "--porcelain", "--untracked-files=no"), stdout = TRUE
+)) > 0L
+if (tracked_dirty) {
+  stop("Render the benchmark from a tracked-clean source revision")
+}
+
+open_build <- function(extension) {
+  con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true")))
+  invisible(dbExecute(con, paste("LOAD", dbQuoteString(con, extension))))
+  con
+}
+
+# One row back to R, so the timing covers parsing and decoding rather than
+# transport. The fingerprint is order independent, so a reordered scan that
+# still produced the right bag of rows would pass, and a dropped or duplicated
+# feature would not.
+aggregate_sql <- function(attributes_map = FALSE) {
+  # The scan only fills PROJECTED columns, so selecting attributes_map is what makes
+  # the MAP get built at all. Aggregating its cardinality keeps one row coming back
+  # while forcing every entry to be materialized.
+  map_term <- if (attributes_map) {
+    "sum(cardinality(attributes_map))::DOUBLE AS map_entries"
+  } else {
+    "0::DOUBLE AS map_entries"
+  }
+  sprintf(
+    paste0(
+      "SELECT count(*)::UBIGINT AS rows, ",
+      "hex(bit_xor(hash(seqname, feature, start, \"end\", strand, frame, attributes))) ",
+      "AS fingerprint, sum(\"end\" - start + 1)::DOUBLE AS span_sum, %s ",
+      "FROM read_genbank(%s, attributes_map := %s)"
+    ),
+    map_term, sql_string(input_path), if (attributes_map) "TRUE" else "FALSE"
+  )
+}
+
+# Each build is verified against its own answer: the baseline is the reviewed
+# reader and emits different phases and attribute text by design, so the two
+# builds share the row count and the input but not the fingerprint.
+build_expectations <- function(con) {
+  plain <- dbGetQuery(con, aggregate_sql(FALSE))
+  map <- dbGetQuery(con, aggregate_sql(TRUE))
+  stopifnot(as.double(plain$rows[[1L]]) > 9000)
+  # The MAP projection must not change which features are emitted.
+  stopifnot(identical(plain$fingerprint[[1L]], map$fingerprint[[1L]]))
+  # The MAP workload must actually have built entries, or it is measuring a pruned column.
+  stopifnot(map$map_entries[[1L]] > plain$rows[[1L]])
+  list(plain = plain, map = map)
+}
+
+same_answer <- function(observed, expected) {
+  identical(as.character(observed$rows[[1L]]), as.character(expected$rows[[1L]])) &&
+    identical(observed$fingerprint[[1L]], expected$fingerprint[[1L]]) &&
+    isTRUE(all.equal(
+      observed$span_sum[[1L]], expected$span_sum[[1L]],
+      tolerance = 1e-12
+    )) &&
+    isTRUE(all.equal(
+      observed$map_entries[[1L]], expected$map_entries[[1L]],
+      tolerance = 1e-12
+    ))
+}
+
+set_affinity <- function(cpus) {
+  output <- system2(
+    "taskset", c("-pc", cpus, Sys.getpid()),
+    stdout = TRUE, stderr = TRUE
+  )
+  if (!is.null(attr(output, "status"))) stop(paste(output, collapse = " "))
+  invisible(output)
+}
+
+# The CPUs this render may use, as taskset reports them, so an outer
+# `taskset -c` chooses the measurement CPUs without editing this file.
+affinity_cpus <- function() {
+  line <- system2("taskset", c("-pc", Sys.getpid()), stdout = TRUE)
+  spec <- sub("^.*: *", "", line[[length(line)]])
+  unlist(lapply(strsplit(spec, ",", fixed = TRUE)[[1L]], function(part) {
+    bounds <- as.integer(strsplit(part, "-", fixed = TRUE)[[1L]])
+    if (length(bounds) == 1L) bounds else seq.int(bounds[[1L]], bounds[[2L]])
+  }))
+}
+host_cpus <- affinity_cpus()
+if (length(host_cpus) < 4L) stop("the render needs at least four logical CPUs in its affinity mask")
+cpu_one <- as.character(host_cpus[[length(host_cpus)]])
+cpu_four <- paste(host_cpus[(length(host_cpus) - 3L):length(host_cpus)], collapse = ",")
+
+measure_aggregate <- function(con, workload, attributes_map, expected, threads, cpus,
+                              repetitions = 9L) {
+  set_affinity(cpus)
+  invisible(dbExecute(con, sprintf("SET threads = %d", threads)))
+  sql <- aggregate_sql(attributes_map)
+  for (i in seq_len(2L)) stopifnot(same_answer(dbGetQuery(con, sql), expected))
+  seconds <- numeric(repetitions)
+  for (i in seq_len(repetitions)) {
+    started <- proc.time()[["elapsed"]]
+    observed <- dbGetQuery(con, sql)
+    seconds[[i]] <- proc.time()[["elapsed"]] - started
+    stopifnot(same_answer(observed, expected))
+  }
+  data.frame(
+    workload = workload,
+    threads = threads,
+    affinity = cpus,
+    repetitions = repetitions,
+    output_rows = as.double(expected$rows[[1L]]),
+    output_bytes = NA_real_,
+    min_seconds = min(seconds),
+    median_seconds = median(seconds),
+    max_seconds = max(seconds),
+    median_rows_per_second = as.double(expected$rows[[1L]]) / median(seconds),
+    fingerprint = expected$fingerprint[[1L]],
+    span_sum = expected$span_sum[[1L]],
+    stringsAsFactors = FALSE
+  )
+}
+
+# The write path reads ORIGIN rather than FEATURES, so it exercises the other
+# half of the parser. Each pass is verified by reading the FASTA back.
+measure_fasta <- function(con, threads, cpus, repetitions = 5L) {
+  set_affinity(cpus)
+  invisible(dbExecute(con, sprintf("SET threads = %d", threads)))
+  output_path <- tempfile(sprintf("genbank-t%d-", threads), fileext = ".fa")
+  convert_sql <- sprintf(
+    "SELECT records_written FROM genbank_to_fasta(%s, output_path := %s, overwrite := TRUE)",
+    sql_string(input_path), sql_string(output_path)
+  )
+  verify_sql <- sprintf(
+    "SELECT count(*)::UBIGINT AS rows, sum(length(SEQUENCE))::DOUBLE AS bases FROM read_fasta(%s)",
+    sql_string(output_path)
+  )
+  seconds <- numeric(repetitions)
+  output_bytes <- numeric(repetitions)
+  records <- NA_real_
+  for (i in seq_len(repetitions)) {
+    unlink(output_path)
+    started <- proc.time()[["elapsed"]]
+    written <- dbGetQuery(con, convert_sql)
+    seconds[[i]] <- proc.time()[["elapsed"]] - started
+    output_bytes[[i]] <- file.info(output_path)$size
+    records <- as.double(written$records_written[[1L]])
+    verified <- dbGetQuery(con, verify_sql)
+    stopifnot(as.double(verified$rows[[1L]]) == records)
+    stopifnot(as.double(verified$bases[[1L]]) == 4641652)
+  }
+  unlink(output_path)
+  data.frame(
+    workload = "ORIGIN to FASTA",
+    threads = threads,
+    affinity = cpus,
+    repetitions = repetitions,
+    output_rows = records,
+    output_bytes = median(output_bytes),
+    min_seconds = min(seconds),
+    median_seconds = median(seconds),
+    max_seconds = max(seconds),
+    median_rows_per_second = 4641652 / median(seconds),
+    fingerprint = NA_character_,
+    span_sum = NA_real_,
+    stringsAsFactors = FALSE
+  )
+}
+
+results <- list()
+expectations <- list()
+versions <- list()
+for (build in names(builds)) {
+  con <- open_build(builds[[build]])
+  expected <- build_expectations(con)
+  expectations[[build]] <- expected$plain
+  versions[[build]] <- c(
+    duckdb = dbGetQuery(con, "SELECT version() AS v")$v[[1L]],
+    htslib = dbGetQuery(con, "SELECT duckhts_htslib_version() AS v")$v[[1L]],
+    kinds = as.character(dbGetQuery(
+      con,
+      sprintf("SELECT count(DISTINCT feature) AS k FROM read_genbank(%s)", sql_string(input_path))
+    )$k[[1L]])
+  )
+  rows <- rbind(
+    measure_aggregate(con, "features + aggregate", FALSE, expected$plain, 1L, cpu_one),
+    measure_aggregate(con, "features + aggregate", FALSE, expected$plain, 4L, cpu_four),
+    measure_aggregate(con, "features + attribute MAP", TRUE, expected$map, 1L, cpu_one),
+    measure_aggregate(con, "features + attribute MAP", TRUE, expected$map, 4L, cpu_four),
+    measure_fasta(con, 1L, cpu_one),
+    measure_fasta(con, 4L, cpu_four)
+  )
+  results[[build]] <- cbind(build = build, rows, stringsAsFactors = FALSE)
+  invisible(dbDisconnect(con, shutdown = TRUE))
+}
+results <- do.call(rbind, results)
+rownames(results) <- NULL
+
+# Both builds must emit the same number of feature rows over the same input, or
+# the timings are not for the same work.
+stopifnot(identical(
+  as.character(expectations$baseline$rows[[1L]]),
+  as.character(expectations$candidate$rows[[1L]])
+))
+
+results$baseline_revision <- baseline_revision
+results$candidate_revision <- candidate_revision
+results$run_date <- as.character(Sys.Date())
+results$input_path <- input_path
+results$input_bytes <- file.info(input_path)$size
+results$input_span_bases <- 4641652
+results$duckdb_version <- versions$candidate[["duckdb"]]
+results$htslib_version <- versions$candidate[["htslib"]]
+
+dir.create("benchmarks/data", showWarnings = FALSE, recursive = TRUE)
+write.csv(
+  results,
+  "benchmarks/data/genbank_reader.csv",
+  row.names = FALSE,
+  na = ""
+)
+
+cpu_model <- sub(
+  "^model name[[:space:]]*:[[:space:]]*", "",
+  grep("^model name", readLines("/proc/cpuinfo"), value = TRUE)[[1L]]
+)
+metadata <- data.frame(
+  property = c(
+    "baseline revision", "candidate revision", "candidate src tree",
+    "baseline binary MD5", "candidate binary MD5", "run date",
+    "input source", "input accession", "GenBank bytes", "genome bases",
+    "emitted feature rows", "distinct feature kinds",
+    "baseline feature fingerprint", "candidate feature fingerprint",
+    "DuckDB version", "htslib version", "CPU"
+  ),
+  value = c(
+    baseline_revision,
+    candidate_revision,
+    candidate_src_tree,
+    unname(tools::md5sum(builds[["baseline"]])),
+    unname(tools::md5sum(builds[["candidate"]])),
+    as.character(Sys.Date()),
+    "duckhtsbench registry genbank-reader: NCBI RefSeq GCF_000005845.2_ASM584v2 genomic.gbff.gz, gunzipped",
+    "NC_000913.3",
+    format(file.info(input_path)$size, big.mark = ",", scientific = FALSE),
+    format(4641652, big.mark = ",", scientific = FALSE),
+    format(as.double(expectations$candidate$rows[[1L]]), big.mark = ",", scientific = FALSE),
+    versions$candidate[["kinds"]],
+    expectations$baseline$fingerprint[[1L]],
+    expectations$candidate$fingerprint[[1L]],
+    versions$candidate[["duckdb"]],
+    versions$candidate[["htslib"]],
+    cpu_model
+  ),
+  stringsAsFactors = FALSE
+)
+
+knitr::kable(metadata, col.names = c("Property", "Recorded value"))
+```
+
+## Results
+
+The aggregate workloads parse the FEATURES table and return one row to R, so
+the timing covers parsing and decoding rather than transport. The FASTA
+workload reads ORIGIN instead and writes every base as a real file. Every timed
+pass is verified against its own build: the aggregates by exact row count and an
+order-independent full-row fingerprint, with the summed span checked to a
+relative tolerance of `1e-12`, and the FASTA by reading it back and asserting
+both the record count and 4,641,652 bases.
+
+The two builds agree on the number of feature rows and on the bases written,
+but not on the fingerprint or the FASTA byte count. The baseline is the reader
+as reviewed, so its rows carry the phases, `Parent` links and attribute text
+the review found wrong, and its defline keeps the period that ends the
+DEFINITION. The comparison is therefore of the time each build takes to read
+the same input and emit the same number of rows, not of identical output.
+
+```{r results-table, echo=FALSE}
+display <- results[, c(
+  "build", "workload", "threads", "affinity", "repetitions", "output_rows",
+  "output_bytes", "min_seconds", "median_seconds", "max_seconds",
+  "median_rows_per_second"
+)]
+display$output_rows <- format(
+  display$output_rows, big.mark = ",", scientific = FALSE
+)
+display$output_bytes <- ifelse(
+  is.na(display$output_bytes), "–",
+  format(display$output_bytes, big.mark = ",", scientific = FALSE)
+)
+for (column in c("min_seconds", "median_seconds", "max_seconds")) {
+  display[[column]] <- sprintf("%.3f", display[[column]])
+}
+display$median_rows_per_second <- format(
+  round(display$median_rows_per_second), big.mark = ",", scientific = FALSE
+)
+names(display) <- c(
+  "Build", "Workload", "Threads", "CPU affinity", "Runs", "Output rows",
+  "FASTA bytes", "Minimum seconds", "Median seconds", "Maximum seconds",
+  "Median rows/s"
+)
+knitr::kable(display, align = c("l", "l", rep("r", 9)))
+```
+
+```{r comparison-table, echo=FALSE}
+comparison <- merge(
+  results[results$build == "baseline", c("workload", "threads", "median_seconds")],
+  results[results$build == "candidate", c("workload", "threads", "median_seconds")],
+  by = c("workload", "threads"), suffixes = c("_baseline", "_candidate")
+)
+comparison <- comparison[order(match(comparison$workload, unique(results$workload)), comparison$threads), ]
+comparison$percent_change <- 100 * (comparison$median_seconds_candidate - comparison$median_seconds_baseline) /
+  comparison$median_seconds_baseline
+comparison$median_seconds_baseline <- sprintf("%.3f", comparison$median_seconds_baseline)
+comparison$median_seconds_candidate <- sprintf("%.3f", comparison$median_seconds_candidate)
+comparison$percent_change <- sprintf("%.1f", comparison$percent_change)
+names(comparison) <- c(
+  "Workload", "Threads", "Median seconds baseline", "Median seconds candidate", "Percent change"
+)
+rownames(comparison) <- NULL
+knitr::kable(comparison, align = c("l", rep("r", 4)))
+```
+
+The features and ORIGIN rows count different things: the aggregate workloads
+emit one row per feature, while the FASTA rate is expressed in bases written,
+since the converter produces a single record for this genome. Adding
+`attributes_map := TRUE` builds a `MAP<VARCHAR,VARCHAR>` per feature on top of
+the raw attribute string and is the more expensive projection, which is why
+both are recorded.
+
+The measurement does not include the NCBI fetch, extension loading, or any
+downstream join against the emitted intervals. It also does not bound memory:
+the candidate streams one record at a time, so memory follows the largest
+record, and this genome is a single record. A multi-record annotation is a
+different question than this report answers. Small timings vary with
+scheduling; the percent changes are for this host and input only.

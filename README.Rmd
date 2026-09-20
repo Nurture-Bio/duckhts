@@ -68,8 +68,8 @@ local({
 [![CRAN Status](https://www.r-pkg.org/badges/version/Rduckhts)](https://cran.r-project.org/package=Rduckhts)
 [![R-universe version](https://RGenomicsETL.r-universe.dev/Rduckhts/badges/version)](https://RGenomicsETL.r-universe.dev/Rduckhts)
 
-Read VCF, BCF, BAM, CRAM, FASTA, FASTQ, BigWig, GTF, GFF, BED, and tabix-indexed
-files directly in [DuckDB](https://duckdb.org/). DuckHTS uses
+Read VCF, BCF, BAM, CRAM, FASTA, FASTQ, BigWig, GTF, GFF, GenBank, BED, and
+tabix-indexed files directly in [DuckDB](https://duckdb.org/). DuckHTS uses
 [htslib](https://github.com/samtools/htslib) for HTS formats and provides SQL
 functions for consequence annotation, intervals, coverage, sequence operations,
 compression, indexing, and export.

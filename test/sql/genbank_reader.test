@@ -1,0 +1,445 @@
+# name: test/sql/genbank_reader.test
+# description: GenBank flat-file features and FASTA materialization
+# group: [duckhts]
+
+require duckhts
+
+# Fixtures are the NCBI RefSeq records for two canonical phage genomes:
+# phiX174 (NC_001422.1, 5386 bp, circular) and lambda (NC_001416.1, 48502 bp,
+# linear), plus small hand-written records under test/data/genbank_*.gb that
+# each isolate one rule of the reader.
+
+query TI
+SELECT feature, count(*)
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174.gb')
+GROUP BY feature
+ORDER BY feature;
+----
+CDS	14
+gene	14
+mRNA	2
+misc_feature	2
+rep_origin	1
+variation	4
+
+# The record-level `source` feature describes the whole record rather than an
+# interval within it, so it is dropped instead of emitted as a full-length row.
+query I
+SELECT count(*)
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174.gb')
+WHERE feature = 'source';
+----
+0
+
+# join(3981..5386,1..136) wraps the origin of the circular genome. Each segment
+# becomes its own row, and the synthesized ID ties the segments back together.
+query TII
+SELECT feature, start, "end"
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174.gb')
+WHERE regexp_extract(attributes, 'ID=([^;]*)', 1) = 'CDS-2'
+ORDER BY start;
+----
+CDS	1	136
+CDS	3981	5386
+
+# Qualifiers are available as a MAP with attributes_map := TRUE.
+query T
+SELECT attributes_map['locus_tag']
+FROM read_genbank(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  attributes_map := TRUE
+)
+WHERE feature = 'CDS' AND start = 1001;
+----
+phiX174p06
+
+# complement(...) maps to strand '-'; lambda carries both orientations.
+query TI
+SELECT strand, count(*)
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/lambda.gb')
+GROUP BY strand
+ORDER BY strand;
+----
++	197
+-	87
+
+# Projection pushdown: a query that never touches the attribute columns still
+# sees every row.
+query I
+SELECT count(*) FROM (
+  SELECT feature, start FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174.gb')
+);
+----
+37
+
+# genbank_to_fasta writes the ORIGIN sequence under the same name read_genbank
+# reports as seqname, so feature coordinates land on the contig of that name.
+statement ok
+SELECT *
+FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/lambda.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_lambda.fa',
+  overwrite := TRUE
+);
+
+query TI
+SELECT NAME, length(SEQUENCE)
+FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_lambda.fa');
+----
+NC_001416.1	48502
+
+query T
+SELECT DISTINCT seqname
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/lambda.gb');
+----
+NC_001416.1
+
+# A SQL NULL path is a VARCHAR-typed value whose string is NULL. Both functions
+# must raise a bind error rather than touch the value.
+statement error
+SELECT count(*) FROM read_genbank(NULL::VARCHAR);
+----
+read_genbank requires a file path
+
+statement error
+SELECT * FROM genbank_to_fasta(NULL::VARCHAR);
+----
+genbank_to_fasta requires a file path
+
+statement error
+SELECT * FROM genbank_to_fasta('__WORKING_DIRECTORY__/test/data/phix174.gb', output_path := '');
+----
+output_path must not be empty
+
+statement error
+SELECT * FROM genbank_to_fasta('__WORKING_DIRECTORY__/test/data/phix174.gb', line_width := 0);
+----
+line_width must be at least 1
+
+# Converting a record ONTO its own input is refused even with overwrite := TRUE.
+# The paths here differ as strings and name the same file, which is why the
+# check compares the files themselves.
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_inplace.gb',
+  overwrite := TRUE
+);
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/tmp_inplace.gb',
+  output_path := '__WORKING_DIRECTORY__/test/./tmp_inplace.gb',
+  overwrite := TRUE
+);
+----
+is the input file
+
+# MULTI-RECORD. A concatenated GenBank is two records in one file, and the header and
+# sequence state must reset at each `//`. phix174_x2.gb is phix174 twice: 37 features
+# each, and two FASTA records out.
+query I
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/phix174_x2.gb');
+----
+74
+
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174_x2.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_x2.fa',
+  overwrite := TRUE
+);
+
+query TI
+SELECT NAME, length(SEQUENCE)::INTEGER FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_x2.fa');
+----
+NC_001422.1	5386
+NC_001422.1	5386
+
+# BGZIPPED INPUT. I/O goes through htslib's hFILE, so a bgzipped record reads in place
+# with no separate decompression step. Compressed here rather than shipping a second
+# binary fixture, so the two paths are provably the same bytes.
+statement ok
+SELECT * FROM bgzip(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_phix.gb.gz',
+  keep := TRUE, overwrite := TRUE
+);
+
+query I
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/tmp_phix.gb.gz');
+----
+37
+
+# ---------------------------------------------------------------------------
+# Execution lifecycle: planning must not write anything.
+# ---------------------------------------------------------------------------
+
+statement ok
+EXPLAIN SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_explain_only.fa'
+);
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_explain_only.fa');
+----
+0
+
+# Every execution of a prepared statement performs the conversion again.
+statement ok
+PREPARE conv AS SELECT records_written FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_prepared.fa',
+  overwrite := TRUE
+);
+
+query I
+EXECUTE conv;
+----
+1
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_prepared.fa');
+----
+1
+
+# ---------------------------------------------------------------------------
+# Atomic output: claim, write aside, publish.
+# ---------------------------------------------------------------------------
+
+# With overwrite := FALSE an existing output is refused and left untouched.
+statement ok
+COPY (SELECT 'keep me' AS x) TO '__WORKING_DIRECTORY__/test/tmp_keep.fa' (FORMAT CSV, HEADER false);
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_keep.fa'
+);
+----
+already exists
+
+query T
+SELECT content LIKE 'keep me%' FROM read_text('__WORKING_DIRECTORY__/test/tmp_keep.fa');
+----
+true
+
+# With overwrite := TRUE a failed conversion leaves the previous output intact
+# and leaves no temporary file behind.
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/phix174.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_prior.fa',
+  overwrite := TRUE
+);
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_no_sequence.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_prior.fa',
+  overwrite := TRUE
+);
+----
+no sequence records
+
+query TI
+SELECT NAME, length(SEQUENCE)::INTEGER FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_prior.fa');
+----
+NC_001422.1	5386
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_prior.fa.*');
+----
+0
+
+# A record without an ORIGIN block is skipped; the conversion still succeeds
+# when another record carries sequence.
+query TI
+SELECT success, records_written FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_mixed_sequence.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_mixed.fa',
+  overwrite := TRUE
+);
+----
+true	1
+
+query TI
+SELECT NAME, length(SEQUENCE)::INTEGER FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_mixed.fa');
+----
+WITHSEQ.1	40
+
+# line_width wraps the sequence and the last line carries the remainder.
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_mixed_sequence.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_width.fa',
+  line_width := 15,
+  overwrite := TRUE
+);
+
+query I
+SELECT list_sort(list(length(line)))
+FROM (
+  SELECT unnest(string_split(rtrim(content, E'\n'), E'\n')) AS line
+  FROM read_text('__WORKING_DIRECTORY__/test/tmp_width.fa')
+)
+WHERE line NOT LIKE '>%';
+----
+[10, 15, 15]
+
+# ---------------------------------------------------------------------------
+# Record completeness and malformed input are errors, never short results.
+# ---------------------------------------------------------------------------
+
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_truncated.gb');
+----
+not terminated by //
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_truncated.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_truncated.fa',
+  overwrite := TRUE
+);
+----
+not terminated by //
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_truncated.fa*');
+----
+0
+
+# Only a sequence section (ORIGIN, CONTIG, BASE COUNT, WGS, TSA, TLS) may end a
+# FEATURES table; any other keyword before // is the same completeness error.
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_features_then_comment.gb');
+----
+FEATURES table is not followed by a sequence section
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_features_then_comment.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_no_section.fa'
+);
+----
+FEATURES table is not followed by a sequence section
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_no_section.fa*');
+----
+0
+
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/bad.bed');
+----
+no LOCUS record found
+
+# A malformed location names the feature, its line and the offending text.
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_bad_location.gb');
+----
+feature CDS at line 8: location '0..30': coordinates are 1-based
+
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_bad_codon_start.gb');
+----
+invalid /codon_start '7'
+
+# ---------------------------------------------------------------------------
+# Biological semantics.
+# ---------------------------------------------------------------------------
+
+# Rows come out in biological order and CDS phase is carried across segments:
+# p1 join() reads 1..4 then 10..17; p2 complement(join()) reads 10..17 first;
+# p3 join(complement(),complement()) is written in reading order and starts at
+# codon_start=2; p4 has no codon_start and so starts at phase 0; p5 is an mRNA.
+query TIITT
+SELECT regexp_extract(attributes, 'locus_tag=([^;]*)', 1), start, "end", strand, frame
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_phase.gb');
+----
+p1	1	4	+	0
+p1	10	17	+	2
+p2	10	17	-	0
+p2	1	4	-	1
+p3	10	17	-	1
+p3	1	4	-	2
+p4	1	4	+	0
+p4	10	17	+	2
+p5	10	17	-	.
+p5	1	4	-	.
+
+# A 200-segment complement(join(...)) spanning many continuation lines yields
+# 200 minus-strand rows, not one corrupt row.
+query IIIT
+SELECT count(*), min(start), max("end"), min(strand)
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_long_location.gb');
+----
+200	1	1995	-
+
+# Parent links by /locus_tag whichever of the gene and its child comes first.
+query TIT
+SELECT feature, start, regexp_extract(attributes, 'Parent=([^;]*)', 1)
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_gene_order.gb')
+ORDER BY start, feature;
+----
+CDS	1	gene-g1
+gene	1	(empty)
+CDS	40	gene-g2
+gene	40	(empty)
+tRNA	70	(empty)
+
+# Repeated qualifiers become one GFF3 tag with comma-joined values, valueless
+# qualifiers become "true", NCBI's "" escape is unescaped, reserved characters
+# are percent-encoded, and /translation is dropped. The MAP keys are unique.
+query T
+SELECT attributes
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_qualifiers.gb');
+----
+ID=CDS-1;Name=protein one;locus_tag=d1;db_xref=GeneID:1,UniProtKB/Swiss-Prot:P1;product=protein one;pseudo=true;note=he said "hi"%3B then a%3Db%2C and c%26d 100%25 done
+
+query TTTI
+SELECT attributes_map['db_xref'], attributes_map['pseudo'], attributes_map['note'],
+       len(map_keys(attributes_map)) - len(list_distinct(map_keys(attributes_map)))
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_qualifiers.gb', attributes_map := TRUE);
+----
+GeneID:1,UniProtKB/Swiss-Prot:P1	true	he said "hi"%3B then a%3Db%2C and c%26d 100%25 done	0
+
+# A segment on a remote accession is reported under that accession, and the
+# FASTA converter only writes this record's own sequence.
+query TII
+SELECT seqname, start, "end"
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_remote.gb')
+ORDER BY seqname;
+----
+OTHER.1	5	40
+REM.1	1	30
+
+statement ok
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_remote.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_remote.fa',
+  overwrite := TRUE
+);
+
+query T
+SELECT NAME FROM read_fasta('__WORKING_DIRECTORY__/test/tmp_remote.fa');
+----
+REM.1
+
+# An origin-spanning span on a circular record wraps into two segments in
+# reading order, as BioPython resolves it, with the CDS phase carried across;
+# a between site n^m is the zero-length site at n, as GFF3 places it.
+query TIITT
+SELECT regexp_extract(attributes, 'locus_tag=([^;]*)', 1), start, "end", strand, frame
+FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_circular_wrap.gb');
+----
+w1	90	100	+	0
+w1	1	10	+	1
+w2	1	10	-	0
+w2	90	100	-	2
+w3	90	100	+	0
+w3	1	10	+	1
+w3	20	25	+	0
+w4	100	100	+	.

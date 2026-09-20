@@ -1,0 +1,12 @@
+LOCUS       TRUNC                    100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record.
+ACCESSION   TRUNC
+VERSION     TRUNC.1
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="probe"
+     CDS             1..30
+                     /locus_tag="t1"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+       61 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt

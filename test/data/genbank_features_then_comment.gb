@@ -1,0 +1,9 @@
+LOCUS       NOSECTION                100 bp    DNA     linear   PHG 01-JAN-2000
+DEFINITION  probe record whose FEATURES table reaches // without a sequence section.
+ACCESSION   NOSECTION
+VERSION     NOSECTION.1
+FEATURES             Location/Qualifiers
+     gene            1..30
+                     /locus_tag="n1"
+COMMENT     no sequence section follows the features
+//
