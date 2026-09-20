@@ -17,11 +17,14 @@ rduckhts_genbank_to_fasta(
 
 \item{path}{Path to the GenBank flat file, optionally bgzipped}
 
-\item{output_path}{Optional explicit output path for the FASTA file}
+\item{output_path}{Optional explicit output path for the FASTA file, one
+non-empty string; defaults to \code{path} with \code{.fa} appended}
 
-\item{line_width}{Sequence characters per output line}
+\item{line_width}{Sequence characters per output line, a whole number
+between 1 and \code{.Machine$integer.max}}
 
-\item{overwrite}{Overwrite an existing output file}
+\item{overwrite}{Logical. If \code{TRUE}, replace an existing output file;
+otherwise an existing output is an error}
 }
 \value{
 A data frame with columns \code{success}, \code{output_path} and
@@ -31,5 +34,10 @@ A data frame with columns \code{success}, \code{output_path} and
 Writes the ORIGIN sequence of each record in a GenBank flat file to a FASTA
 file using the DuckHTS extension. Records are written under the same name
 \code{rduckhts_genbank} reports as \code{seqname}, so feature coordinates
-land on the contig of that name.
+land on the contig of that name; the DEFINITION follows the name without its
+trailing period, as in NCBI's FASTA export. The FASTA is written to a
+temporary file beside \code{output_path} and renamed into place only after
+the input has been read to a clean end, so a failure never leaves a partial
+output and an existing file is never lost. Records without an ORIGIN block
+are skipped; zero written records is an error.
 }

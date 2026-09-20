@@ -386,7 +386,7 @@ FEATURES             Location/Qualifiers
      misc_feature    4899
                      /locus_tag="phiX174p02"
                      /note="transcription start site"
-ORIGIN      
+ORIGIN
         1 gagttttatc gcttccatga cgcagaagtt aacactttcg gatatttctg atgagtcgaa
        61 aaattatctt gataaagcag gaattactac tgcttgttta cgaattaaat cgaagtggac
       121 tgctggcgga aaatgagaaa attcgaccta tccttgcgca gctcgagaag ctcttacttt
@@ -867,7 +867,7 @@ FEATURES             Location/Qualifiers
      misc_feature    4899
                      /locus_tag="phiX174p02"
                      /note="transcription start site"
-ORIGIN      
+ORIGIN
         1 gagttttatc gcttccatga cgcagaagtt aacactttcg gatatttctg atgagtcgaa
        61 aaattatctt gataaagcag gaattactac tgcttgttta cgaattaaat cgaagtggac
       121 tgctggcgga aaatgagaaa attcgaccta tccttgcgca gctcgagaag ctcttacttt
@@ -959,4 +959,3 @@ ORIGIN
      5281 tgggaaaagt tactgtagcc gacgttttgg cggcgcaacc tgtgacgaca aatctgctca
      5341 aatttatgcg cgcttcgata aaaatgattg gcgtatccaa cctgca
 //
-

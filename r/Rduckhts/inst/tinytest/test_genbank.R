@@ -127,6 +127,22 @@ test_genbank <- function() {
     rduckhts_genbank_to_fasta(con, genbank_path, line_width = 0),
     "line_width must be a positive whole number"
   )
+  expect_error(
+    rduckhts_genbank_to_fasta(con, genbank_path, line_width = Inf),
+    "line_width must be a positive whole number"
+  )
+  expect_error(
+    rduckhts_genbank_to_fasta(con, genbank_path, line_width = 3e9),
+    "line_width must be a positive whole number"
+  )
+  expect_error(
+    rduckhts_genbank_to_fasta(con, genbank_path, output_path = ""),
+    "output_path must be NULL or one non-empty character string"
+  )
+  expect_error(
+    rduckhts_genbank_to_fasta(con, genbank_path, overwrite = NA),
+    "overwrite must be TRUE or FALSE"
+  )
 
   # Refusing to overwrite leaves the existing output untouched.
   expect_error(

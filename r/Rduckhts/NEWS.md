@@ -59,11 +59,16 @@ This package bundles DuckHTS 1.5.2.
 
 - Add `rduckhts_genbank()` for GenBank flat-file features in `rduckhts_gff()`'s
   column shape, with an optional parsed qualifier `MAP`. `join()`/`order()`
-  locations flatten to one row per segment, `complement(...)` sets strand `-`,
-  and the record-level `source` feature is dropped.
+  locations give one row per segment in biological order with the CDS phase
+  carried across segments, `complement(...)` sets strand `-`, `Parent` links to
+  the gene sharing a `/locus_tag` in any file order, repeated qualifiers
+  comma-join, and the record-level `source` feature is dropped. Truncated or
+  malformed records are errors naming the feature and line.
 - Add `rduckhts_genbank_to_fasta()` to write each record's ORIGIN sequence as
   FASTA under the same name reported as `seqname`. Bgzipped records are read in
-  place through htslib's hFILE layer.
+  place through htslib's hFILE layer. The output is renamed into place only
+  after a clean read, so an existing file is never lost. `output_path`,
+  `line_width` and `overwrite` are validated before any SQL runs.
 
 ## Genotypes and variant readers
 

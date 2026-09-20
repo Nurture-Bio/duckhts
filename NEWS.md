@@ -73,14 +73,28 @@ DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.
 
 - Add `read_genbank()` for GenBank flat-file features in `read_gff()`'s column
   shape, so a GenBank record substitutes for a GFF without a schema change.
-  `join()`/`order()` locations flatten to one row per segment, `complement(...)`
-  sets strand `-`, and `/codon_start` becomes the GFF frame on CDS. The
-  record-level `source` feature is dropped, and `/translation` is omitted as
-  redundant with ORIGIN.
+  `join()`/`order()` locations give one row per segment in biological order,
+  `complement(...)` sets strand `-`, and the GFF3 phase of each CDS segment is
+  carried from `/codon_start` across segments. `Parent` links a feature to the
+  gene sharing its `/locus_tag` wherever that gene appears in the record,
+  repeated qualifiers become one key with comma-joined values, and valueless
+  qualifiers read `true`. The record-level `source` feature is dropped, and
+  `/translation` is omitted as redundant with ORIGIN.
+- `read_genbank()` streams one record at a time, so memory follows the largest
+  record rather than the file. A record without a terminating `//`, a FEATURES
+  table with no sequence section, a malformed or unsupported location, or a
+  `/codon_start` outside 1..3 is an error naming the feature and line rather
+  than a short result. Edge rules follow BioPython's GenBank scanner: an
+  origin-spanning span on a circular record wraps into two segments, a between
+  site `n^m` is the zero-length site at `n`, and the reader is diffed against
+  BioPython by `make test-genbank-oracle`.
 - Add `genbank_to_fasta()` to write each record's ORIGIN sequence as FASTA under
   the same name `read_genbank()` reports as `seqname`, so feature coordinates
   land on the contig of that name. Input is read through htslib's hFILE layer,
-  so bgzipped records need no separate decompression step.
+  so bgzipped records need no separate decompression step. Nothing is written
+  at bind time, so `EXPLAIN` and `PREPARE` leave no file behind; the FASTA is
+  written beside `output_path` and renamed into place only after a clean read,
+  so a failure never leaves a partial output and an existing file is never lost.
 
 ## Genotype and variant readers
 

@@ -18,9 +18,9 @@ tabix-indexed files directly from `R` using `SQL` queries via
 
 Following [RBCFTools](https://github.com/RGenomicsETL/RBCFTools), tables
 are created and returned instead of data frames. `VCF`/`BCF`,
-`SAM`/`BAM`/`CRAM`, `FASTA`, `FASTQ`, BigWig, `GFF`, `GTF`, and `tabix`
-formats can be queried. We support region queries for indexed files, and
-we target Linux, macOS, and RTools.
+`SAM`/`BAM`/`CRAM`, `FASTA`, `FASTQ`, BigWig, `GFF`, `GTF`, GenBank, and
+`tabix` formats can be queried. We support region queries for indexed
+files, and we target Linux, macOS, and RTools.
 [`htslib`](https://github.com/samtools/htslib) 1.24 is bundled so build
 dependencies stay minimal. The package build adapts the generic
 extension infrastructure to a GNU make-based R package workflow, while
@@ -152,7 +152,8 @@ down into:
 
 - readers: `rduckhts_bcf()`, `rduckhts_bam()`, `rduckhts_fasta()`,
   `rduckhts_fastq()`, `rduckhts_bigwig()`, `rduckhts_gff()`,
-  `rduckhts_gtf()`, `rduckhts_tabix()`, `rduckhts_bed()`
+  `rduckhts_gtf()`, `rduckhts_genbank()`, `rduckhts_tabix()`,
+  `rduckhts_bed()`
 - multi-file readers: `rduckhts_bam_multi()`, `rduckhts_bcf_multi()`,
   `rduckhts_fastq_multi()`, `rduckhts_fasta_multi()`,
   `rduckhts_gff_multi()`, `rduckhts_gtf_multi()`,
@@ -168,6 +169,7 @@ down into:
 - Parquet converters: `rduckhts_bcf_convert_parquet()`,
   `rduckhts_bam_convert_parquet()`, `rduckhts_gff_convert_parquet()`,
   `rduckhts_tabix_convert_parquet()`
+- sequence converters: `rduckhts_genbank_to_fasta()`
 - SIMD diagnostics: `rduckhts_simd_backend()`,
   `rduckhts_simd_requested_backend()`,
   `rduckhts_simd_backend_available()`, `rduckhts_simd_set_backend()`
@@ -516,6 +518,7 @@ This section is generated from `functions.yaml`.
 | [`read_bigwig`](inst/function_catalog/reference.md#read_bigwig)                       | table        | `rduckhts_bigwig`                                                                                                                                                      | Read stored BigWig signal intervals as CHROM, START0, END0 and VALUE.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | [`read_gff`](inst/function_catalog/reference.md#read_gff)                             | table        | `rduckhts_gff`                                                                                                                                                         | Read GFF annotations with optional raw scalar and parsed list/pair attributes, strict GFF3 validation and indexed region selection.                                                                                                                                                                                                                                                                                                                                                                          |
 | [`read_gtf`](inst/function_catalog/reference.md#read_gtf)                             | table        | `rduckhts_gtf`                                                                                                                                                         | Read GTF annotations with optional raw scalar and parsed list/pair attributes and indexed region selection.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| [`read_genbank`](inst/function_catalog/reference.md#read_genbank)                     | table        | `rduckhts_genbank`                                                                                                                                                     | Read GenBank flat-file features in read_gff's column shape, with optional parsed qualifier MAP.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | [`read_tabix`](inst/function_catalog/reference.md#read_tabix)                         | table        | `rduckhts_tabix`                                                                                                                                                       | Read tabix-indexed text with optional header handling, inferred types and region selection.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | [`fasta_index`](inst/function_catalog/reference.md#fasta_index)                       | table        | `rduckhts_fasta_index`                                                                                                                                                 | Build a FASTA index (.fai) and return a single row with columns success (BOOLEAN) and index_path (VARCHAR).                                                                                                                                                                                                                                                                                                                                                                                                  |
 | [`hts_union_query`](inst/function_catalog/reference.md#hts_union_query)               | scalar_macro | `rduckhts_bam_multi, rduckhts_bcf_multi, rduckhts_fastq_multi, rduckhts_fasta_multi, rduckhts_bed_multi, rduckhts_tabix_multi, rduckhts_gff_multi, rduckhts_gtf_multi` | Generate a UNION ALL BY NAME query string that reads every file matching a glob pattern through the named reader function. The result includes a ‘filename’ column identifying the source file for each row. Assign to a variable with SET VARIABLE and execute via query(getvariable(…)). Optional params string is appended to each reader call. In R, use the typed rduckhts\_\*\_multi() helpers instead, which accept file vectors with optional per-file parameters and create DuckDB tables directly. |
@@ -529,6 +532,7 @@ This section is generated from `functions.yaml`.
 | [`duckhts_bam_convert_parquet_sql`](inst/function_catalog/reference.md#duckhts_bam_convert_parquet_sql)     | scalar_macro | `rduckhts_bam_convert_parquet`   | Build COPY SQL for read_bam() output with Parquet metadata, SAM header text and selected columns, filters or partitions.       |
 | [`duckhts_gff_convert_parquet_sql`](inst/function_catalog/reference.md#duckhts_gff_convert_parquet_sql)     | scalar_macro | `rduckhts_gff_convert_parquet`   | Build COPY SQL for read_gff() output with Parquet metadata, GFF/tabix header text and selected columns, filters or partitions. |
 | [`duckhts_tabix_convert_parquet_sql`](inst/function_catalog/reference.md#duckhts_tabix_convert_parquet_sql) | scalar_macro | `rduckhts_tabix_convert_parquet` | Build COPY SQL for read_tabix() output with Parquet metadata, header text and selected columns, filters or partitions.         |
+| [`genbank_to_fasta`](inst/function_catalog/reference.md#genbank_to_fasta)                                   | table        | `rduckhts_genbank_to_fasta`      | Write the ORIGIN sequence of each GenBank record as FASTA and return success, output_path and records_written.                 |
 
 ### Coverage
 

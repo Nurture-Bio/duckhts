@@ -32,6 +32,13 @@ Invisible TRUE on success
 Creates a DuckDB table from a GenBank flat file using the DuckHTS
 extension. Features are emitted in \code{read_gff}'s column shape, so a
 GenBank record substitutes for a GFF without a schema change. Locations
-built with \code{join()} or \code{order()} flatten to one row per segment,
-and \code{complement(...)} sets strand \code{"-"}.
+built with \code{join()} or \code{order()} give one row per segment in
+biological order, \code{complement(...)} sets strand \code{"-"}, and the
+GFF3 phase of each CDS segment is carried from \code{/codon_start} across
+segments. \code{Parent} links a feature to the gene sharing its
+\code{/locus_tag} wherever that gene appears in the record, repeated
+qualifiers become one key with comma-joined values, and valueless
+qualifiers read \code{true}. Records stream one at a time, and a record
+without a terminating \code{//} or with a malformed location is an error
+naming the feature and line.
 }

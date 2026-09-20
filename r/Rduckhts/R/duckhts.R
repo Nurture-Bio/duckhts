@@ -1693,8 +1693,15 @@ rduckhts_gtf <- function(
 #' Creates a DuckDB table from a GenBank flat file using the DuckHTS
 #' extension. Features are emitted in \code{read_gff}'s column shape, so a
 #' GenBank record substitutes for a GFF without a schema change. Locations
-#' built with \code{join()} or \code{order()} flatten to one row per segment,
-#' and \code{complement(...)} sets strand \code{"-"}.
+#' built with \code{join()} or \code{order()} give one row per segment in
+#' biological order, \code{complement(...)} sets strand \code{"-"}, and the
+#' GFF3 phase of each CDS segment is carried from \code{/codon_start} across
+#' segments. \code{Parent} links a feature to the gene sharing its
+#' \code{/locus_tag} wherever that gene appears in the record, repeated
+#' qualifiers become one key with comma-joined values, and valueless
+#' qualifiers read \code{true}. Records stream one at a time, and a record
+#' without a terminating \code{//} or with a malformed location is an error
+#' naming the feature and line.
 #'
 #' @param con A DuckDB connection with DuckHTS loaded
 #' @param table_name Name for the created table, or \code{NULL} to create the
@@ -1770,13 +1777,21 @@ rduckhts_genbank <- function(
 #' Writes the ORIGIN sequence of each record in a GenBank flat file to a FASTA
 #' file using the DuckHTS extension. Records are written under the same name
 #' \code{rduckhts_genbank} reports as \code{seqname}, so feature coordinates
-#' land on the contig of that name.
+#' land on the contig of that name; the DEFINITION follows the name without its
+#' trailing period, as in NCBI's FASTA export. The FASTA is written to a
+#' temporary file beside \code{output_path} and renamed into place only after
+#' the input has been read to a clean end, so a failure never leaves a partial
+#' output and an existing file is never lost. Records without an ORIGIN block
+#' are skipped; zero written records is an error.
 #'
 #' @param con A DuckDB connection with DuckHTS loaded
 #' @param path Path to the GenBank flat file, optionally bgzipped
-#' @param output_path Optional explicit output path for the FASTA file
-#' @param line_width Sequence characters per output line
-#' @param overwrite Overwrite an existing output file
+#' @param output_path Optional explicit output path for the FASTA file, one
+#'   non-empty string; defaults to \code{path} with \code{.fa} appended
+#' @param line_width Sequence characters per output line, a whole number
+#'   between 1 and \code{.Machine$integer.max}
+#' @param overwrite Logical. If \code{TRUE}, replace an existing output file;
+#'   otherwise an existing output is an error
 #'
 #' @return A data frame with columns \code{success}, \code{output_path} and
 #'   \code{records_written}
@@ -1795,13 +1810,32 @@ rduckhts_genbank_to_fasta <- function(
     stop("path must be one non-empty character string", call. = FALSE)
   }
   if (
+    !is.null(output_path) &&
+      (!is.character(output_path) ||
+        length(output_path) != 1L ||
+        is.na(output_path) ||
+        !nzchar(output_path))
+  ) {
+    stop(
+      "output_path must be NULL or one non-empty character string",
+      call. = FALSE
+    )
+  }
+  if (!is.logical(overwrite) || length(overwrite) != 1L || is.na(overwrite)) {
+    stop("overwrite must be TRUE or FALSE", call. = FALSE)
+  }
+  if (
     !is.numeric(line_width) ||
       length(line_width) != 1L ||
-      is.na(line_width) ||
+      !is.finite(line_width) ||
       line_width < 1 ||
-      line_width != floor(line_width)
+      line_width != floor(line_width) ||
+      line_width > .Machine$integer.max
   ) {
-    stop("line_width must be a positive whole number", call. = FALSE)
+    stop(
+      "line_width must be a positive whole number within integer range",
+      call. = FALSE
+    )
   }
 
   params <- list(line_width = as.character(as.integer(line_width)))
