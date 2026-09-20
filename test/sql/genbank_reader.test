@@ -311,6 +311,26 @@ SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_truncated.fa*');
 ----
 0
 
+# Only a sequence section (ORIGIN, CONTIG, BASE COUNT, WGS, TSA, TLS) may end a
+# FEATURES table; any other keyword before // is the same completeness error.
+statement error
+SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/genbank_features_then_comment.gb');
+----
+FEATURES table is not followed by a sequence section
+
+statement error
+SELECT * FROM genbank_to_fasta(
+  '__WORKING_DIRECTORY__/test/data/genbank_features_then_comment.gb',
+  output_path := '__WORKING_DIRECTORY__/test/tmp_no_section.fa'
+);
+----
+FEATURES table is not followed by a sequence section
+
+query I
+SELECT count(*) FROM glob('__WORKING_DIRECTORY__/test/tmp_no_section.fa*');
+----
+0
+
 statement error
 SELECT count(*) FROM read_genbank('__WORKING_DIRECTORY__/test/data/bad.bed');
 ----

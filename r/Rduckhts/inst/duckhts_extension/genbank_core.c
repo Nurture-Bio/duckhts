@@ -723,7 +723,17 @@ static gb_feed_t gb_keyword_line(gb_parser_t *p, const char *s, size_t n) {
         p->section = GB_SECTION_FEATURES;
         return GB_FEED_CONTINUE;
     }
-    if (p->section == GB_SECTION_FEATURES) p->section = GB_SECTION_OTHER;
+    if (p->section == GB_SECTION_FEATURES) {
+        int sequence_header =
+            (kw == 6 && memcmp(s, "CONTIG", 6) == 0) ||
+            (kw == 3 && (memcmp(s, "WGS", 3) == 0 || memcmp(s, "TSA", 3) == 0 || memcmp(s, "TLS", 3) == 0)) ||
+            (kw == 4 && n >= 10 && memcmp(s, "BASE COUNT", 10) == 0 &&
+             (n == 10 || s[10] == ' ' || s[10] == '\t'));
+        if (!sequence_header)
+            return gb_fail(p, GB_ERR_SYNTAX, "record %s: FEATURES table is not followed by a sequence section",
+                           gb_str(p, p->locus));
+        p->section = GB_SECTION_OTHER;
+    }
     if (p->section != GB_SECTION_HEADER) return GB_FEED_CONTINUE;
 
     if (kw == 10 && memcmp(s, "DEFINITION", 10) == 0) {

@@ -19,7 +19,8 @@
  * Table layout follows BioPython's GenBank scanner: a feature key may start
  * anywhere before column 22, everything from column 22 is location text,
  * qualifiers or continuation, and a FEATURES table must reach a sequence
- * section (ORIGIN, CONTIG, ...) before the record terminator. */
+ * section (ORIGIN, CONTIG, BASE COUNT, WGS, TSA or TLS) before the record
+ * terminator; any other keyword in that position is a syntax error. */
 
 #include <stddef.h>
 #include <stdint.h>

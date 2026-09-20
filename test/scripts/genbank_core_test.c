@@ -20,6 +20,8 @@ static int failures;
 #define CHECK_STR(p, span, expect) CHECK(strcmp(gb_str((p), (span)), (expect)) == 0)
 
 /* Formatted append without htslib's compiled ksprintf. */
+static void kputf(kstring_t *k, const char *fmt, ...) HTS_FORMAT(HTS_PRINTF_FMT, 2, 3);
+
 static void kputf(kstring_t *k, const char *fmt, ...) {
     char buf[4096];
     va_list ap;
@@ -929,6 +931,40 @@ static void test_features_table_must_reach_a_sequence_section(void) {
     CHECK(p.err.code == GB_ERR_SYNTAX);
     CHECK(strstr(p.err.msg, "sequence section") != NULL);
     gb_parser_destroy(&p);
+
+    const struct {
+        const char *header;
+        gb_feed_t expected;
+    } cases[] = {
+        {"COMMENT     No sequence section", GB_FEED_ERROR},
+        {"BOGUS       No sequence section", GB_FEED_ERROR},
+        {"BASE COUNTX No sequence section", GB_FEED_ERROR},
+        {"ORIGIN", GB_FEED_RECORD},
+        {"CONTIG      join(AB.1:1..100)", GB_FEED_RECORD},
+        {"BASE COUNT  25 a 25 c 25 g 25 t", GB_FEED_RECORD},
+        {"WGS         AAAA01000001-AAAA01000002", GB_FEED_RECORD},
+        {"TSA         GAAA01000001-GAAA01000002", GB_FEED_RECORD},
+        {"TLS         KAAA01000001-KAAA01000002", GB_FEED_RECORD}
+    };
+    const gb_mode_t modes[] = {GB_MODE_FEATURES, GB_MODE_SEQUENCE};
+    for (size_t mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            char record[512];
+            int n = snprintf(record, sizeof(record),
+                             "LOCUS       NS3 100 bp DNA linear PHG 01-JAN-2000\n"
+                             "FEATURES             Location/Qualifiers\n"
+                             "     gene            1..30\n%s\n//\n", cases[i].header);
+            CHECK(n > 0 && (size_t)n < sizeof(record));
+            gb_parser_init(&p, modes[mode]);
+            feed_text(&p, record, &log);
+            CHECK(log.last == cases[i].expected);
+            if (cases[i].expected == GB_FEED_ERROR) {
+                CHECK(p.err.code == GB_ERR_SYNTAX);
+                CHECK(strstr(p.err.msg, "sequence section") != NULL);
+            }
+            gb_parser_destroy(&p);
+        }
+    }
 
     /* A record with no FEATURES table at all is still fine. */
     gb_parser_init(&p, GB_MODE_FEATURES);

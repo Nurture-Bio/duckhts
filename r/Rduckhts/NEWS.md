@@ -63,7 +63,8 @@ This package bundles DuckHTS 1.5.2.
   carried across segments, `complement(...)` sets strand `-`, `Parent` links to
   the gene sharing a `/locus_tag` in any file order, repeated qualifiers
   comma-join, and the record-level `source` feature is dropped. Truncated or
-  malformed records are errors naming the feature and line.
+  malformed records, including a FEATURES table not followed by a sequence
+  section, are errors naming the feature and line.
 - Add `rduckhts_genbank_to_fasta()` to write each record's ORIGIN sequence as
   FASTA under the same name reported as `seqname`. Bgzipped records are read in
   place through htslib's hFILE layer. The output is renamed into place only

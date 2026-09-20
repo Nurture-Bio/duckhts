@@ -144,6 +144,31 @@ test_genbank <- function() {
     "overwrite must be TRUE or FALSE"
   )
 
+  # A FEATURES table that reaches // without a sequence section is an error,
+  # not a short result, for the reader and the converter alike.
+  malformed_path <- tempfile("rduckhts_genbank_malformed_", fileext = ".gb")
+  on.exit(unlink(malformed_path), add = TRUE)
+  writeLines(
+    c(
+      "LOCUS       NOSECTION                100 bp    DNA     linear   PHG 01-JAN-2000",
+      "FEATURES             Location/Qualifiers",
+      "     gene            1..30",
+      "COMMENT     no sequence section follows the features",
+      "//"
+    ),
+    malformed_path
+  )
+  expect_error(
+    rduckhts_genbank(con, "malformed_features", malformed_path),
+    "FEATURES table is not followed by a sequence section"
+  )
+  malformed_fasta <- tempfile("rduckhts_genbank_malformed_", fileext = ".fa")
+  expect_error(
+    rduckhts_genbank_to_fasta(con, malformed_path, output_path = malformed_fasta),
+    "FEATURES table is not followed by a sequence section"
+  )
+  expect_false(file.exists(malformed_fasta))
+
   # Refusing to overwrite leaves the existing output untouched.
   expect_error(
     rduckhts_genbank_to_fasta(con, genbank_path, output_path = fasta_path),

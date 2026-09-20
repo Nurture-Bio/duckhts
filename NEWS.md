@@ -82,9 +82,10 @@ DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.
   `/translation` is omitted as redundant with ORIGIN.
 - `read_genbank()` streams one record at a time, so memory follows the largest
   record rather than the file. A record without a terminating `//`, a FEATURES
-  table with no sequence section, a malformed or unsupported location, or a
-  `/codon_start` outside 1..3 is an error naming the feature and line rather
-  than a short result. Edge rules follow BioPython's GenBank scanner: an
+  table not followed by a sequence section (ORIGIN, CONTIG, BASE COUNT, WGS,
+  TSA or TLS), a malformed or unsupported location, or a `/codon_start` outside
+  1..3 is an error naming the feature and line rather than a short result.
+  Edge rules follow BioPython's GenBank scanner: an
   origin-spanning span on a circular record wraps into two segments, a between
   site `n^m` is the zero-length site at `n`, and the reader is diffed against
   BioPython by `make test-genbank-oracle`.
