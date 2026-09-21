@@ -14,19 +14,6 @@ reading common bioinformatics file formats such as `VCF`/`BCF`,
 tabix-indexed files directly from `R` using `SQL` queries via
 [`duckhts`](https://github.com/RGenomicsETL/duckhts).
 
-## Credits
-
-- [Sounkou Mahamane Toure](https://github.com/sounkou-bioinfo): project
-  author and maintainer.
-- [Ryan Ward](https://github.com/ryandward) ([Nurture
-  Bio](https://github.com/Nurture-Bio)): GenBank reader and FASTA
-  converter.
-
-Thanks to all
-[contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
-See the [package author credits](DESCRIPTION) and [third-party
-notices](inst/COPYRIGHT) for upstream acknowledgements.
-
 ## How it works
 
 Following [RBCFTools](https://github.com/RGenomicsETL/RBCFTools), tables
@@ -2043,3 +2030,16 @@ dbDisconnect(con, shutdown = TRUE)
 ## License
 
 GPL-3.
+
+## Credits
+
+[![Contributors](https://contrib.rocks/image?repo=RGenomicsETL/duckhts)](https://github.com/RGenomicsETL/duckhts/graphs/contributors)
+
+The GenBank reader and FASTA converter were contributed by [Ryan
+Ward](https://github.com/ryandward) of [Nurture
+Bio](https://github.com/Nurture-Bio).
+
+Thanks to all
+[contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
+See the [package author credits](DESCRIPTION) and [third-party
+notices](inst/COPYRIGHT) for upstream acknowledgements.

@@ -2,8 +2,8 @@
 
 # duckhts 1.5.2.9000
 
-- Credit the project maintainer and GenBank contributor in the README, with
-  links to the contributors graph and upstream acknowledgements.
+- Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
+  support in the README footer, with links to upstream acknowledgements.
 
 # duckhts 1.5.2
 

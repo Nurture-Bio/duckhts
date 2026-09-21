@@ -1,7 +1,7 @@
 # Rduckhts 1.5.2.9000-0.1.5
 
-- Credit the project maintainer and GenBank contributor in the package README,
-  with links to the contributors graph and upstream acknowledgements.
+- Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
+  support in the package README footer, with links to upstream acknowledgements.
 
 # Rduckhts 1.5.2-0.1.5
 

@@ -15,20 +15,6 @@ formats and provides SQL functions for consequence annotation,
 intervals, coverage, sequence operations, compression, indexing, and
 export.
 
-## Credits
-
-- [Sounkou Mahamane Toure](https://github.com/sounkou-bioinfo): project
-  author and maintainer.
-- [Ryan Ward](https://github.com/ryandward) ([Nurture
-  Bio](https://github.com/Nurture-Bio)): GenBank reader and FASTA
-  converter.
-
-Thanks to all
-[contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
-See the [package author credits](r/Rduckhts/DESCRIPTION) and
-[third-party notices](r/Rduckhts/inst/COPYRIGHT) for upstream
-acknowledgements.
-
 ## Functions
 
 <details>
@@ -2694,3 +2680,17 @@ external-data cache.
 ## License
 
 MIT
+
+## Credits
+
+[![Contributors](https://contrib.rocks/image?repo=RGenomicsETL/duckhts)](https://github.com/RGenomicsETL/duckhts/graphs/contributors)
+
+The GenBank reader and FASTA converter were contributed by [Ryan
+Ward](https://github.com/ryandward) of [Nurture
+Bio](https://github.com/Nurture-Bio).
+
+Thanks to all
+[contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
+See the [package author credits](r/Rduckhts/DESCRIPTION) and
+[third-party notices](r/Rduckhts/inst/COPYRIGHT) for upstream
+acknowledgements.
