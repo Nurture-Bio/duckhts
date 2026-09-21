@@ -1,5 +1,10 @@
 # DuckHTS Extension News
 
+# duckhts 1.5.2.9000
+
+- Credit the project maintainer and GenBank contributor in the README, with
+  links to the contributors graph and upstream acknowledgements.
+
 # duckhts 1.5.2
 
 DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.

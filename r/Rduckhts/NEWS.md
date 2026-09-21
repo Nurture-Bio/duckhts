@@ -1,3 +1,8 @@
+# Rduckhts 1.5.2.9000-0.1.5
+
+- Credit the project maintainer and GenBank contributor in the package README,
+  with links to the contributors graph and upstream acknowledgements.
+
 # Rduckhts 1.5.2-0.1.5
 
 This package bundles DuckHTS 1.5.2.
