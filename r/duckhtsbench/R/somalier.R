@@ -243,7 +243,7 @@ duckhts_bench_somalier_samtools <- function(samtools, arguments, error,
     status <- attr(output, "status")
     if (is.null(status)) status <- 0L
     if (status != 0L) {
-      stop(error, if (length(output)) paste0(": ", tail(output, 1L)) else "",
+      stop(error, if (length(output)) paste0(": ", utils::tail(output, 1L)) else "",
            call. = FALSE)
     }
     return(output)

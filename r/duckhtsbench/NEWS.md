@@ -1,5 +1,12 @@
 # duckhtsbench 0.0.0.9000
 
+- document the complete exported registry and staging API and resolve utility
+  functions through their owning namespaces, keeping source-package checks clean
+
+- register the network-free `genbank-memory-scaling` fixture workload used to
+  separate cumulative record count from largest-record growth in the rendered
+  GenBank memory report
+
 - register the `genbank-reader` workload: the NCBI RefSeq E. coli K-12 MG1655
   assembly archive pinned by NCBI's published MD5, SHA-256 and byte size, with
   its uncompressed `.gbff` as a derived artifact, staged by

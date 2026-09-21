@@ -1,3 +1,10 @@
+#' Return the DuckHTS benchmark cache root.
+#'
+#' Resolves `DUCKHTS_CACHE_DIR`, then `XDG_CACHE_HOME/duckhts`, and otherwise
+#' uses `~/.cache/duckhts`. The directory is not created by this function.
+#'
+#' @return A character scalar containing the benchmark cache root.
+#' @export
 duckhts_bench_cache_dir <- function() {
   configured <- Sys.getenv("DUCKHTS_CACHE_DIR", unset = "")
   if (nzchar(configured)) return(path.expand(configured))

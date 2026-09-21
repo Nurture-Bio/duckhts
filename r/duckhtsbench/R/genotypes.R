@@ -7,7 +7,7 @@ duckhts_bench_genotype_pair <- function(source, region, outputs, bcftools) {
     if (status != 0L) stop("could not stage genotype cohort", call. = FALSE)
   }
   for (output in outputs) dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
-  temporary <- setNames(paste0(outputs, ".partial-", Sys.getpid()), names(outputs))
+  temporary <- stats::setNames(paste0(outputs, ".partial-", Sys.getpid()), names(outputs))
   on.exit(unlink(temporary), add = TRUE)
   run(c("view", "--no-version", "-r", region, "-Oz", "-o", temporary[["vcf"]], source))
   run(c("view", "--no-version", "-Ob", "-o", temporary[["bcf"]], temporary[["vcf"]]))
@@ -234,7 +234,9 @@ duckhts_bench_stage_genotypes <- function() {
                       c("chr22:20000000-21000000", "true", "false")))
   index <- duckhts_bench_fetch(definition$source_index)
   duckhts_bench_duckvep_validate_source(rows, definition, index, NULL, Sys.which("curl"))
-  outputs <- setNames(vapply(plan$id, duckhts_bench_artifact_path, character(1)), c("vcf", "bcf"))
+  outputs <- stats::setNames(
+    vapply(plan$id, duckhts_bench_artifact_path, character(1)), c("vcf", "bcf")
+  )
   staged_outputs <- duckhts_bench_genotype_staging_paths(outputs, "genotype-reader")
   on.exit(unlink(dirname(staged_outputs[[1L]]), recursive = TRUE), add = TRUE)
   counts <- duckhts_bench_genotype_pair(paste0(source$locator, "##idx##", index),
