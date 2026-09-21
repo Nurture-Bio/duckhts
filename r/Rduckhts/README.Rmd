@@ -1322,3 +1322,14 @@ dbDisconnect(con, shutdown = TRUE)
 ## License
 
 GPL-3.
+
+## Credits
+
+[![Contributors](https://contrib.rocks/image?repo=RGenomicsETL/duckhts)](https://github.com/RGenomicsETL/duckhts/graphs/contributors)
+
+The GenBank reader and FASTA converter were contributed by
+[Ryan Ward](https://github.com/ryandward) of [Nurture Bio](https://github.com/Nurture-Bio).
+
+Thanks to all [contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
+See the [package author credits](DESCRIPTION) and
+[third-party notices](inst/COPYRIGHT) for upstream acknowledgements.
