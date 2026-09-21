@@ -1,0 +1,358 @@
+---
+title: "GenBank reader memory scaling"
+output:
+  github_document:
+    html_preview: false
+    pandoc_args: ["--wrap=preserve", "--columns=400"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+This report measures the retained unit of `read_genbank(...)` in feature mode.
+The parser keeps one complete record so it can resolve parent links before
+emitting rows. The expected scaling contract is therefore peak memory
+proportional to the largest record, not to records already consumed.
+
+Three measurements distinguish ownership domains:
+
+- fresh-process peak resident set size (RSS) covers DuckDB, the extension,
+  htslib, libc allocation overhead, and the query;
+- DuckDB's JSON profiler reports peak buffer-manager bytes and peak temporary
+  storage for the query;
+- a standalone probe reports the exact heap capacity retained by the GenBank
+  parser after each record. It sums the arena and the feature, qualifier,
+  segment, attribute, attribute-value, and output-row arrays. It excludes the
+  line reader, DuckDB vectors, allocator metadata, and transient `realloc`
+  overlap.
+
+The one- and two-record phiX174 files isolate cumulative input size while
+holding the largest physical record constant. Single-record phiX174, lambda,
+and *Escherichia coli* K-12 MG1655 inputs vary the largest record. Five fresh
+DuckDB processes are measured per input with one DuckDB thread. Each process
+aggregates the emitted row count and total feature span; it does not materialize
+attribute maps into DuckDB vectors. The parser still retains every qualifier
+needed for complete-record parent resolution. The exact parser capacity is
+deterministic and is measured once per input.
+
+## Reproduction
+
+The phiX174 and lambda records are committed NCBI RefSeq fixtures registered
+under the `genbank-memory-scaling` workload. The *E. coli* record is the
+registry-pinned, checksum-verified `GCF_000005845.2_ASM584v2` GenBank artifact
+used by the reader throughput report. Stage the inputs before rendering; only
+the first command can require network access:
+
+``` sh
+Rscript -e 'duckhtsbench::duckhts_bench_stage_genbank()'
+DUCKHTSBENCH_REGISTRY=r/duckhtsbench/inst/benchmark_registry.tsv \
+  Rscript -e 'duckhtsbench::duckhts_bench_stage_repository_fixtures(".", "genbank-memory-scaling")'
+```
+
+Build the release extension, then render from the repository root. The
+extension source must match `HEAD`; changes confined to the benchmark harness
+and rendered artifacts are allowed so the report can be produced before its
+own commit.
+
+``` sh
+make release -j2
+DUCKHTSBENCH_REGISTRY=r/duckhtsbench/inst/benchmark_registry.tsv \
+  taskset -c 8 Rscript -e 'rmarkdown::render("benchmarks/benchmark_genbank_memory.Rmd")'
+```
+
+`DUCKHTS_EXTENSION` and `DUCKDB_CLI` select non-default extension and DuckDB
+CLI paths. `/usr/bin/time`, a C11 compiler, and DuckDB JSON profiling are
+required. Input staging, process startup, extension loading, and query planning
+are included in RSS; the report does not subtract a process baseline.
+
+```{r benchmark, echo=FALSE, message=FALSE}
+sql_string <- function(value) {
+  sprintf("'%s'", gsub("'", "''", value, fixed = TRUE))
+}
+
+command_output <- function(command, args = character()) {
+  paste(system2(command, args, stdout = TRUE, stderr = TRUE), collapse = " ")
+}
+
+run_checked <- function(command, args, stdin = "", stdout = "", stderr = "") {
+  status <- system2(command, args, stdin = stdin, stdout = stdout, stderr = stderr)
+  if (!identical(status, 0L)) {
+    details <- if (nzchar(stderr) && file.exists(stderr)) readLines(stderr, warn = FALSE) else character()
+    stop(paste(c(sprintf("command failed with status %d: %s", status, command), details), collapse = "\n"))
+  }
+  invisible(status)
+}
+
+repo <- normalizePath(".", mustWork = TRUE)
+extension <- normalizePath(
+  Sys.getenv("DUCKHTS_EXTENSION", "build/release/duckhts.duckdb_extension"),
+  mustWork = TRUE
+)
+duckdb_cli <- Sys.getenv("DUCKDB_CLI", Sys.which("duckdb"))
+cc <- Sys.getenv("CC", Sys.which("cc"))
+stopifnot(nzchar(duckdb_cli), nzchar(cc), file.exists("/usr/bin/time"))
+
+source_revision <- command_output("git", c("rev-parse", "HEAD"))
+source_tree <- command_output("git", c("rev-parse", "HEAD:src"))
+source_dirty <- system2(
+  "git",
+  c(
+    "diff", "--quiet", "HEAD", "--", "src", "CMakeLists.txt", "Makefile",
+    "extension_config.cmake"
+  ),
+  stdout = FALSE, stderr = FALSE
+) != 0L
+if (source_dirty) stop("Render with extension source matching HEAD")
+
+fixture_paths <- duckhtsbench::duckhts_bench_stage_repository_fixtures(
+  repo, "genbank-memory-scaling"
+)
+ecoli_path <- duckhtsbench::duckhts_bench_stage_genbank(fetch = FALSE)[["gbff"]]
+inputs <- data.frame(
+  input = c("phiX174", "phiX174 x2", "lambda", "E. coli K-12 MG1655"),
+  artifact = c(
+    "genbank_memory_phix174", "genbank_memory_phix174_x2",
+    "genbank_memory_lambda", "genbank_ecoli_k12_gbff"
+  ),
+  records = c(1L, 2L, 1L, 1L),
+  expected_rows = c(37, 74, 284, 9306),
+  expected_span_sum = c(20796, 41592, 305393, 8503425),
+  stringsAsFactors = FALSE
+)
+input_paths <- c(unname(fixture_paths[inputs$artifact[1:3]]), ecoli_path)
+stopifnot(all(file.exists(input_paths)))
+inputs$file_bytes <- unname(file.info(input_paths)$size)
+
+probe <- tempfile("genbank-memory-probe-")
+compile_stdout <- tempfile("genbank-memory-compile-", fileext = ".out")
+compile_stderr <- tempfile("genbank-memory-compile-", fileext = ".err")
+compile_args <- c(
+  "-std=c11", "-O2", "-g", "-UNDEBUG", "-Wall", "-Wextra", "-Werror",
+  "-Wpedantic", "-Wconversion", "-Wsign-conversion", "-Wshadow",
+  "-Wstrict-prototypes", "-Isrc/include", "-isystem", "third_party/htslib",
+  "src/genbank_core.c", "benchmarks/genbank_memory_probe.c", "-o", probe
+)
+run_checked(cc, compile_args, stdout = compile_stdout, stderr = compile_stderr)
+
+probe_records <- lapply(seq_len(nrow(inputs)), function(index) {
+  output <- tempfile("genbank-memory-probe-", fileext = ".csv")
+  errors <- tempfile("genbank-memory-probe-", fileext = ".err")
+  run_checked(probe, shQuote(input_paths[[index]]), stdout = output, stderr = errors)
+  result <- utils::read.csv(output, check.names = FALSE)
+  result$input <- inputs$input[[index]]
+  result
+})
+probe_records <- do.call(rbind, probe_records)
+row.names(probe_records) <- NULL
+probe_records <- probe_records[c(
+  "input", "record", "input_bytes", "features", "qualifiers", "segments",
+  "attributes", "attribute_values", "rows", "heap_used_bytes", "heap_capacity_bytes"
+)]
+
+probe_summary <- do.call(rbind, lapply(split(probe_records, probe_records$input), function(rows) {
+  data.frame(
+    input = rows$input[[1L]],
+    parser_records = nrow(rows),
+    largest_record_bytes = max(rows$input_bytes),
+    core_rows = sum(rows$rows),
+    max_heap_used_bytes = max(rows$heap_used_bytes),
+    max_heap_capacity_bytes = max(rows$heap_capacity_bytes),
+    stringsAsFactors = FALSE
+  )
+}))
+row.names(probe_summary) <- NULL
+probe_summary <- probe_summary[match(inputs$input, probe_summary$input), ]
+input_byte_sums <- tapply(probe_records$input_bytes, probe_records$input, sum)
+emitted_rows <- probe_summary$core_rows - probe_summary$parser_records
+stopifnot(
+  identical(as.integer(probe_summary$parser_records), inputs$records),
+  identical(as.numeric(emitted_rows), inputs$expected_rows),
+  identical(as.numeric(input_byte_sums[inputs$input]), inputs$file_bytes)
+)
+unlink(c(probe, compile_stdout, compile_stderr))
+
+profile_query <- function(path, expected_rows, expected_span_sum, repetition) {
+  directory <- tempfile("genbank-memory-query-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  sql_path <- file.path(directory, "query.sql")
+  result_path <- file.path(directory, "result.csv")
+  profile_path <- file.path(directory, "profile.json")
+  time_path <- file.path(directory, "time.tsv")
+  stdout_path <- file.path(directory, "stdout.txt")
+  stderr_path <- file.path(directory, "stderr.txt")
+  query <- sprintf(
+    paste0(
+      "COPY (SELECT count(*)::UBIGINT AS rows, ",
+      "coalesce(sum(\"end\" - start + 1), 0)::HUGEINT AS span_sum ",
+      "FROM read_genbank(%s)) TO %s (HEADER, FORMAT CSV);"
+    ),
+    sql_string(path), sql_string(result_path)
+  )
+  writeLines(c(
+    "SET threads=1;",
+    sprintf("LOAD %s;", sql_string(extension)),
+    "PRAGMA enable_profiling='json';",
+    sprintf("PRAGMA profiling_output=%s;", sql_string(profile_path)),
+    query,
+    "PRAGMA disable_profiling;"
+  ), sql_path)
+  run_checked(
+    "/usr/bin/time",
+    c(
+      "-f", shQuote("%M\t%e"), "-o", shQuote(time_path),
+      shQuote(duckdb_cli), "-unsigned", "-batch"
+    ),
+    stdin = sql_path, stdout = stdout_path, stderr = stderr_path
+  )
+  result <- utils::read.csv(result_path, check.names = FALSE)
+  if (nrow(result) != 1L || result$rows[[1L]] != expected_rows ||
+      result$span_sum[[1L]] != expected_span_sum) {
+    stop(sprintf(
+      "unexpected aggregate for %s: expected %d rows and span sum %.0f",
+      path, expected_rows, expected_span_sum
+    ))
+  }
+  profile <- jsonlite::fromJSON(profile_path, simplifyVector = TRUE)
+  timing <- utils::read.delim(time_path, header = FALSE, col.names = c("max_rss_kib", "elapsed_seconds"))
+  data.frame(
+    repetition = repetition,
+    rows = result$rows[[1L]],
+    span_sum = result$span_sum[[1L]],
+    max_rss_kib = timing$max_rss_kib[[1L]],
+    elapsed_seconds = timing$elapsed_seconds[[1L]],
+    duckdb_peak_buffer_bytes = profile$system_peak_buffer_memory,
+    duckdb_peak_temp_bytes = profile$system_peak_temp_dir_size,
+    stringsAsFactors = FALSE
+  )
+}
+
+runs <- lapply(seq_len(nrow(inputs)), function(index) {
+  values <- do.call(rbind, lapply(seq_len(5L), function(repetition) {
+    profile_query(
+      input_paths[[index]], inputs$expected_rows[[index]],
+      inputs$expected_span_sum[[index]], repetition
+    )
+  }))
+  values$input <- inputs$input[[index]]
+  values
+})
+runs <- do.call(rbind, runs)
+row.names(runs) <- NULL
+runs <- runs[c(
+  "input", "repetition", "rows", "span_sum", "max_rss_kib", "elapsed_seconds",
+  "duckdb_peak_buffer_bytes", "duckdb_peak_temp_bytes"
+)]
+
+memory_summary <- do.call(rbind, lapply(split(runs, runs$input), function(values) {
+  data.frame(
+    input = values$input[[1L]],
+    rows = values$rows[[1L]],
+    median_max_rss_kib = stats::median(values$max_rss_kib),
+    min_max_rss_kib = min(values$max_rss_kib),
+    max_max_rss_kib = max(values$max_rss_kib),
+    max_duckdb_buffer_bytes = max(values$duckdb_peak_buffer_bytes),
+    max_duckdb_temp_bytes = max(values$duckdb_peak_temp_bytes),
+    median_elapsed_seconds = stats::median(values$elapsed_seconds),
+    stringsAsFactors = FALSE
+  )
+}))
+row.names(memory_summary) <- NULL
+memory_summary <- memory_summary[match(inputs$input, memory_summary$input), ]
+summary_table <- merge(inputs, probe_summary, by = "input", sort = FALSE)
+summary_table <- merge(summary_table, memory_summary, by = "input", sort = FALSE)
+summary_table <- summary_table[match(inputs$input, summary_table$input), ]
+
+utils::write.csv(probe_records, "benchmarks/data/genbank_memory_records.csv", row.names = FALSE)
+utils::write.csv(runs, "benchmarks/data/genbank_memory_runs.csv", row.names = FALSE)
+
+format_mib <- function(bytes) sprintf("%.2f", bytes / 1024^2)
+display <- data.frame(
+  Input = summary_table$input,
+  `File MiB` = format_mib(summary_table$file_bytes),
+  Records = summary_table$records,
+  `Largest record MiB` = format_mib(summary_table$largest_record_bytes),
+  `Output rows` = summary_table$rows,
+  `Parser capacity MiB` = format_mib(summary_table$max_heap_capacity_bytes),
+  `Median peak RSS MiB` = format_mib(summary_table$median_max_rss_kib * 1024),
+  `RSS range MiB` = sprintf(
+    "%.2f–%.2f", summary_table$min_max_rss_kib / 1024,
+    summary_table$max_max_rss_kib / 1024
+  ),
+  `DuckDB peak buffer MiB` = format_mib(summary_table$max_duckdb_buffer_bytes),
+  `DuckDB peak temp MiB` = format_mib(summary_table$max_duckdb_temp_bytes),
+  `Median seconds` = sprintf("%.3f", summary_table$median_elapsed_seconds),
+  check.names = FALSE
+)
+
+phix_capacity_equal <- summary_table$max_heap_capacity_bytes[summary_table$input == "phiX174"] ==
+  summary_table$max_heap_capacity_bytes[summary_table$input == "phiX174 x2"]
+phix_capacity_description <- if (phix_capacity_equal) "identical to" else "different from"
+phix_rss_delta_mib <- abs(diff(summary_table$median_max_rss_kib[match(
+  c("phiX174", "phiX174 x2"), summary_table$input
+)])) / 1024
+ecoli_capacity_mib <- summary_table$max_heap_capacity_bytes[
+  summary_table$input == "E. coli K-12 MG1655"
+] / 1024^2
+
+metadata <- data.frame(
+  Field = c(
+    "Source revision", "Source tree", "DuckDB CLI", "Extension", "Compiler",
+    "DuckDB threads", "Fresh processes per input", "CPU affinity", "Rendered"
+  ),
+  Value = c(
+    source_revision, source_tree, command_output(duckdb_cli, "--version"), extension,
+    system2(cc, "--version", stdout = TRUE, stderr = TRUE)[[1L]], "1", "5",
+    sub("^.*affinity list: ", "", command_output("taskset", c("-pc", Sys.getpid()))),
+    as.character(Sys.Date())
+  ),
+  check.names = FALSE
+)
+```
+
+## Environment and denominators
+
+```{r metadata, echo=FALSE}
+knitr::kable(metadata, row.names = FALSE)
+```
+
+The SQL output row counts, coordinates, and resulting feature-span sums are
+pinned by the BioPython oracle used by `make test-genbank-oracle`; the
+duplicated phiX174 file contains the same 37 emitted rows twice. The standalone
+probe compiles the same `src/genbank_core.c` feature mode and translation policy
+as the reader, consumes the same input bytes, and retains one extra internal row
+per record because the public reader intentionally omits each record-level
+`source` feature.
+
+```{r results, echo=FALSE}
+knitr::kable(display, row.names = FALSE, align = c("l", rep("r", ncol(display) - 1L)))
+```
+
+## Interpretation
+
+The duplicated phiX174 input is twice the file size and produces twice the
+rows, while its maximum retained parser capacity is `r phix_capacity_description` the single-record input.
+Its median absolute process RSS differs by `r sprintf("%.2f MiB", phix_rss_delta_mib)`.
+This factor-two probe supports the record-local ownership model; it is not evidence about arbitrarily many records.
+
+The largest measured parser capacity is `r sprintf("%.2f MiB", ecoli_capacity_mib)` for the *E. coli* record.
+Capacity increases across the single-record phiX174, lambda, and *E. coli* inputs, as expected for arrays retained at
+their high-water marks until scan cleanup.
+DuckDB's peak buffer and temporary-storage counters do not include that parser
+heap, so a buffer-manager migration cannot be justified from DuckDB accounting
+alone.
+
+These workloads do not justify an arbitrary record-size cap. The implementation
+is streaming across records, but one pathological record can still drive
+unbounded native allocation. A production limit needs either a documented
+reader budget with evidence from a broader record-size corpus or an allocation
+interface that can fail under a DuckDB-governed budget without changing
+complete-record parent resolution. The current evidence supports preserving
+the parser design while the cross-reader audit identifies a shared budget or
+managed-allocation contract.
+
+Per-record probe values and all five process runs are retained in
+[`data/genbank_memory_records.csv`](data/genbank_memory_records.csv) and
+[`data/genbank_memory_runs.csv`](data/genbank_memory_runs.csv).

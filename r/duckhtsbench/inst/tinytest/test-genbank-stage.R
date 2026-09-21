@@ -7,12 +7,28 @@ expect_equal(plan$transform, c("direct_download", "gunzip"))
 expect_equal(plan$locator[[2L]], "artifact:genbank_ecoli_k12_gbff_gz")
 expect_match(plan$locator[[1L]], "^https://ftp\\.ncbi\\.nlm\\.nih\\.gov/genomes/all/GCF/000/005/845/GCF_000005845\\.2_ASM584v2/")
 expect_true(all(grepl("benchmark_genbank_reader.Rmd", plan$consumer, fixed = TRUE)))
+expect_true(all(grepl("benchmark_genbank_memory.Rmd", plan$consumer, fixed = TRUE)))
 source_identity <- duckhtsbench:::duckhts_bench_identity_fields(plan$supplier_identity[[1L]])
 expect_true(all(c("md5", "sha256", "bytes") %in% names(source_identity)))
 derived_identity <- duckhtsbench:::duckhts_bench_identity_fields(plan$supplier_identity[[2L]])
 expect_true(all(c("sha256", "bytes", "bp") %in% names(derived_identity)))
 expect_equal(duckhts_bench_artifact_path("genbank_ecoli_k12_gbff"),
              sub("\\.gz$", "", duckhts_bench_artifact_path("genbank_ecoli_k12_gbff_gz")))
+
+memory_plan <- duckhts_bench_stage_plan("genbank-memory-scaling")
+expect_equal(memory_plan$id, c(
+  "genbank_memory_phix174", "genbank_memory_phix174_x2", "genbank_memory_lambda"
+))
+expect_true(all(memory_plan$access == "repository_fixture"))
+expect_true(all(memory_plan$transform == "copy_committed_fixture"))
+expect_true(all(grepl("^repo:test/data/", memory_plan$locator)))
+expect_true(all(memory_plan$consumer == "benchmark_genbank_memory.Rmd"))
+expect_equal(
+  unname(vapply(memory_plan$supplier_identity, function(x) {
+    duckhtsbench:::duckhts_bench_identity_fields(x)[["records"]]
+  }, character(1L))),
+  c("1", "2", "1")
+)
 
 # Network-free derivation against a synthetic archive under a private registry.
 test_genbank_derivation <- function() {

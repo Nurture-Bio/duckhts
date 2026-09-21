@@ -88,7 +88,9 @@ DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.
   Edge rules follow BioPython's GenBank scanner: an
   origin-spanning span on a circular record wraps into two segments, a between
   site `n^m` is the zero-length site at `n`, and the reader is diffed against
-  BioPython by `make test-genbank-oracle`.
+  BioPython by `make test-genbank-oracle`. The reproducible memory-scaling
+  report separates cumulative record count from largest-record growth and
+  retains fresh-process RSS, DuckDB profiler counters, and exact parser capacity.
 - Add `genbank_to_fasta()` to write each record's ORIGIN sequence as FASTA under
   the same name `read_genbank()` reports as `seqname`, so feature coordinates
   land on the contig of that name. Input is read through htslib's hFILE layer,
