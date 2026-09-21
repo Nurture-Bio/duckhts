@@ -1,5 +1,10 @@
 # DuckHTS Extension News
 
+# duckhts 1.5.2.9000
+
+- Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
+  support in the README footer, with links to upstream acknowledgements.
+
 # duckhts 1.5.2
 
 DuckHTS 1.5.2 and Rduckhts 1.5.2-0.1.5 share the same extension release.

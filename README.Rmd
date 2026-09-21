@@ -2070,3 +2070,14 @@ Use `DUCKHTS_CACHE_DIR=/path/to/cache` to relocate the complete external-data ca
 ## License
 
 MIT
+
+## Credits
+
+[![Contributors](https://contrib.rocks/image?repo=RGenomicsETL/duckhts)](https://github.com/RGenomicsETL/duckhts/graphs/contributors)
+
+The GenBank reader and FASTA converter were contributed by
+[Ryan Ward](https://github.com/ryandward) of [Nurture Bio](https://github.com/Nurture-Bio).
+
+Thanks to all [contributors](https://github.com/RGenomicsETL/duckhts/graphs/contributors).
+See the [package author credits](r/Rduckhts/DESCRIPTION) and
+[third-party notices](r/Rduckhts/inst/COPYRIGHT) for upstream acknowledgements.
