@@ -91,6 +91,35 @@ SELECT (cigar_aligned_blocks(NULL::VARCHAR, 1) IS NULL)::INTEGER,
 ----
 1	1	1	1	1	1	1	1
 
+# The running reference and query spans must fit in BIGINT as they accumulate,
+# not only at the end: a query span that wraps, or a reference accumulator that
+# wraps back to a small value, is NULL. A representable limit is still a block.
+query IIT
+SELECT (cigar_aligned_blocks('9223372036854775807I1I1M', 1) IS NULL)::INTEGER,
+       (cigar_aligned_blocks('9223372036854775807D9223372036854775807D2D1M', 1) IS NULL)::INTEGER,
+       (cigar_aligned_blocks('9223372036854775807M', 0)).width::VARCHAR;
+----
+1	1	[9223372036854775807]
+
+# Trailing digits are NULL even when their value is zero.
+query II
+SELECT (cigar_aligned_blocks('10M0', 1) IS NULL)::INTEGER,
+       (cigar_aligned_blocks('10M00', 1) IS NULL)::INTEGER;
+----
+1	1
+
+# An invalid row followed by a valid row in one chunk: the rejected row's
+# candidate writes are rewound and the next row's blocks are intact.
+query IT
+SELECT (b IS NULL)::INTEGER, (b).ref_start::VARCHAR
+FROM (SELECT cigar_aligned_blocks(c, 1) AS b, i
+      FROM (VALUES ('9223372036854775807I1I1M', 1), ('10M0', 2), ('5M2D5M', 3)) AS t(c, i)
+      ORDER BY i);
+----
+1	NULL
+1	NULL
+0	[1, 8]
+
 # pos plus the alignment's reference span must fit in BIGINT.
 query TI
 SELECT (cigar_aligned_blocks('10M', 9223372036854775797)).ref_start::VARCHAR,

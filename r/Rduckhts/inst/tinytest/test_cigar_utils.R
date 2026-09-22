@@ -83,6 +83,35 @@ test_cigar_utils <- function() {
   expect_true(isTRUE(blocks$empty_null[[1]]))
   expect_equal(blocks$clip_only_blocks[[1]], 0)
 
+  # Running spans are checked as they accumulate, trailing digits are NULL even
+  # when zero-valued, and a rejected row does not disturb the next row's blocks.
+  edge <- DBI::dbGetQuery(
+    con,
+    paste(
+      "SELECT",
+      "cigar_aligned_blocks('9223372036854775807I1I1M', 1) IS NULL AS q_wrap_null,",
+      "cigar_aligned_blocks('9223372036854775807D9223372036854775807D2D1M', 1) IS NULL AS r_wrap_null,",
+      "(cigar_aligned_blocks('9223372036854775807M', 0)).width::VARCHAR AS limit_width,",
+      "cigar_aligned_blocks('10M0', 1) IS NULL AS trailing_zero_null,",
+      "cigar_aligned_blocks('10M00', 1) IS NULL AS trailing_zeros_null"
+    )
+  )
+  expect_true(isTRUE(edge$q_wrap_null[[1]]))
+  expect_true(isTRUE(edge$r_wrap_null[[1]]))
+  expect_equal(edge$limit_width[[1]], "[9223372036854775807]")
+  expect_true(isTRUE(edge$trailing_zero_null[[1]]))
+  expect_true(isTRUE(edge$trailing_zeros_null[[1]]))
+  rollback <- DBI::dbGetQuery(
+    con,
+    paste(
+      "SELECT (b IS NULL) AS is_null, (b).ref_start::VARCHAR AS ref_start",
+      "FROM (SELECT cigar_aligned_blocks(c, 1) AS b, i",
+      "      FROM (VALUES ('10M0', 1), ('5M2D5M', 2)) AS t(c, i) ORDER BY i)"
+    )
+  )
+  expect_equal(rollback$is_null, c(TRUE, FALSE))
+  expect_equal(rollback$ref_start[[2]], "[1, 8]")
+
   # On the bundled alignments the block count equals the number of M/=/X ops.
   bam_path <- system.file("extdata", "nanopore.bam", package = "Rduckhts")
   if (nzchar(bam_path)) {

@@ -3726,7 +3726,7 @@ ref_start is pos plus the reference bases consumed before the block, so it carri
 
 ### Errors
 
-Invalid input is NULL, never an error: a NULL cigar or pos, an empty or '*' CIGAR, a zero-length op, an op beyond X (including B), trailing digits, a NULL binary element, or pos plus the reference span outside BIGINT. A valid CIGAR with no aligned op returns three empty lists. The reference end is POS + cigar_reference_length(CIGAR).
+Invalid input is NULL, never an error: a NULL cigar or pos, an empty or '*' CIGAR, a zero-length op, an op beyond X (including B), trailing digits, a NULL binary element, a consumed reference or query span outside BIGINT, or pos plus the reference span outside BIGINT. A valid CIGAR with no aligned op returns three empty lists. The reference end is POS + cigar_reference_length(CIGAR).
 
 ### Examples
 

@@ -1285,22 +1285,26 @@ static void cigar_block_sink_publish(duckdb_function_info info, cigar_block_sink
 /* Consume one op. The candidate block is written at the cursor unconditionally
    and the cursor advances only for an aligned op, so the loop carries no
    data-dependent branch; a rejected row rewinds the cursor. Returns nonzero
-   for an invalid op: a code beyond X, a zero length, or a length outside
-   BIGINT (reachable only from text). */
+   for an invalid code, zero length, or length/consumed span outside BIGINT. */
 static inline uint32_t cigar_block_op(cigar_block_sink_t *sink, uint32_t op, uint64_t len, uint64_t pos,
                                       uint64_t *ref_off, uint64_t *query_off) {
     uint32_t type = (uint32_t)bam_cigar_type(op & BAM_CIGAR_MASK);
     uint64_t consumes_ref = (uint64_t)0 - (uint64_t)((type >> 1) & 1u);
     uint64_t consumes_query = (uint64_t)0 - (uint64_t)(type & 1u);
+    uint64_t ref_step = len & consumes_ref;
+    uint64_t query_step = len & consumes_query;
+    uint32_t bad = (uint32_t)((op > BAM_CDIFF) | (len == 0) | (len > (uint64_t)INT64_MAX) |
+                              (*ref_off > (uint64_t)INT64_MAX - ref_step) |
+                              (*query_off > (uint64_t)INT64_MAX - query_step));
     idx_t n = sink->n;
 
     sink->value[CIGAR_BLOCK_REF_START][n] = (int64_t)(pos + *ref_off);
     sink->value[CIGAR_BLOCK_QUERY_START][n] = (int64_t)*query_off;
     sink->value[CIGAR_BLOCK_WIDTH][n] = (int64_t)len;
     sink->n = n + (idx_t)(type == 3u);
-    *ref_off += len & consumes_ref;
-    *query_off += len & consumes_query;
-    return (uint32_t)((op > BAM_CDIFF) | (len == 0) | (len > (uint64_t)INT64_MAX));
+    *ref_off += ref_step;
+    *query_off += query_step;
+    return bad;
 }
 
 /* pos plus the alignment's reference span must fit in BIGINT. */
@@ -1363,7 +1367,8 @@ static void cigar_aligned_blocks_scalar(duckdb_function_info info, duckdb_data_c
             len = 0;
             saw_op = 1;
         }
-        bad |= (uint32_t)(len != 0) | (uint32_t)(saw_op == 0);
+        bad |= (uint32_t)(saw_op == 0) |
+               (uint32_t)(cigar_len > 0 && isdigit((unsigned char)cigar[cigar_len - 1]));
         if (bad || !cigar_block_row_fits(pos, ref_off)) {
             sink.n = start;
             cigar_block_sink_null_row(&sink, output, row);
