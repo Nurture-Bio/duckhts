@@ -2,6 +2,11 @@
 
 - Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
   support in the package README footer, with links to upstream acknowledgements.
+- Add `cigar_aligned_blocks(cigar, pos)`: Extracts contiguous aligned segments
+  (M, =, X) from a CIGAR string or binary array into a STRUCT of parallel
+  lists (`ref_start`, `query_start`, `width`). Use it to convert alignments
+  into genomic intervals for coverage, junction, and range overlap analysis
+  without custom SQL loops.
 
 # Rduckhts 1.5.2-0.1.5
 

@@ -3704,6 +3704,40 @@ BOOLEAN
 SELECT cigar_has_op('5S90M5S', 'S');
 ```
 
+## cigar_aligned_blocks
+
+Return the aligned blocks of a CIGAR as a struct of three parallel BIGINT lists: ref_start, query_start and width, one entry per M, = or X op in CIGAR order. Overloaded to also accept a UINTEGER[] binary CIGAR (as produced by read_bam(cigar_representation := 'binary')); the binary overload is bit-identical to the text path.
+
+Signature:
+
+```sql
+cigar_aligned_blocks(cigar, pos)
+```
+
+Returns:
+
+```
+STRUCT
+```
+
+### Coordinates
+
+ref_start is pos plus the reference bases consumed before the block, so it carries whatever base pos uses; pass read_bam's 1-based POS for 1-based starts or 0 for offsets from the alignment start. query_start is the 0-based offset into the stored SEQ: soft clips count, hard clips do not. width is the op length. D and N advance the reference and split blocks, I advances the query and splits blocks, H and P consume nothing. Blocks are never merged, as in pysam get_blocks() and GenomicAlignments cigarRangesAlongReferenceSpace over M, = and X.
+
+### Errors
+
+Invalid input is NULL, never an error: a NULL cigar or pos, an empty or '*' CIGAR, a zero-length op, an op beyond X (including B), trailing digits, a NULL binary element, or pos plus the reference span outside BIGINT. A valid CIGAR with no aligned op returns three empty lists. The reference end is POS + cigar_reference_length(CIGAR).
+
+### Examples
+
+```sql
+SELECT (cigar_aligned_blocks('5S90M5S', 100)).ref_start;
+```
+
+```sql
+SELECT UNNEST((b).ref_start) AS ref_start, UNNEST((b).width) AS width FROM (SELECT cigar_aligned_blocks(CIGAR, POS) AS b FROM read_bam('reads.bam', cigar_representation := 'binary'));
+```
+
 ## is_paired
 
 Test whether the SAM flag indicates that the template has multiple segments in sequencing (`0x1`).

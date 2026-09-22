@@ -55,6 +55,50 @@ test_cigar_utils <- function() {
   expect_true(isTRUE(bin_metrics$hop_eq[[1]]))
   expect_true(isTRUE(bin_metrics$empty_null[[1]]))
 
+  # cigar_aligned_blocks: one block per M/=/X op; ref_start carries pos's base,
+  # query_start is the 0-based offset into the stored SEQ. Binary overload is
+  # bit-identical; invalid input is NULL, a CIGAR with no aligned op is empty lists.
+  blocks <- DBI::dbGetQuery(
+    con,
+    paste(
+      "SELECT",
+      "(cigar_aligned_blocks('5S90M5S', 100)).ref_start::VARCHAR AS ref_start,",
+      "(cigar_aligned_blocks('5S90M5S', 100)).query_start::VARCHAR AS query_start,",
+      "(cigar_aligned_blocks('5S90M5S', 100)).width::VARCHAR AS width,",
+      "(cigar_aligned_blocks('10M2I10M', 1)).ref_start::VARCHAR AS ins_ref,",
+      "(cigar_aligned_blocks('10M2I10M', 1)).query_start::VARCHAR AS ins_query,",
+      "cigar_aligned_blocks([84, 1440, 84]::UINTEGER[], 100) = cigar_aligned_blocks('5S90M5S', 100) AS bin_eq,",
+      "cigar_aligned_blocks('*', 1) IS NULL AS star_null,",
+      "cigar_aligned_blocks([]::UINTEGER[], 1) IS NULL AS empty_null,",
+      "len((cigar_aligned_blocks('5S', 1)).width) AS clip_only_blocks"
+    )
+  )
+  expect_equal(blocks$ref_start[[1]], "[100]")
+  expect_equal(blocks$query_start[[1]], "[5]")
+  expect_equal(blocks$width[[1]], "[90]")
+  expect_equal(blocks$ins_ref[[1]], "[1, 11]")
+  expect_equal(blocks$ins_query[[1]], "[0, 12]")
+  expect_true(isTRUE(blocks$bin_eq[[1]]))
+  expect_true(isTRUE(blocks$star_null[[1]]))
+  expect_true(isTRUE(blocks$empty_null[[1]]))
+  expect_equal(blocks$clip_only_blocks[[1]], 0)
+
+  # On the bundled alignments the block count equals the number of M/=/X ops.
+  bam_path <- system.file("extdata", "nanopore.bam", package = "Rduckhts")
+  if (nzchar(bam_path)) {
+    block_counts <- DBI::dbGetQuery(
+      con,
+      paste0(
+        "SELECT count(*) AS reads, ",
+        "count(*) FILTER (WHERE len((cigar_aligned_blocks(CIGAR, POS)).width) = ",
+        "len(list_filter(CIGAR, lambda c: (c & 15) IN (0, 7, 8)))) AS agree ",
+        "FROM read_bam(", as.character(DBI::dbQuoteString(con, bam_path)),
+        ", cigar_representation := 'binary')"
+      )
+    )
+    expect_equal(block_counts$agree[[1]], block_counts$reads[[1]])
+  }
+
   # seq_hash_2bit nt16 overload (UTINYINT[]) is bit-identical; non-ACGT -> NULL
   hash_nt16 <- DBI::dbGetQuery(
     con,
