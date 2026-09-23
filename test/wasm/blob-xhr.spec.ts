@@ -6,7 +6,28 @@ test("worker synchronous XHR blob transport", async ({ page, browser }) => {
   await page.goto("/scripts/duckdb-wasm-local-test.html");
   const measured = await page.evaluate(async () => {
     function probeWorker() {
-      self.onmessage = ({ data: url }) => {
+      // Revocation reaches other threads asynchronously, so a request issued
+      // right after revokeObjectURL() on the page may still succeed. Before the
+      // revoked probe, wait (bounded) until a ranged GET is refused.
+      const refused = (url) => {
+        const xhr = new XMLHttpRequest();
+        try {
+          xhr.open("GET", url, false);
+          xhr.setRequestHeader("Range", "bytes=0-0");
+          xhr.send();
+          return false;
+        } catch (e) {
+          return true;
+        }
+      };
+      self.onmessage = async ({ data: { url, awaitRevocation } }) => {
+        if (awaitRevocation) {
+          let attempts = 0;
+          while (!refused(url) && attempts < 200) {
+            attempts += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
         const results = [];
         for (const [method, range] of [
           ["HEAD", null],
@@ -38,15 +59,15 @@ test("worker synchronous XHR blob transport", async ({ page, browser }) => {
     const workerUrl = URL.createObjectURL(new Blob([`(${probeWorker.toString()})()`]));
     const worker = new Worker(workerUrl);
     const url = URL.createObjectURL(new File([Uint8Array.from({ length: 16 }, (_, i) => i)], "probe.bin"));
-    const request = () => new Promise((resolve, reject) => {
+    const request = (awaitRevocation) => new Promise((resolve, reject) => {
       worker.onmessage = ({ data }) => resolve(data);
       worker.onerror = reject;
-      worker.postMessage(url);
+      worker.postMessage({ url, awaitRevocation });
     });
     try {
-      const live = await request();
+      const live = await request(false);
       URL.revokeObjectURL(url);
-      const revoked = await request();
+      const revoked = await request(true);
       return { live, revoked };
     } finally {
       worker.terminate();
