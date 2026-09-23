@@ -1,5 +1,18 @@
 # DuckHTS Extension News
 
+# duckhts 1.5.2.9001
+
+- Validate complete text and packed CIGARs with shared checked decoding and
+  consumed-span arithmetic. Metrics and presence checks return NULL for malformed
+  suffixes or lengths/spans outside BIGINT, including invalid suffixes after an
+  operator match. Unsupported requested operators return NULL in both forms.
+  Requested-operator case folding is ASCII and locale-independent.
+- Add an optional final `strict` BOOLEAN to the CIGAR metrics, operator test and
+  aligned-block functions. Its default is FALSE; TRUE raises an error for invalid
+  input under the same checked grammar. Diagnostics identify the function and
+  1-based packed-op index or text operation-start byte where available. SQL NULL
+  arguments and no-CIGAR sentinels retain their per-function outcomes.
+
 # duckhts 1.5.2.9000
 
 - Keep Somalier CHARR count-error diagnostics consistent between the public SQL

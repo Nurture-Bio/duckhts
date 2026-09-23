@@ -75,8 +75,8 @@ SELECT typeof(cigar_aligned_blocks('10M', 1));
 STRUCT(ref_start BIGINT[], query_start BIGINT[], width BIGINT[])
 
 # ---------------------------------------------------------------------------
-# Invalid input is NULL, never an error: the family's contract. NULL cigar or
-# pos, '*', empty, a zero-length op, trailing digits, a bare op, or the B op.
+# With strict omitted, invalid input is NULL. NULL cigar or pos, '*', empty,
+# a zero-length op, trailing digits, a bare op, or the B op.
 # ---------------------------------------------------------------------------
 
 query IIIIIIII
@@ -198,6 +198,8 @@ SELECT count(*)
 FROM (
   SELECT
     cigar_aligned_blocks(CIGAR, POS) AS b,
+    cigar_aligned_blocks(CIGAR, POS, FALSE) AS loose_b,
+    cigar_aligned_blocks(CIGAR, POS, TRUE) AS strict_b,
     list_transform(list_filter(list_transform(CIGAR, lambda c, i:
         {'kind': c & 15,
          'ref': POS + COALESCE(list_sum(list_transform(list_slice(CIGAR, 1, i - 1),
@@ -219,6 +221,12 @@ FROM (
 )
 WHERE (b).ref_start IS DISTINCT FROM ref_start
    OR (b).query_start IS DISTINCT FROM query_start
-   OR (b).width IS DISTINCT FROM width;
+   OR (b).width IS DISTINCT FROM width
+   OR (loose_b).ref_start IS DISTINCT FROM ref_start
+   OR (loose_b).query_start IS DISTINCT FROM query_start
+   OR (loose_b).width IS DISTINCT FROM width
+   OR (strict_b).ref_start IS DISTINCT FROM ref_start
+   OR (strict_b).query_start IS DISTINCT FROM query_start
+   OR (strict_b).width IS DISTINCT FROM width;
 ----
 0

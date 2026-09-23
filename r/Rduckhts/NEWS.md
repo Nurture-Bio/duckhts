@@ -1,3 +1,16 @@
+# Rduckhts 1.5.2.9001-0.1.5
+
+- The bundled extension validates complete text and packed CIGARs with checked
+  lengths and consumed spans. CIGAR metrics and presence checks return NULL for
+  malformed suffixes or arithmetic outside BIGINT, including a bad suffix after
+  a matching operator. Unsupported requested operators return NULL in both forms.
+  Requested-operator case folding is ASCII and locale-independent.
+- The bundled CIGAR SQL functions accept an optional final `strict` BOOLEAN.
+  FALSE is the default; TRUE raises an error for invalid input under the same
+  checked grammar. Errors name the function and the 1-based packed-op index or
+  text operation-start byte where available. SQL NULL arguments and no-CIGAR
+  sentinels retain their per-function outcomes.
+
 # Rduckhts 1.5.2.9000-0.1.5
 
 - The bundled extension reports consistent Somalier CHARR count errors whether
