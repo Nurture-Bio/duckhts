@@ -2,6 +2,12 @@
 
 # duckhts 1.5.2.9000
 
+- License the `duckhts` npm package as GPL-2.0-or-later and ship `js/LICENSE` (GPL-2
+  text) and `js/THIRD_PARTY_NOTICES.md` in its tarball. The notices reproduce the
+  licences of everything linked into the wasm binaries (HTSlib, htscodecs, libBigWig,
+  cgranges, VariantKey, zlib, bzip2, liblzma), taken from the wasm build's link inputs.
+  Reported by Codex review on https://github.com/RGenomicsETL/duckhts/pull/248.
+
 - Make the wasm HTTP policy reachable in duckdb-wasm and exempt `blob:` URLs from
   its host allowlist. duckdb-wasm keeps its Emscripten `Module` private, so
   `Module.duckhtsWasmHttpConfig` could only be set in webR; the extension now also

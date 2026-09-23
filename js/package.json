@@ -3,7 +3,7 @@
   "version": "1.5.2",
   "description": "DuckHTS DuckDB extension for duckdb-wasm: read HTS formats (BAM, CRAM, VCF, BCF, FASTA, FASTQ, GFF, GTF, BED, GenBank, bigWig, tabix) with SQL in the browser",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "author": "Sounkou Mahamane Toure",
   "homepage": "https://github.com/RGenomicsETL/duckhts/tree/main/js#readme",
   "bugs": "https://github.com/RGenomicsETL/duckhts/issues",
@@ -34,7 +34,9 @@
   "files": [
     "src",
     "dist",
-    "artifacts.json"
+    "artifacts.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "stage": "node scripts/stage.mjs",

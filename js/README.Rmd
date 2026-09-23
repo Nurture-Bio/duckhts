@@ -108,3 +108,10 @@ from the repository root. Local-extension blob tests run through `make wasm-play
 
 To move to a new DuckHTS release, update `artifacts.json` (the version, the community
 DuckDB path and the three sha256 values) and the `version` in `package.json`.
+
+## Licence
+
+GPL-2.0-or-later: the GNU General Public License, version 2 or (at your option) any
+later version. See [`LICENSE`](LICENSE). The wasm binaries also contain HTSlib,
+htscodecs, libBigWig, cgranges, VariantKey, zlib, bzip2 and liblzma under their own
+licences, reproduced in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
