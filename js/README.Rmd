@@ -12,7 +12,7 @@ checked against the sha256 values in `artifacts.json`. Loading them does not req
 ## Use
 
 ```sh
-npm install duckhts @duckdb/duckdb-wasm
+npm install duckhts @duckdb/duckdb-wasm@1.33.1-dev57.0
 ```
 
 Serve `node_modules/duckhts/dist/` with the rest of your static files (for example by
@@ -35,6 +35,10 @@ const peaks = await conn.query(
 [function catalog](https://github.com/RGenomicsETL/duckhts/blob/main/r/Rduckhts/inst/function_catalog/functions.md).
 
 ## Runtime support
+
+The peer range is `1.33.1-dev57.0 || >=1.33.1`: the one tested prerelease, or any stable
+release from 1.33.1. npm compares prerelease tags as text (`dev6` sorts after `dev57`),
+so a `>=` floor on a prerelease would admit older builds.
 
 | duckdb-wasm | DuckDB | Status |
 |---|---|---|

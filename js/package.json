@@ -45,7 +45,7 @@
     "test:browser": "node scripts/stage.mjs && playwright test --config test/browser/playwright.config.mjs"
   },
   "peerDependencies": {
-    "@duckdb/duckdb-wasm": ">=1.33.1-dev57.0"
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0 || >=1.33.1"
   },
   "peerDependenciesMeta": {
     "@duckdb/duckdb-wasm": {

@@ -2,6 +2,12 @@
 
 # duckhts 1.5.2.9000
 
+- npm package: pin the documented install to `@duckdb/duckdb-wasm@1.33.1-dev57.0` (a bare
+  install gets stable 1.32.0, which cannot load this extension, #247), and declare the
+  peer range as `1.33.1-dev57.0 || >=1.33.1`, since npm compares prerelease tags as text
+  and a `>=` prerelease floor admitted older builds such as `dev6`. Reported by Codex
+  review on https://github.com/RGenomicsETL/duckhts/pull/248.
+
 - Read an empty `blob:` File as an empty input, as native htslib reads a zero-byte
   file (`read_bed` / `read_gff` return zero rows). Chromium rejects every Range request
   on an empty Blob with the same `NetworkError` as a revoked URL, so after a failed
