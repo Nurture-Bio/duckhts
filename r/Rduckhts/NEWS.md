@@ -1,5 +1,8 @@
 # Rduckhts 1.5.2.9000-0.1.5
 
+- In webR, an empty `blob:` File reads as an empty input (zero rows), matching a
+  zero-byte file natively, instead of failing to open.
+
 - In webR, `blob:` URLs are exempt from `Module.duckhtsWasmHttpConfig`'s
   `enforceHostAllowlist`: they have no hostname and make no network request, so
   no `allowHosts` entry could authorise them before.

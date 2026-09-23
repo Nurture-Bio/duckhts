@@ -510,6 +510,50 @@ static const struct hFILE_backend wasm_http_backend = {
 };
 
 /* -------------------------------------------------------------------------
+ * wasm_blob_is_empty -- whether a blob: URL names an empty Blob.
+ *
+ * Chromium rejects every Range request on an empty Blob (the range starts at
+ * EOF) with the same NetworkError as a revoked URL, so the open-time peek
+ * cannot tell them apart.  A plain GET can: an empty Blob answers 200 with no
+ * bytes, while a revoked or unknown URL throws.  Only reached after a failed
+ * peek, so a non-empty Blob is never downloaded whole here.
+ * ---------------------------------------------------------------------- */
+static int wasm_blob_is_empty(const char *url)
+{
+    return EM_ASM_INT({
+        var xhr = new XMLHttpRequest();
+        try {
+            xhr.open("GET", UTF8ToString($0), false);
+            xhr.responseType = "arraybuffer";
+            xhr.send(null);
+        } catch (e) {
+            return 0;
+        }
+        return (xhr.status === 200 && xhr.response && xhr.response.byteLength === 0) ? 1 : 0;
+    }, url);
+}
+
+/* Allocate a read-only handle for url; known_size is -1 when not yet known. */
+static hFILE_wasm_http *wasm_http_new(const char *url, const char *mode, off_t known_size)
+{
+    hFILE_wasm_http *fp = (hFILE_wasm_http *)hfile_init(sizeof(hFILE_wasm_http), mode, 0);
+    if (fp == NULL) return NULL;
+
+    fp->url = strdup(url);
+    if (fp->url == NULL) {
+        hfile_destroy(&fp->base);
+        errno = ENOMEM;
+        return NULL;
+    }
+    fp->http_offset = 0;
+    fp->file_size   = known_size;
+    fp->warned_no_range = 0;
+    fp->warned_large_full_download = 0;
+    fp->base.backend = &wasm_http_backend;
+    return fp;
+}
+
+/* -------------------------------------------------------------------------
  * Scheme handler open(): allocate hFILE_wasm_http and initialise it.
  * ---------------------------------------------------------------------- */
 static hFILE *wasm_http_open(const char *url, const char *mode)
@@ -523,27 +567,25 @@ static hFILE *wasm_http_open(const char *url, const char *mode)
         return NULL;
     }
 
-    fp = (hFILE_wasm_http *)hfile_init(sizeof(hFILE_wasm_http), mode, 0);
+    fp = wasm_http_new(url, mode, -1);
     if (fp == NULL) return NULL;
 
-    fp->url = strdup(url);
-    if (fp->url == NULL) {
-        hfile_destroy(&fp->base);
-        errno = ENOMEM;
-        return NULL;
-    }
-    fp->http_offset = 0;
-    fp->file_size   = -1;
-    fp->warned_no_range = 0;
-    fp->warned_large_full_download = 0;
-    fp->base.backend = &wasm_http_backend;
     /* A missing blob must fail at open, not during index format detection.
-     * hpeek retains the bytes in hFILE's bounded buffer for the first read. */
+     * hpeek retains the bytes in hFILE's bounded buffer for the first read.
+     * An empty Blob also fails the peek; it is a valid empty input (native
+     * htslib reads a zero-byte file as empty), so reopen it with size 0,
+     * which makes every read return EOF without a request. */
     if (strncmp(url, "blob:", 5) == 0) {
         char probe;
         if (hpeek(&fp->base, &probe, 1) < 0) {
+            int saved_errno = errno;
             hclose_abruptly(&fp->base);
-            return NULL;
+            if (!wasm_blob_is_empty(url)) {
+                errno = saved_errno;
+                return NULL;
+            }
+            fp = wasm_http_new(url, mode, 0);
+            if (fp == NULL) return NULL;
         }
     }
     return &fp->base;

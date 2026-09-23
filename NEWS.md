@@ -2,6 +2,14 @@
 
 # duckhts 1.5.2.9000
 
+- Read an empty `blob:` File as an empty input, as native htslib reads a zero-byte
+  file (`read_bed` / `read_gff` return zero rows). Chromium rejects every Range request
+  on an empty Blob with the same `NetworkError` as a revoked URL, so after a failed
+  open-time peek a plain `GET` now tells them apart: 200 with no bytes means empty.
+  Browser test: an empty File gives zero rows from both readers; without the fallback
+  it fails to open (negative control). Reported by Codex review on
+  https://github.com/RGenomicsETL/duckhts/pull/248.
+
 - License the `duckhts` npm package as GPL-2.0-or-later and ship `js/LICENSE` (GPL-2
   text) and `js/THIRD_PARTY_NOTICES.md` in its tarball. The notices reproduce the
   licences of everything linked into the wasm binaries (HTSlib, htscodecs, libBigWig,

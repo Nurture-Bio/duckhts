@@ -60,6 +60,9 @@ for (const ignoreRange of [false, true]) {
         index: localFileUrl(new File([new Uint8Array(index)], "dropped.vcf.gz.tbi")),
         // Exceed hFILE's read buffer to exercise repeated ranges and cached EOF.
         large: localFileUrl(new File([bed.repeat(2048)], "large.bed")),
+        // Codex review of 8d0fd3d: an empty File is a valid empty input, as a
+        // zero-byte file is natively, not a missing one.
+        empty: localFileUrl(new File([], "empty.bed")),
       };
       let conn;
       try {
@@ -90,6 +93,8 @@ for (const ignoreRange of [false, true]) {
         const streamed = await rows(vcfSql(""));
         const indexed = await rows(vcfSql(`, index_path := '${local.index.url}', region := 'chr1:12-18'`));
         const large = await rows(bedSql(local.large.url));
+        const emptyBed = await rows(bedSql(local.empty.url));
+        const emptyGff = await rows(`SELECT seqname FROM read_gff('${local.empty.url}')`);
         console.log("blob-tests: expected errors follow");
         const missingIndex = await error(vcfSql(", region := 'chr1:12-18'"));
         local.index.revoke();
@@ -108,7 +113,7 @@ for (const ignoreRange of [false, true]) {
           registered.push(await error(bedSql(`registered-${name}.bed`)));
         }
         const alive = await rows("SELECT 42 AS answer");
-        return { bedResult, gffResult, streamed, indexed, large,
+        return { bedResult, gffResult, streamed, indexed, large, emptyBed, emptyGff,
           missingIndex, revokedIndex, revoked, unknown, registered, alive };
       } finally {
         if (conn) await conn.close();
@@ -124,6 +129,8 @@ for (const ignoreRange of [false, true]) {
     expect(result.streamed).toEqual(records.map(({ row }) => row));
     expect(result.indexed).toEqual(expectedRegion.map(({ row }) => row));
     expect(result.large).toEqual(Array.from({ length: 2048 }, () => bedRows).flat());
+    expect(result.emptyBed).toEqual([]);
+    expect(result.emptyGff).toEqual([]);
     const readMarker = browserLogs.indexOf("blob-tests: reads begin");
     const errorMarker = browserLogs.indexOf("blob-tests: expected errors follow");
     expect(readMarker).toBeGreaterThanOrEqual(0);
