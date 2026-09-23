@@ -15,13 +15,14 @@
 #' @param fetch Whether to download a missing or invalid source.
 #' @param threads Aligner, sort and index threads.
 #' @param minimap2 Path to `minimap2`.
-#' @param samtools Path to `samtools`.
+#' @param samtools Path to `samtools`. By default, use the executable on `PATH`,
+#'   falling back to the optional RBCFTools package's bundled executable.
 #' @return Named cache paths `reference` (FASTA), `reads` (FASTQ archive) and
 #'   `bam` (the input).
 #' @export
 duckhts_bench_stage_ont_ecoli <- function(fetch = TRUE, threads = 8L,
                                           minimap2 = Sys.which("minimap2"),
-                                          samtools = Sys.which("samtools")) {
+                                          samtools = duckhts_bench_samtools()) {
   ids <- c("ont_ecoli_k12_reference_fna_gz", "ont_ecoli_k12_reference_fna",
            "ont_ecoli_k12_reads_fastq_gz", "ont_ecoli_k12_bam")
   plan <- duckhts_bench_stage_plan("ont-ecoli-k12")
@@ -96,4 +97,14 @@ duckhts_bench_stage_ont_ecoli <- function(fetch = TRUE, threads = 8L,
   )
   utils::write.table(fields, receipt, sep = "\t", row.names = FALSE, quote = FALSE)
   invisible(paths[c("reference", "reads", "bam")])
+}
+
+# Resolve the executable once for staging and its dependency checks.
+duckhts_bench_samtools <- function() {
+  samtools <- Sys.which("samtools")
+  if (!nzchar(samtools) && requireNamespace("RBCFTools", quietly = TRUE) &&
+      package_version(getNamespaceVersion("RBCFTools")) >= "1.24-1.1.0") {
+    samtools <- RBCFTools::samtools_path()
+  }
+  unname(samtools)
 }

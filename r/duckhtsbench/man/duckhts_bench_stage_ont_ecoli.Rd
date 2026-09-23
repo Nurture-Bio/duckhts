@@ -8,7 +8,7 @@ duckhts_bench_stage_ont_ecoli(
   fetch = TRUE,
   threads = 8L,
   minimap2 = Sys.which("minimap2"),
-  samtools = Sys.which("samtools")
+  samtools = duckhts_bench_samtools()
 )
 }
 \arguments{
@@ -18,7 +18,8 @@ duckhts_bench_stage_ont_ecoli(
 
 \item{minimap2}{Path to \code{minimap2}.}
 
-\item{samtools}{Path to \code{samtools}.}
+\item{samtools}{Path to \code{samtools}. By default, use the executable on \code{PATH},
+falling back to the optional RBCFTools package's bundled executable.}
 }
 \value{
 Named cache paths \code{reference} (FASTA), \code{reads} (FASTQ archive) and

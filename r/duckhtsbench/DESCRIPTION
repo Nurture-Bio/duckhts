@@ -15,6 +15,8 @@ Suggests:
     duckdb,
     jsonlite,
     optparse,
+    RBCFTools (>= 1.24-1.1.0),
     tinytest
+Additional_repositories: https://rgenomicsetl.r-universe.dev
 Roxygen: list(markdown = TRUE)
 Config/roxygen2/version: 8.0.0

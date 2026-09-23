@@ -23,13 +23,27 @@ expect_equal(duckhts_bench_artifact_path("ont_ecoli_k12_reference_fna"),
 
 # Network-free derivation against synthetic sources under a private registry.
 test_ont_ecoli_derivation <- function() {
-  previous <- Sys.getenv(c("DUCKHTSBENCH_REGISTRY", "DUCKHTS_CACHE_DIR"), unset = NA_character_)
+  previous <- Sys.getenv(c("DUCKHTSBENCH_REGISTRY", "DUCKHTS_CACHE_DIR", "PATH"),
+                         unset = NA_character_)
   on.exit(for (name in names(previous)) {
     if (is.na(previous[[name]])) Sys.unsetenv(name) else do.call(Sys.setenv, as.list(previous[name]))
   })
   directory <- tempfile("ont-ecoli-stage-")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+
+  path_samtools <- unname(Sys.which("samtools"))
+  if (nzchar(path_samtools)) {
+    expect_identical(duckhtsbench:::duckhts_bench_samtools(), path_samtools)
+  }
+  bundled_samtools <- ""
+  if (requireNamespace("RBCFTools", quietly = TRUE) &&
+      package_version(getNamespaceVersion("RBCFTools")) >= "1.24-1.1.0") {
+    bundled_samtools <- RBCFTools::samtools_path()
+  }
+  Sys.setenv(PATH = directory)
+  expect_identical(duckhtsbench:::duckhts_bench_samtools(), bundled_samtools)
+  Sys.setenv(PATH = previous[["PATH"]])
 
   gzip_copy <- function(source, destination) {
     handle <- gzfile(destination, open = "wb")
@@ -61,20 +75,26 @@ test_ont_ecoli_derivation <- function() {
   utils::write.table(registry, registry_path, sep = "\t", row.names = FALSE, quote = FALSE)
   Sys.setenv(DUCKHTSBENCH_REGISTRY = registry_path, DUCKHTS_CACHE_DIR = file.path(directory, "cache"))
 
+  samtools <- duckhtsbench:::duckhts_bench_samtools()
+  minimap2 <- unname(Sys.which("minimap2"))
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = ""),
+               "samtools is required")
+  if (!nzchar(samtools)) return(invisible(NULL))
+
   # Nothing cached yet: rendering must not download.
-  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE), "not staged")
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools), "not staged")
 
   for (id in c("ont_ecoli_k12_reference_fna_gz", "ont_ecoli_k12_reads_fastq_gz")) {
     path <- duckhts_bench_artifact_path(id)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     stopifnot(file.copy(if (id == "ont_ecoli_k12_reference_fna_gz") reference_gz else reads_gz, path))
   }
-  if (!nzchar(Sys.which("minimap2")) || !nzchar(Sys.which("samtools"))) {
-    expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE), "required")
-    return(invisible(NULL))
-  }
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools, minimap2 = ""),
+               "minimap2 is required")
+  if (!nzchar(minimap2)) return(invisible(NULL))
 
-  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L)
+  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L,
+                                       samtools = samtools, minimap2 = minimap2)
   expect_equal(names(paths), c("reference", "reads", "bam"))
   expect_equal(unname(tools::md5sum(paths[["reference"]])), unname(tools::md5sum(reference)))
   expect_true(file.exists(paste0(paths[["bam"]], ".bai")))
@@ -83,19 +103,21 @@ test_ont_ecoli_derivation <- function() {
   fields <- utils::read.delim(receipt, colClasses = "character")
   expect_true(all(c("aligner", "aligner_preset", "sorter") %in% fields$field))
   expect_equal(fields$value[fields$field == "aligner_preset"], "map-ont")
-  aligned <- system2(Sys.which("samtools"), c("view", "-c", "-F", "4", shQuote(paths[["bam"]])), stdout = TRUE)
+  aligned <- system2(samtools, c("view", "-c", "-F", "4", shQuote(paths[["bam"]])), stdout = TRUE)
   expect_equal(as.integer(aligned), length(starts))
   expect_false(any(grepl("partial", list.files(dirname(paths[["bam"]])))))
 
   # A poisoned BAM fails quickcheck and is rebuilt from the verified sources.
   writeLines("poisoned", paths[["bam"]])
-  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L)
-  aligned <- system2(Sys.which("samtools"), c("view", "-c", "-F", "4", shQuote(paths[["bam"]])), stdout = TRUE)
+  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L,
+                                       samtools = samtools, minimap2 = minimap2)
+  aligned <- system2(samtools, c("view", "-c", "-F", "4", shQuote(paths[["bam"]])), stdout = TRUE)
   expect_equal(as.integer(aligned), length(starts))
 
   # A source that no longer matches its registered identity is refused.
   writeLines("not the archive", duckhts_bench_artifact_path("ont_ecoli_k12_reads_fastq_gz"))
-  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE), "identity does not match")
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools),
+               "identity does not match")
 }
 
 test_ont_ecoli_derivation()

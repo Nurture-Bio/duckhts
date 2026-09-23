@@ -1,5 +1,8 @@
 # duckhtsbench 0.0.0.9000
 
+- resolve samtools for ONT staging from PATH or the optional RBCFTools package,
+  and test missing executables before checking uncached sources
+
 - register the `ont-ecoli-k12` workload: the NCBI RefSeq E. coli K-12 MG1655
   assembly FASTA pinned by NCBI's published MD5 with its uncompressed form as
   a derived artifact, ENA run `ERR14686255` (25,950 MinION reads, PRJEB86481)

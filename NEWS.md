@@ -2,6 +2,9 @@
 
 # duckhts 1.5.2.9000
 
+- Let ONT benchmark staging use samtools bundled by the optional RBCFTools
+  package when it is absent from PATH, and cover unavailable tools in staging tests.
+
 - Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
   support in the README footer, with links to upstream acknowledgements.
 - Add `cigar_aligned_blocks(cigar, pos)`: Extracts contiguous aligned segments
