@@ -123,11 +123,12 @@ knitr::kable(data.frame(
   Property = properties,
   Baseline = vapply(properties, function(x) meta("baseline", x), character(1)),
   Candidate = vapply(properties, function(x) meta("candidate", x), character(1))
-))
+), row.names = FALSE)
 properties <- c("ont_artifact", "ont_sha256", "ont_release", "ont_sources", "ont_transform",
                 "ont_aligner", "ont_sorter", "synthetic_rows", "synthetic_cycles", "riker")
 knitr::kable(data.frame(Property = properties,
-                       Value = vapply(properties, function(x) meta("baseline", x), character(1))))
+                       Value = vapply(properties, function(x) meta("baseline", x), character(1))),
+             row.names = FALSE)
 knitr::kable(baseline_inputs)
 ```
 

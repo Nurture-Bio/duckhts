@@ -1,5 +1,8 @@
 # duckhtsbench 0.0.0.9000
 
+- identify both aligned-block and CIGAR-validation benchmarks as consumers of
+  the registered ONT inputs
+
 - resolve samtools for ONT staging from PATH or the optional RBCFTools package,
   and test missing executables before checking uncached sources
 

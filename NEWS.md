@@ -13,6 +13,9 @@
   input under the same checked grammar. Diagnostics identify the function and
   1-based packed-op index or text operation-start byte where available. SQL NULL
   arguments and no-CIGAR sentinels retain their per-function outcomes.
+- Measure checked CIGAR projection costs on matched ONT and synthetic long-CIGAR
+  inputs in `benchmarks/benchmark_cigar_validation.md`, including all strict modes,
+  retained output denominators, and the cost of full-input operator checks.
 
 # duckhts 1.5.2.9000
 
