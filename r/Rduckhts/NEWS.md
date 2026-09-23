@@ -1,5 +1,9 @@
 # Rduckhts 1.5.2.9000-0.1.5
 
+- In webR, `blob:` URLs are exempt from `Module.duckhtsWasmHttpConfig`'s
+  `enforceHostAllowlist`: they have no hostname and make no network request, so
+  no `allowHosts` entry could authorise them before.
+
 - The bundled Emscripten extension accepts read-only `blob:` URLs in webR. A
   browser File can be exposed as an object URL, with a separate `index_path` URL
   for region queries; callers must retain both URLs until queries finish.

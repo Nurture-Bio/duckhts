@@ -137,3 +137,62 @@ for (const ignoreRange of [false, true]) {
     expect(result.alive).toEqual([{ answer: 42 }]);
   });
 }
+
+// Codex review of 9aed115: with enforceHostAllowlist, blob: URLs have an empty
+// hostname, so no allowHosts entry could authorise a local file. The allowlist
+// governs outbound hosts; blob: URLs make no network request, so they are exempt.
+// duckdb-wasm keeps its Emscripten Module private, so the policy is set on the
+// worker global. The first assertion proves it reached the extension: a same-origin
+// HTTP read of a host outside allowHosts is refused.
+test("host allowlist blocks non-listed hosts but not local blob: files", async ({ page }) => {
+  const bed = await readFile(path.join(root, "test/data/fixture_mixed_regions.bed"), "utf8");
+  const bedRows = bed.trim().split("\n").map((line) => {
+    const [chrom, start, end, name] = line.split("\t");
+    return { chrom, start: Number(start), end: Number(end), name };
+  });
+  await page.route("**/duckhts-package.js", (route) => route.fulfill({
+    path: path.join(root, "js/src/index.js"), contentType: "text/javascript",
+  }));
+  await page.goto("/scripts/duckdb-wasm-local-test.html");
+  const result = await page.evaluate(async ({ bed }) => {
+    const duckdb = await import("/duckdb-browser.mjs");
+    const { localFileUrl } = await import("/duckhts-package.js");
+    const policy = { enforceHostAllowlist: true, allowHosts: ["example.org"] };
+    const wrapper = localFileUrl(new Blob([`
+      self.duckhtsWasmHttpConfig = ${JSON.stringify(policy)};
+      importScripts(${JSON.stringify(new URL("/duckdb-browser-eh.worker.js", location.href).href)});
+    `], { type: "text/javascript" }));
+    const worker = new Worker(wrapper.url);
+    const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker);
+    const local = localFileUrl(new File([bed], "dropped.bed"));
+    const httpFastq = new URL("/extdata/r1.fq", location.href).href;
+    let conn;
+    try {
+      await db.instantiate(new URL("/duckdb-eh.wasm", location.href).href);
+      await db.open({ allowUnsignedExtensions: true });
+      conn = await db.connect();
+      const extensionPath = new URL("/duckdb-wasm/duckhts.duckdb_extension.wasm", location.href).href;
+      await db.registerFileURL(extensionPath, extensionPath, duckdb.DuckDBDataProtocol.HTTP, false);
+      await conn.query(`LOAD '${extensionPath}'`);
+      const rows = async (sql) => JSON.parse(JSON.stringify((await conn.query(sql)).toArray(),
+        (_, value) => typeof value === "bigint" ? Number(value) : value));
+      let blocked = null;
+      try {
+        await conn.query(`SELECT count(*) FROM read_fastq('${httpFastq}')`);
+      } catch (e) {
+        blocked = String(e);
+      }
+      const blobRows = await rows(`SELECT chrom, start, "end", name FROM read_bed('${local.url}')`);
+      return { blocked, blobRows };
+    } finally {
+      if (conn) await conn.close();
+      await db.terminate();
+      worker.terminate();
+      wrapper.revoke();
+      local.revoke();
+    }
+  }, { bed });
+
+  expect(result.blocked).toContain("r1.fq");
+  expect(result.blobRows).toEqual(bedRows);
+});

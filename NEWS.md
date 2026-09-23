@@ -2,6 +2,17 @@
 
 # duckhts 1.5.2.9000
 
+- Make the wasm HTTP policy reachable in duckdb-wasm and exempt `blob:` URLs from
+  its host allowlist. duckdb-wasm keeps its Emscripten `Module` private, so
+  `Module.duckhtsWasmHttpConfig` could only be set in webR; the extension now also
+  reads `globalThis.duckhtsWasmHttpConfig` in the thread running DuckDB (set it in
+  the duckdb-wasm worker). With `enforceHostAllowlist`, `blob:` URLs (no hostname,
+  no network request) were refused whatever `allowHosts` said; they are now exempt
+  and still never receive custom headers. A browser test sets the policy on the
+  worker global, checks that a non-listed host is refused, and reads a `blob:` file
+  under the same policy; without the exemption it fails (negative control). Reported
+  by Codex review on https://github.com/RGenomicsETL/duckhts/pull/248.
+
 - Test the native half of the "readers take URLs, not only paths" contract in
   `test/sql/htslib_contract.test`: `read_bed` over `data:` URLs (percent-encoded and
   base64) and `preload:` of a committed fixture, with expected rows taken from the

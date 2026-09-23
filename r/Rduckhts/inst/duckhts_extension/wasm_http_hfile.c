@@ -54,7 +54,7 @@ typedef struct {
 
 /*
  * Optional browser-side configuration object:
- *   Module.duckhtsWasmHttpConfig = {
+ *   duckhtsWasmHttpConfig = {
  *     headers: {"Authorization": "Bearer ...", "X-Foo": "bar"},
  *     allowHosts: ["example.org", ".ebi.ac.uk"],
  *     enforceHostAllowlist: false,
@@ -62,10 +62,17 @@ typedef struct {
  *     allowInsecureAuth: false
  *   }
  *
+ * Where it is read: Module.duckhtsWasmHttpConfig first (webR, where the
+ * Emscripten Module is global), else globalThis.duckhtsWasmHttpConfig in the
+ * thread running DuckDB.  duckdb-wasm keeps its Module private, so set the
+ * global in its worker, e.g. in a wrapper script before importScripts().
+ *
  * Security model:
  * - Custom headers are applied only when allowHosts matches URL hostname.
  * - Optional hard host allowlist: enforceHostAllowlist=true blocks requests to
- *   hosts that do not match allowHosts.
+ *   hosts that do not match allowHosts.  blob: URLs are exempt: they name
+ *   page-local Blobs, make no network request, and have no hostname, so they
+ *   never match allowHosts and never receive custom headers.
  * - Authorization is stripped on non-HTTPS URLs unless allowInsecureAuth=true.
  */
 
@@ -75,7 +82,7 @@ static double wasm_http_discover_size(const char *url, uintptr_t cache_key)
         var url = UTF8ToString($0);
         var key = String($1 >>> 0);
         var cache = Module.duckhtsWasmHttpFullObjectCache;
-        var cfg = Module.duckhtsWasmHttpConfig || null;
+        var cfg = Module.duckhtsWasmHttpConfig || globalThis.duckhtsWasmHttpConfig || null;
         var xhr = new XMLHttpRequest();
         var cl = null;
         var cr = null;
@@ -132,6 +139,10 @@ static double wasm_http_discover_size(const char *url, uintptr_t cache_key)
 
         function shouldAllowRequest(targetUrl) {
             if (!cfg || cfg.enforceHostAllowlist !== true) return true;
+            /* blob: URLs name page-local Blobs, not hosts: they make no network
+             * request and resolve only in the origin that created them, so the
+             * outbound host allowlist does not apply to them. */
+            if (String(targetUrl).slice(0, 5) === "blob:") return true;
             return hostMatchesAllowlist(targetUrl, cfg.allowHosts);
         }
 
@@ -256,7 +267,7 @@ static ssize_t wasm_http_read(hFILE *fpv, void *buffer, size_t nbytes)
         var slash = -1;
         var cache = Module.duckhtsWasmHttpFullObjectCache;
         var cached = null;
-        var cfg = Module.duckhtsWasmHttpConfig || null;
+        var cfg = Module.duckhtsWasmHttpConfig || globalThis.duckhtsWasmHttpConfig || null;
 
         function hostMatchesAllowlist(targetUrl, allowHosts) {
             var host = "";
@@ -308,6 +319,10 @@ static ssize_t wasm_http_read(hFILE *fpv, void *buffer, size_t nbytes)
 
         function shouldAllowRequest(targetUrl) {
             if (!cfg || cfg.enforceHostAllowlist !== true) return true;
+            /* blob: URLs name page-local Blobs, not hosts: they make no network
+             * request and resolve only in the origin that created them, so the
+             * outbound host allowlist does not apply to them. */
+            if (String(targetUrl).slice(0, 5) === "blob:") return true;
             return hostMatchesAllowlist(targetUrl, cfg.allowHosts);
         }
 
