@@ -1,5 +1,11 @@
 # Rduckhts 1.5.2.9000-0.1.5
 
+- The bundled Emscripten extension accepts read-only `blob:` URLs in webR. A
+  browser File can be exposed as an object URL, with a separate `index_path` URL
+  for region queries; callers must retain both URLs until queries finish.
+  Chromium 148.0.7778.96 worker XHR tests found HEAD fails with status 0, ranged
+  GET returns 206 with size in `Content-Range`, ranges crossing EOF are truncated,
+  and out-of-range or revoked URLs fail with status 0. Native builds are unchanged.
 - Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
   support in the package README footer, with links to upstream acknowledgements.
 

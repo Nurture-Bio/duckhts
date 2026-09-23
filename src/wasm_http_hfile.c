@@ -1,5 +1,5 @@
 /*
- * wasm_http_hfile.c -- browser-native http/https hFILE backend for webR.
+ * wasm_http_hfile.c -- browser-native http/https/blob hFILE backend.
  *
  * Written against vendored htslib internals. Re-check hFILE_scheme_handler
  * layout and browser acceptance tests on every htslib vendor bump.
@@ -14,8 +14,9 @@
  * Browser constraints still apply: same-origin URLs work, remote URLs require
  * permissive CORS headers, and S3/GCS remain out of scope for the wasm build.
  *
- * Seek semantics: SEEK_SET and SEEK_CUR are pure C; SEEK_END issues one HEAD
- * request to get Content-Length and caches the result per handle.
+ * Seek semantics: SEEK_SET and SEEK_CUR are pure C; SEEK_END discovers and
+ * caches size using HEAD or a ranged GET. Chromium blob URLs reject HEAD and
+ * expose size through Content-Range.
  *
  * Write support is intentionally absent. All remote hFILE access is read-only.
  */
@@ -430,7 +431,7 @@ static ssize_t wasm_http_write(hFILE *fpv, const void *buffer, size_t nbytes)
  * wasm_http_seek -- update the logical read position.
  *
  * SEEK_SET / SEEK_CUR: pure arithmetic, no XHR.
- * SEEK_END: issues one synchronous HEAD to get Content-Length (cached).
+ * SEEK_END: discovers and caches the size using HEAD or a ranged GET.
  * ---------------------------------------------------------------------- */
 static off_t wasm_http_seek(hFILE *fpv, off_t offset, int whence)
 {
@@ -521,6 +522,15 @@ static hFILE *wasm_http_open(const char *url, const char *mode)
     fp->warned_no_range = 0;
     fp->warned_large_full_download = 0;
     fp->base.backend = &wasm_http_backend;
+    /* A missing blob must fail at open, not during index format detection.
+     * hpeek retains the bytes in hFILE's bounded buffer for the first read. */
+    if (strncmp(url, "blob:", 5) == 0) {
+        char probe;
+        if (hpeek(&fp->base, &probe, 1) < 0) {
+            hclose_abruptly(&fp->base);
+            return NULL;
+        }
+    }
     return &fp->base;
 }
 
@@ -545,6 +555,7 @@ void register_wasm_http_hfile_backend(void)
 
     hfile_add_scheme_handler("http",  &wasm_http_handler);
     hfile_add_scheme_handler("https", &wasm_http_handler);
+    hfile_add_scheme_handler("blob",  &wasm_http_handler);
     registered = 1;
 }
 

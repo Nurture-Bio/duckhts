@@ -77,6 +77,10 @@ for a region query, create a second URL for the index and pass
 afterwards. Access is read-only and requires a worker in the creating page's storage
 partition; it does not grant another origin access to local files.
 
+Chromium serves byte ranges for these URLs. If a transport ignores Range, the backend
+caches the full response in JavaScript and copies only requested chunks into Wasm memory.
+That fallback can consume browser memory proportional to the file size.
+
 Files registered with duckdb-wasm (`registerFileBuffer`, `registerFileHandle`,
 `registerFileText`) remain **invisible** to DuckHTS readers. The file-system integration
 is a separate option in https://github.com/RGenomicsETL/duckhts/issues/246.

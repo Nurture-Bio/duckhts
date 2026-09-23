@@ -2,6 +2,13 @@
 
 # duckhts 1.5.2.9000
 
+- Emscripten builds accept read-only `blob:` URLs through the htslib XHR backend,
+  including local File reads and explicit `index_path` object URLs for indexed
+  regions. Missing auto-discovered sidecars allow streaming; callers own URL
+  revocation. Range-ignoring transports retain the full-body JavaScript cache
+  fallback, copying only requested chunks into Wasm memory.
+  DuckDB VFS registrations remain separate and invisible to htslib. The npm
+  package's pinned signed binaries do not yet contain this handler.
 - The npm package exports `localFileUrl(file)`, returning an object URL and an
   explicit `revoke()` callback for a browser File or Blob. Chromium 148.0.7778.96
   worker-synchronous XHR measurements show `HEAD blob:` fails with `NetworkError`
