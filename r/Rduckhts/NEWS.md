@@ -1,5 +1,8 @@
 # Rduckhts 1.5.2.9000-0.1.5
 
+- The bundled extension reports consistent Somalier CHARR count errors whether
+  public SQL validation or the native aggregate rejects the input first.
+
 - Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
   support in the package README footer, with links to upstream acknowledgements.
 - Add `cigar_aligned_blocks(cigar, pos)`: Extracts contiguous aligned segments

@@ -2,6 +2,9 @@
 
 # duckhts 1.5.2.9000
 
+- Keep Somalier CHARR count-error diagnostics consistent between the public SQL
+  validation and native aggregate, regardless of which rejects the input first.
+
 - Let ONT benchmark staging use samtools bundled by the optional RBCFTools
   package when it is absent from PATH, and cover unavailable tools in staging tests.
 
