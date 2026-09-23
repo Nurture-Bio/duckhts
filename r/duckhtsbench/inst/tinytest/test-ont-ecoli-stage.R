@@ -107,6 +107,61 @@ test_ont_ecoli_derivation <- function() {
   aligned <- system2(samtools, c("view", "-c", "-F", "4", shQuote(paths[["bam"]])), stdout = TRUE)
   expect_equal(as.integer(aligned), length(starts))
   expect_false(any(grepl("partial", list.files(dirname(paths[["bam"]])))))
+  identities <- c("reference_sha256", "reads_sha256")
+  hashes <- vapply(paths[c("reference", "reads")], function(path) {
+    digest::digest(file = path, algo = "sha256")
+  }, character(1L))
+  expect_identical(fields$value[match(identities, fields$field)], unname(hashes))
+  expect_identical(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools,
+                                               minimap2 = ""), paths)
+
+  # Receipts without source identities require an explicit derivation.
+  unidentified <- fields[!fields$field %in% identities, ]
+  utils::write.table(unidentified, receipt, sep = "\t", row.names = FALSE, quote = FALSE)
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools, minimap2 = ""),
+               "minimap2 is required")
+  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L,
+                                       samtools = samtools, minimap2 = minimap2)
+
+  # A changed read identity at the same cache path requires derivation.
+  fastq <- readLines(reads)
+  fastq[[1L]] <- "@changed-read"
+  writeLines(fastq, reads)
+  gzip_copy(reads, paths[["reads"]])
+  registry$supplier_identity[[3L]] <- paste0(
+    "bytes=", file.info(paths[["reads"]])$size, ";md5=", unname(tools::md5sum(paths[["reads"]])))
+  utils::write.table(registry, registry_path, sep = "\t", row.names = FALSE, quote = FALSE)
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools, minimap2 = ""),
+               "minimap2 is required")
+  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L,
+                                       samtools = samtools, minimap2 = minimap2)
+  alignments <- system2(samtools, c("view", shQuote(paths[["bam"]])), stdout = TRUE)
+  expect_true(any(startsWith(alignments, "changed-read\t")))
+
+  # A changed reference identity at the same cache path requires derivation.
+  fasta <- readLines(reference)
+  fasta[[1L]] <- ">changed-reference"
+  writeLines(fasta, reference)
+  archive <- duckhts_bench_artifact_path("ont_ecoli_k12_reference_fna_gz")
+  gzip_copy(reference, archive)
+  registry$supplier_identity[1:2] <- c(
+    paste0("bytes=", file.info(archive)$size, ";md5=", unname(tools::md5sum(archive))),
+    paste0("bytes=", file.info(reference)$size, ";md5=", unname(tools::md5sum(reference)))
+  )
+  utils::write.table(registry, registry_path, sep = "\t", row.names = FALSE, quote = FALSE)
+  expect_error(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools, minimap2 = ""),
+               "minimap2 is required")
+  paths <- duckhts_bench_stage_ont_ecoli(fetch = FALSE, threads = 1L,
+                                       samtools = samtools, minimap2 = minimap2)
+  header <- system2(samtools, c("view", "-H", shQuote(paths[["bam"]])), stdout = TRUE)
+  expect_true(any(grepl("SN:changed-reference\t", header, fixed = TRUE)))
+  fields <- utils::read.delim(receipt, colClasses = "character")
+  hashes <- vapply(paths[c("reference", "reads")], function(path) {
+    digest::digest(file = path, algo = "sha256")
+  }, character(1L))
+  expect_identical(fields$value[match(identities, fields$field)], unname(hashes))
+  expect_identical(duckhts_bench_stage_ont_ecoli(fetch = FALSE, samtools = samtools,
+                                               minimap2 = ""), paths)
 
   # A poisoned BAM fails quickcheck and is rebuilt from the verified sources.
   writeLines("poisoned", paths[["bam"]])

@@ -2,6 +2,13 @@
 
 # duckhts 1.5.2.9001
 
+- Make the aligned-block benchmark oracle NULL-aware, compare every physical
+  record before timing, and retain duplicate/NULL corruption controls with
+  record-keyed XOR and sum checks. Recorded timings retain their stated
+  aggregate-only validation limits; recorded-data rendering does not rerun them.
+- Reuse staged ONT BAMs only when receipt source hashes match the verified
+  reference and reads; missing identities and changed inputs require derivation.
+
 - Validate complete text and packed CIGARs with shared checked decoding and
   consumed-span arithmetic. Metrics and presence checks return NULL for malformed
   suffixes or lengths/spans outside BIGINT, including invalid suffixes after an

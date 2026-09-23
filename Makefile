@@ -400,6 +400,7 @@ test-cache-paths:
 	bash test/scripts/test_conformance_plugin_cache.sh
 
 test-benchmark-registry: release test-variantkey-provider-staging test-duckvep-corpus-staging
+	Rscript test/scripts/test_cigar_blocks_benchmark.R build/release/duckhts.duckdb_extension
 	Rscript test/scripts/test_genotype_format_benchmark.R
 	Rscript test/scripts/test_hgvs_cis_codon.R
 	Rscript test/scripts/test_ambiguous_codon.R

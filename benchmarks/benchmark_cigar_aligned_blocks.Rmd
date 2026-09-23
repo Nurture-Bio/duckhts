@@ -4,6 +4,8 @@ output:
   github_document:
     html_preview: false
     pandoc_args: ["--wrap=preserve", "--columns=400"]
+params:
+  measure: true
 ---
 
 ```{r setup, include=FALSE}
@@ -11,11 +13,10 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
 knitr::opts_knit$set(root.dir = normalizePath(".."))
 ```
 
-This report measures `cigar_aligned_blocks(CIGAR, POS)` against the two ways
-the same geometry was available before it existed: reading the binary CIGAR
-and doing nothing with it, which is the denominator, and deriving the blocks in
-SQL with a `list_slice` prefix sum inside a lambda, which is quadratic in the
-op count of each read. All three are timed on the same host in one render,
+This report compares `cigar_aligned_blocks(CIGAR, POS)` with a plain binary-CIGAR
+scan and a SQL block derivation using `list_slice` prefix sums inside lambdas.
+The plain scan is the denominator; the SQL derivation is quadratic in the op
+count of each alignment record. All three are timed on the same host in one render,
 through one in-memory DuckDB connection, over two real alignments staged
 through the duckhtsbench registry:
 
@@ -28,13 +29,21 @@ through the duckhtsbench registry:
   `chr22` region of its index. A region scan is one `read_bam` thread by
   construction, and it keeps the short-read condition to a few million reads.
 
-The SQL derivation and the scalar must produce the same blocks: every timed
-pass computes an order-independent fingerprint over every read's block lists,
-and the render stops if the two derivations disagree on either input. That
-makes each render a whole-file check of the scalar against an independent
-formulation, on top of the fixture oracle in `test/sql/cigar_aligned_blocks.test`.
+A measured render requires exact, NULL-aware equality of the three block lists
+for every physical record before timing, including duplicate read identities
+and missing CIGARs. Timed passes check exact counts and two fingerprints keyed
+by physical ordinal, including explicit NULL markers. These checks complement
+the fixture oracle in `test/sql/cigar_aligned_blocks.test`.
 
-There is no earlier checked-in benchmark of this function. The nearest report
+The recorded measurements at `1139f23ddde1` have aggregate-XOR validation only,
+not per-record conformance evidence. XOR can conceal duplicate errors and does
+not distinguish NULL lists from empty lists in this DuckDB runtime.
+[The recorded data](https://github.com/ryandward/duckhts/blob/54995e6f3a211786b3421a629edfd87d8929e371/benchmarks/data/cigar_aligned_blocks.csv)
+retain their measured timings and denominators. The recorded revision below
+identifies the measurement shown; rendering stored data does not validate it.
+
+The focused current-source comparison is
+[`benchmark_cigar_validation.md`](benchmark_cigar_validation.md). The nearest report
 on the short-read input is [`benchmark_riker_wgs.md`](benchmark_riker_wgs.md),
 which times whole-file `read_bam` scans against Riker; it shares the registered
 BAM but not the region or the projection, so it is context rather than a
@@ -63,8 +72,11 @@ Both inputs run on one `read_bam` thread, so the benchmark pins each pass to
 the highest logical CPU in the affinity mask of the rendering process; wrap the
 render in `taskset -c` to choose it. Input staging, extension loading,
 connection setup, warm-up and result verification are excluded from timing.
+To render the stored measurements without claiming a new run, use
+`rmarkdown::render("benchmarks/benchmark_cigar_aligned_blocks.Rmd", params = list(measure = FALSE))`.
+This mode reads the checked-in results and metadata; it does not run validation.
 
-```{r benchmark, echo=FALSE, message=FALSE}
+```{r benchmark, echo=FALSE, message=FALSE, eval=params$measure}
 suppressPackageStartupMessages({
   library(DBI)
   library(duckdb)
@@ -116,7 +128,7 @@ if (tracked_dirty) {
   stop("Render the benchmark from a tracked-clean source revision")
 }
 
-con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true")))
+con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true"), shared_home = FALSE))
 invisible(dbExecute(con, paste("LOAD", dbQuoteString(con, extension))))
 
 scan_sql <- function(input) {
@@ -127,65 +139,7 @@ scan_sql <- function(input) {
   )
 }
 
-# The quadratic SQL derivation: for every op, slice the preceding ops and sum
-# what they consume. Reference-consuming ops are M D N = X (0 2 3 7 8), query-
-# consuming ops are M I S = X (0 1 4 7 8), and a block is an M, = or X op.
-sql_blocks <- paste0(
-  "list_transform(list_filter(list_transform(CIGAR, lambda c, i: {'kind': c & 15, ",
-  "'v': POS + COALESCE(list_sum(list_transform(list_slice(CIGAR, 1, i - 1), ",
-  "lambda p: CASE WHEN (p & 15) IN (0, 2, 3, 7, 8) THEN (p >> 4)::BIGINT ELSE 0 END)), 0)}), ",
-  "lambda x: x.kind IN (0, 7, 8)), lambda x: x.v) AS ref_start, ",
-  "list_transform(list_filter(list_transform(CIGAR, lambda c, i: {'kind': c & 15, ",
-  "'v': COALESCE(list_sum(list_transform(list_slice(CIGAR, 1, i - 1), ",
-  "lambda p: CASE WHEN (p & 15) IN (0, 1, 4, 7, 8) THEN (p >> 4)::BIGINT ELSE 0 END)), 0)}), ",
-  "lambda x: x.kind IN (0, 7, 8)), lambda x: x.v) AS query_start, ",
-  "list_transform(list_filter(CIGAR, lambda c: (c & 15) IN (0, 7, 8)), lambda c: (c >> 4)::BIGINT) AS width"
-)
-scalar_blocks <- paste0(
-  "(b).ref_start AS ref_start, (b).query_start AS query_start, (b).width AS width"
-)
-
-# One row back to R. The fingerprint hashes every read's three block lists with
-# its identity, so the SQL and scalar derivations must agree read for read to
-# produce the same value; the plain scan hashes the packed CIGAR instead and
-# reads the same rows.
-workload_sql <- function(input, workload) {
-  switch(
-    workload,
-    "read_bam only" = sprintf(
-      paste0(
-        "SELECT count(*)::UBIGINT AS reads, sum(len(CIGAR))::DOUBLE AS ops, 0::DOUBLE AS blocks, ",
-        "hex(bit_xor(hash(QNAME, FLAG, POS, CIGAR))) AS fingerprint FROM %s"
-      ),
-      scan_sql(input)
-    ),
-    "blocks in SQL" = sprintf(
-      paste0(
-        "SELECT count(*)::UBIGINT AS reads, sum(ops)::DOUBLE AS ops, sum(len(width))::DOUBLE AS blocks, ",
-        "hex(bit_xor(hash(QNAME, FLAG, ref_start, query_start, width))) AS fingerprint ",
-        "FROM (SELECT QNAME, FLAG, len(CIGAR) AS ops, %s FROM %s)"
-      ),
-      sql_blocks, scan_sql(input)
-    ),
-    "cigar_aligned_blocks" = sprintf(
-      paste0(
-        "SELECT count(*)::UBIGINT AS reads, sum(ops)::DOUBLE AS ops, sum(len(width))::DOUBLE AS blocks, ",
-        "hex(bit_xor(hash(QNAME, FLAG, ref_start, query_start, width))) AS fingerprint ",
-        "FROM (SELECT QNAME, FLAG, len(CIGAR) AS ops, %s ",
-        "FROM (SELECT QNAME, FLAG, CIGAR, cigar_aligned_blocks(CIGAR, POS) AS b FROM %s))"
-      ),
-      scalar_blocks, scan_sql(input)
-    ),
-    stop("unknown workload")
-  )
-}
-
-same_answer <- function(observed, expected) {
-  identical(as.character(observed$reads[[1L]]), as.character(expected$reads[[1L]])) &&
-    identical(observed$fingerprint[[1L]], expected$fingerprint[[1L]]) &&
-    isTRUE(all.equal(observed$ops[[1L]], expected$ops[[1L]], tolerance = 1e-12)) &&
-    isTRUE(all.equal(observed$blocks[[1L]], expected$blocks[[1L]], tolerance = 1e-12))
-}
+source("scripts/cigar_aligned_blocks_benchmark.R", local = TRUE)
 
 set_affinity <- function(cpus) {
   output <- system2("taskset", c("-pc", cpus, Sys.getpid()), stdout = TRUE, stderr = TRUE)
@@ -211,28 +165,29 @@ results <- list()
 expectations <- list()
 for (name in names(inputs)) {
   input <- inputs[[name]]
-  expected <- lapply(workloads, function(workload) dbGetQuery(con, workload_sql(input, workload)))
+  scan <- scan_sql(input)
+  checked <- validate_blocks(con, scan)
+  expected <- lapply(workloads, function(workload) dbGetQuery(con, workload_sql(scan, workload)))
   names(expected) <- workloads
   # Every workload reads the same rows, and the two block derivations must
   # agree on every read's geometry.
   stopifnot(
     length(unique(vapply(expected, function(e) as.character(e$reads[[1L]]), character(1L)))) == 1L,
-    identical(expected[["blocks in SQL"]]$fingerprint[[1L]],
-              expected[["cigar_aligned_blocks"]]$fingerprint[[1L]]),
-    expected[["blocks in SQL"]]$blocks[[1L]] == expected[["cigar_aligned_blocks"]]$blocks[[1L]],
-    expected[["cigar_aligned_blocks"]]$blocks[[1L]] > 0
+    identical(checked$records, expected[["read_bam only"]]$reads),
+    identical(expected[["blocks in SQL"]], expected[["cigar_aligned_blocks"]]),
+    as.numeric(expected[["cigar_aligned_blocks"]]$blocks[[1L]]) > 0
   )
   expectations[[name]] <- expected
   repetitions <- if (name == "ont") 9L else 5L
   for (workload in workloads) {
-    sql <- workload_sql(input, workload)
-    for (i in seq_len(2L)) stopifnot(same_answer(dbGetQuery(con, sql), expected[[workload]]))
+    sql <- workload_sql(scan, workload)
+    for (i in seq_len(2L)) stopifnot(identical(dbGetQuery(con, sql), expected[[workload]]))
     seconds <- numeric(repetitions)
     for (i in seq_len(repetitions)) {
       started <- proc.time()[["elapsed"]]
       observed <- dbGetQuery(con, sql)
       seconds[[i]] <- proc.time()[["elapsed"]] - started
-      stopifnot(same_answer(observed, expected[[workload]]))
+      stopifnot(identical(observed, expected[[workload]]))
     }
     results[[length(results) + 1L]] <- data.frame(
       input = input$label,
@@ -241,13 +196,14 @@ for (name in names(inputs)) {
       affinity = cpu_one,
       repetitions = repetitions,
       reads = as.double(expected[[workload]]$reads[[1L]]),
-      ops = expected[[workload]]$ops[[1L]],
-      blocks = expected[["cigar_aligned_blocks"]]$blocks[[1L]],
+      ops = as.double(expected[[workload]]$ops[[1L]]),
+      blocks = as.double(expected[["cigar_aligned_blocks"]]$blocks[[1L]]),
       min_seconds = min(seconds),
       median_seconds = median(seconds),
       max_seconds = max(seconds),
       median_reads_per_second = as.double(expected[[workload]]$reads[[1L]]) / median(seconds),
       fingerprint = expected[[workload]]$fingerprint[[1L]],
+      fingerprint_sum = expected[[workload]]$fingerprint_sum[[1L]],
       stringsAsFactors = FALSE
     )
   }
@@ -304,19 +260,27 @@ metadata <- data.frame(
   stringsAsFactors = FALSE
 )
 
+write.csv(metadata, "benchmarks/data/cigar_aligned_blocks_metadata.csv", row.names = FALSE)
+```
+
+```{r recorded-results, echo=FALSE}
+if (!params$measure) {
+  results <- read.csv("benchmarks/data/cigar_aligned_blocks.csv", stringsAsFactors = FALSE)
+  metadata <- read.csv("benchmarks/data/cigar_aligned_blocks_metadata.csv", colClasses = "character")
+}
 knitr::kable(metadata, col.names = c("Property", "Recorded value"))
 ```
 
 ## Results
 
 Each workload scans the same rows and returns one row to R, so the timing
-covers reading, decoding and the projection rather than transport. Every timed
-pass is verified against its own first answer by exact read count, an
-order-independent fingerprint, and the summed op and block counts to a relative
-tolerance of `1e-12`. The `blocks in SQL` and `cigar_aligned_blocks` workloads
-share a fingerprint by construction: it hashes each read's `ref_start`,
-`query_start` and `width` lists, and the render asserts that the two
-derivations produce the same value on both inputs before timing begins.
+covers reading, decoding and projection rather than transporting all blocks.
+The Reads column counts physical alignment records, including duplicate names.
+Measured runs first compare every physical record against the SQL oracle,
+then check exact record/op/block totals and record-keyed XOR and sum fingerprints
+on every timed pass. NULL markers distinguish missing CIGARs from valid CIGARs
+with no aligned blocks. Recorded-data rendering does not execute those checks;
+the recorded `1139f23ddde1` data have the aggregate-XOR limits described above.
 
 ```{r results-table, echo=FALSE}
 display <- results[, c(

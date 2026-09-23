@@ -10,8 +10,10 @@
 #' `minimap2 -x map-ont` and sorting with `samtools`. Network access occurs only
 #' in this explicit staging step; with `fetch = FALSE` both sources must already
 #' be cached, which is how the report renders. A cached BAM that passes
-#' `samtools quickcheck` and carries its provenance receipt is reused, so
-#' `minimap2` is needed only to derive it.
+#' `samtools quickcheck` is reused when its receipt's reference and read SHA-256
+#' identities match the verified sources. Missing identities or changed inputs
+#' require derivation; tool-version changes alone do not. `minimap2` is needed
+#' only to derive the BAM.
 #' @param fetch Whether to download a missing or invalid source.
 #' @param threads Aligner, sort and index threads.
 #' @param minimap2 Path to `minimap2`.
@@ -52,6 +54,10 @@ duckhts_bench_stage_ont_ecoli <- function(fetch = TRUE, threads = 8L,
   }
   duckhts_bench_stage_gunzip(ids[[2L]], paths[["reference_gz"]], paths[["reference"]])
 
+  source_hashes <- vapply(paths[c("reference", "reads")], function(path) {
+    digest::digest(file = path, algo = "sha256")
+  }, character(1L))
+  names(source_hashes) <- paste0(names(source_hashes), "_sha256")
   bam <- paths[["bam"]]
   index <- paste0(bam, ".bai")
   receipt <- paste0(bam, ".provenance.tsv")
@@ -61,7 +67,11 @@ duckhts_bench_stage_ont_ecoli <- function(fetch = TRUE, threads = 8L,
   }
   if (file.exists(bam) && file.exists(index) && file.exists(receipt) &&
       system2(samtools, c("quickcheck", shQuote(bam))) == 0L) {
-    return(invisible(paths[c("reference", "reads", "bam")]))
+    fields <- utils::read.delim(receipt, colClasses = "character", quote = "", comment.char = "")
+    recorded <- fields$value[match(names(source_hashes), fields$field)]
+    if (identical(recorded, unname(source_hashes))) {
+      return(invisible(paths[c("reference", "reads", "bam")]))
+    }
   }
   if (!nzchar(minimap2)) stop("minimap2 is required to derive the ont-ecoli-k12 BAM", call. = FALSE)
 
@@ -88,10 +98,10 @@ duckhts_bench_stage_ont_ecoli <- function(fetch = TRUE, threads = 8L,
     duckhts_bench_provenance_fields(ids[[4L]], bam),
     data.frame(
       field = c("run_accession", "study_accession", "sample_accession", "reference", "reads",
-                "aligner", "aligner_preset", "sorter", "threads"),
+                "aligner", "aligner_preset", "sorter", "threads", names(source_hashes)),
       value = c("ERR14686255", "PRJEB86481", "SAMEA117787661", paths[["reference"]], paths[["reads"]],
                 paste("minimap2", tool_version(minimap2)), "map-ont", tool_version(samtools),
-                as.character(threads)),
+                as.character(threads), unname(source_hashes)),
       stringsAsFactors = FALSE
     )
   )

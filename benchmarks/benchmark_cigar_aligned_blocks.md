@@ -1,11 +1,10 @@
 CIGAR aligned blocks benchmark
 ================
 
-This report measures `cigar_aligned_blocks(CIGAR, POS)` against the two ways
-the same geometry was available before it existed: reading the binary CIGAR
-and doing nothing with it, which is the denominator, and deriving the blocks in
-SQL with a `list_slice` prefix sum inside a lambda, which is quadratic in the
-op count of each read. All three are timed on the same host in one render,
+This report compares `cigar_aligned_blocks(CIGAR, POS)` with a plain binary-CIGAR
+scan and a SQL block derivation using `list_slice` prefix sums inside lambdas.
+The plain scan is the denominator; the SQL derivation is quadratic in the op
+count of each alignment record. All three are timed on the same host in one render,
 through one in-memory DuckDB connection, over two real alignments staged
 through the duckhtsbench registry:
 
@@ -18,13 +17,21 @@ through the duckhtsbench registry:
   `chr22` region of its index. A region scan is one `read_bam` thread by
   construction, and it keeps the short-read condition to a few million reads.
 
-The SQL derivation and the scalar must produce the same blocks: every timed
-pass computes an order-independent fingerprint over every read’s block lists,
-and the render stops if the two derivations disagree on either input. That
-makes each render a whole-file check of the scalar against an independent
-formulation, on top of the fixture oracle in `test/sql/cigar_aligned_blocks.test`.
+A measured render requires exact, NULL-aware equality of the three block lists
+for every physical record before timing, including duplicate read identities
+and missing CIGARs. Timed passes check exact counts and two fingerprints keyed
+by physical ordinal, including explicit NULL markers. These checks complement
+the fixture oracle in `test/sql/cigar_aligned_blocks.test`.
 
-There is no earlier checked-in benchmark of this function. The nearest report
+The recorded measurements at `1139f23ddde1` have aggregate-XOR validation only,
+not per-record conformance evidence. XOR can conceal duplicate errors and does
+not distinguish NULL lists from empty lists in this DuckDB runtime.
+[The recorded data](https://github.com/ryandward/duckhts/blob/54995e6f3a211786b3421a629edfd87d8929e371/benchmarks/data/cigar_aligned_blocks.csv)
+retain their measured timings and denominators. The recorded revision below
+identifies the measurement shown; rendering stored data does not validate it.
+
+The focused current-source comparison is
+[`benchmark_cigar_validation.md`](benchmark_cigar_validation.md). The nearest report
 on the short-read input is [`benchmark_riker_wgs.md`](benchmark_riker_wgs.md),
 which times whole-file `read_bam` scans against Riker; it shares the registered
 BAM but not the region or the projection, so it is context rather than a
@@ -53,6 +60,9 @@ Both inputs run on one `read_bam` thread, so the benchmark pins each pass to
 the highest logical CPU in the affinity mask of the rendering process; wrap the
 render in `taskset -c` to choose it. Input staging, extension loading,
 connection setup, warm-up and result verification are excluded from timing.
+To render the stored measurements without claiming a new run, use
+`rmarkdown::render("benchmarks/benchmark_cigar_aligned_blocks.Rmd", params = list(measure = FALSE))`.
+This mode reads the checked-in results and metadata; it does not run validation.
 
 | Property                                     | Recorded value                                                                                                             |
 |:---------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------|
@@ -79,13 +89,13 @@ connection setup, warm-up and result verification are excluded from timing.
 ## Results
 
 Each workload scans the same rows and returns one row to R, so the timing
-covers reading, decoding and the projection rather than transport. Every timed
-pass is verified against its own first answer by exact read count, an
-order-independent fingerprint, and the summed op and block counts to a relative
-tolerance of `1e-12`. The `blocks in SQL` and `cigar_aligned_blocks` workloads
-share a fingerprint by construction: it hashes each read’s `ref_start`,
-`query_start` and `width` lists, and the render asserts that the two
-derivations produce the same value on both inputs before timing begins.
+covers reading, decoding and projection rather than transporting all blocks.
+The Reads column counts physical alignment records, including duplicate names.
+Measured runs first compare every physical record against the SQL oracle,
+then check exact record/op/block totals and record-keyed XOR and sum fingerprints
+on every timed pass. NULL markers distinguish missing CIGARs from valid CIGARs
+with no aligned blocks. Recorded-data rendering does not execute those checks;
+the recorded `1139f23ddde1` data have the aggregate-XOR limits described above.
 
 | Input                               | Workload             | Threads | CPU affinity | Runs |     Reads |  CIGAR ops |    Blocks | Minimum seconds | Median seconds | Maximum seconds | Median reads/s |
 |:------------------------------------|:---------------------|--------:|-------------:|-----:|----------:|-----------:|----------:|----------------:|---------------:|----------------:|---------------:|

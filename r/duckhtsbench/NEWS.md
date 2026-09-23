@@ -1,3 +1,9 @@
+# duckhtsbench 0.0.0.9001
+
+- require matching reference/read SHA-256 identities before reusing a staged
+  ONT BAM; receipts without identities and changed inputs require derivation, while tool
+  version changes alone do not
+
 # duckhtsbench 0.0.0.9000
 
 - identify both aligned-block and CIGAR-validation benchmarks as consumers of

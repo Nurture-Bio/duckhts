@@ -36,6 +36,8 @@ uncompressed FASTA), and derives the coordinate-sorted, indexed BAM that
 \verb{minimap2 -x map-ont} and sorting with \code{samtools}. Network access occurs only
 in this explicit staging step; with \code{fetch = FALSE} both sources must already
 be cached, which is how the report renders. A cached BAM that passes
-\verb{samtools quickcheck} and carries its provenance receipt is reused, so
-\code{minimap2} is needed only to derive it.
+\verb{samtools quickcheck} is reused when its receipt's reference and read SHA-256
+identities match the verified sources. Missing identities or changed inputs
+require derivation; tool-version changes alone do not. \code{minimap2} is needed
+only to derive the BAM.
 }
