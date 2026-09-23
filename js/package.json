@@ -1,7 +1,7 @@
 {
   "name": "duckhts",
   "version": "1.5.2",
-  "description": "DuckHTS DuckDB extension for duckdb-wasm: read HTS formats (BAM, CRAM, VCF, BCF, FASTA, FASTQ, GFF, GTF, BED, tabix) with SQL in the browser",
+  "description": "DuckHTS DuckDB extension for duckdb-wasm: read HTS formats (BAM, CRAM, VCF, BCF, FASTA, FASTQ, GFF, GTF, BED, GenBank, bigWig, tabix) with SQL in the browser",
   "type": "module",
   "license": "MIT",
   "author": "Sounkou Mahamane Toure",
@@ -21,7 +21,8 @@
     "bioinformatics",
     "bam",
     "vcf",
-    "gff"
+    "gff",
+    "genbank"
   ],
   "exports": {
     ".": {
