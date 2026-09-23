@@ -84,6 +84,16 @@ for (const ignoreRange of [false, true]) {
             return String(e);
           }
         };
+        // Revocation reaches the DuckDB worker asynchronously: retry (bounded)
+        // until the query fails, then return that error for the assertions.
+        const errorAfterRevoke = async (sql) => {
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const message = await error(sql);
+            if (message !== null) return message;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          return null;
+        };
         const bedSql = (url) => `SELECT chrom, start, "end", name FROM read_bed('${url}')`;
         const vcfSql = (options) => `SELECT CHROM AS chrom, POS AS pos, ID AS id, REF AS ref,
           array_to_string(ALT, ',') AS alt FROM read_bcf('${local.vcf.url}', tidy_format := false ${options})`;
@@ -98,9 +108,9 @@ for (const ignoreRange of [false, true]) {
         console.log("blob-tests: expected errors follow");
         const missingIndex = await error(vcfSql(", region := 'chr1:12-18'"));
         local.index.revoke();
-        const revokedIndex = await error(vcfSql(`, index_path := '${local.index.url}', region := 'chr1:12-18'`));
+        const revokedIndex = await errorAfterRevoke(vcfSql(`, index_path := '${local.index.url}', region := 'chr1:12-18'`));
         local.bed.revoke();
-        const revoked = await error(bedSql(local.bed.url));
+        const revoked = await errorAfterRevoke(bedSql(local.bed.url));
         const unknown = await error(bedSql(`blob:${location.origin}/00000000-0000-0000-0000-000000000000`));
         // Option B is not provided by a blob scheme handler.
         const bytes = new TextEncoder().encode(bed);

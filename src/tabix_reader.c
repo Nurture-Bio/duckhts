@@ -54,7 +54,7 @@ DUCKDB_EXTENSION_EXTERN
 #define TABIX_NUM_PARSE_BUF 128
 
 static tbx_t *tabix_reader_load_index(const char *path, const char *index_path) {
-    int flags = HTS_IDX_SAVE_REMOTE;
+    int flags = duckhts_index_save_remote_flag(path, index_path);
 #ifdef __EMSCRIPTEN__
     /* Object URLs have no sibling index files. An explicit index_path still
      * reports load failures; an absent inferred sidecar permits streaming. */

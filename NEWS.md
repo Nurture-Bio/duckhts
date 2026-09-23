@@ -2,6 +2,15 @@
 
 # duckhts 1.5.2.9000
 
+- Do not save a `blob:` index to a local file. `HTS_IDX_SAVE_REMOTE` made htslib copy
+  an explicit `blob:` `index_path` into the Emscripten worker's in-memory filesystem and
+  keep it, leaving one UUID-named copy per object URL. A shared
+  `duckhts_index_save_remote_flag()` (in `src/include/hts_io_tuning.h`) now withholds the
+  flag when the data or index path is a `blob:` URL, at every index load that set it
+  (tabix readers, mosdepth, `duckhts_bam_bed_coverage`, `duckhts_samtools_idxstats`).
+  Network paths keep htslib's behaviour, and native behaviour is unchanged. Reported by
+  Codex review on https://github.com/RGenomicsETL/duckhts/pull/248.
+
 - npm package: pin the documented install to `@duckdb/duckdb-wasm@1.33.1-dev57.0` (a bare
   install gets stable 1.32.0, which cannot load this extension, #247), and declare the
   peer range as `1.33.1-dev57.0 || >=1.33.1`, since npm compares prerelease tags as text
