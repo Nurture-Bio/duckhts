@@ -2,6 +2,13 @@
 
 # duckhts 1.5.2.9000
 
+- The npm package exports `localFileUrl(file)`, returning an object URL and an
+  explicit `revoke()` callback for a browser File or Blob. Chromium 148.0.7778.96
+  worker-synchronous XHR measurements show `HEAD blob:` fails with `NetworkError`
+  (status 0), ranged GET returns 206 with the total in `Content-Range`, and ranges
+  crossing EOF are truncated. Out-of-range and revoked URLs fail with
+  `NetworkError` (status 0). These observations are covered by browser tests.
+
 - Add the `duckhts` npm package under `js/` for `@duckdb/duckdb-wasm`
   (https://github.com/RGenomicsETL/duckhts/issues/246). It ships the signed
   community-repository wasm builds of DuckHTS 1.5.2 byte for byte (staged by
