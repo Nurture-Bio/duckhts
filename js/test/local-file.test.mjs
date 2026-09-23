@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { localFileUrl } from "../src/index.js";
+import { localFileUrl } from "../src/local-file.js";
 
 test("localFileUrl exposes the File bytes without changing the File", async () => {
   const file = new File(["chr1\t0\t10\n"], "dropped.bed");

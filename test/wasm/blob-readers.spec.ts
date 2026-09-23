@@ -34,7 +34,7 @@ for (const ignoreRange of [false, true]) {
     const browserLogs: string[] = [];
     page.on("console", (message) => browserLogs.push(message.text()));
     await page.route("**/duckhts-package.js", (route) => route.fulfill({
-      path: path.join(root, "js/src/index.js"), contentType: "text/javascript",
+      path: path.join(root, "js/src/local-file.js"), contentType: "text/javascript",
     }));
     await page.goto("/scripts/duckdb-wasm-local-test.html");
     const result = await page.evaluate(async ({ bed, gff, vcf, index, ignoreRange }) => {
@@ -151,7 +151,7 @@ test("host allowlist blocks non-listed hosts but not local blob: files", async (
     return { chrom, start: Number(start), end: Number(end), name };
   });
   await page.route("**/duckhts-package.js", (route) => route.fulfill({
-    path: path.join(root, "js/src/index.js"), contentType: "text/javascript",
+    path: path.join(root, "js/src/local-file.js"), contentType: "text/javascript",
   }));
   await page.goto("/scripts/duckdb-wasm-local-test.html");
   const result = await page.evaluate(async ({ bed }) => {

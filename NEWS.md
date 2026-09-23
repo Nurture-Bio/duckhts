@@ -31,8 +31,10 @@
   fallback, copying only requested chunks into Wasm memory.
   DuckDB VFS registrations remain separate and invisible to htslib. The npm
   package's pinned signed binaries do not yet contain this handler.
-- The npm package exports `localFileUrl(file)`, returning an object URL and an
-  explicit `revoke()` callback for a browser File or Blob. Chromium 148.0.7778.96
+- Add `js/src/local-file.js` (`localFileUrl(file)` → `{ url, revoke }`) for browser
+  Files and Blobs. It is deliberately not exported from the npm package entry until
+  `artifacts.json` pins DuckHTS builds that contain the `blob:` handler; a test
+  enforces this (Codex review P1). Chromium 148.0.7778.96
   worker-synchronous XHR measurements show `HEAD blob:` fails with `NetworkError`
   (status 0), ranged GET returns 206 with the total in `Content-Range`, and ranges
   crossing EOF are truncated. Out-of-range and revoked URLs fail with

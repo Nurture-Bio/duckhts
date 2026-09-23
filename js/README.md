@@ -48,45 +48,36 @@ work, and cross-origin URLs need permissive CORS.
 
 ### Local files
 
-`localFileUrl(file)` accepts a browser `File` or `Blob` and returns `{ url, revoke }`.
+DuckHTS builds from https://github.com/RGenomicsETL/duckhts/pull/248 onward read
+`blob:` object URLs, so a page can pass a dropped or picked `File` straight to a reader.
 The URL is a capability, not a path: unguessable, read-only, scoped to the page that
-created it, and revocable. The user grants access to exactly the file they dropped or
-picked, and the reader can open nothing else. Anything the page holds as a `Blob` works
-the same way: a file from `<input type="file">` or a drop event, an OPFS file
-(`handle.getFile()`), a Blob kept in IndexedDB, or bytes the page fetched with its own
-credentials. SQL stays the same: `read_bed(url)` does not care where the bytes came
-from, just as native builds read paths, `data:` URLs and `/dev/fd/N`.
+created it, and revocable. Any `Blob` the page holds works the same way: a file from
+`<input type="file">` or a drop event, an OPFS file (`handle.getFile()`), a Blob kept in
+IndexedDB, or bytes the page fetched with its own credentials. SQL stays the same:
+`read_bed(url)` does not care where the bytes came from, just as native builds read
+paths, `data:` URLs and `/dev/fd/N`.
 
-`blob:` support needs a DuckHTS build that includes it. The signed binaries currently
-pinned in `artifacts.json` do **not**; use a locally built extension with
-`allowUnsignedExtensions: true` until the next release reaches the community repository.
+**This package does not expose it yet.** The signed binaries pinned in `artifacts.json`
+(DuckHTS 1.5.2) predate the handler, so a `blob:` URL fails with them. The package will
+export `localFileUrl(file)` → `{ url, revoke }` in the release that pins blob-capable
+builds. Until then, a page using a locally built extension (`allowUnsignedExtensions:
+true`) can call `URL.createObjectURL(file)` itself:
 
 ```js
-import { localFileUrl } from "duckhts";
-
-const local = localFileUrl(fileInput.files[0]);
+const url = URL.createObjectURL(fileInput.files[0]);
 try {
-  const rows = await conn.query(
-    `SELECT chrom, start, "end" FROM read_bed('${local.url}')`,
-  );
+  const rows = await conn.query(`SELECT chrom, start, "end" FROM read_bed('${url}')`);
 } finally {
-  local.revoke();
+  URL.revokeObjectURL(url);
 }
 ```
 
-Keep the URL live until every query or result stream using it finishes. Views retain the
-URL, not the file: revoke only when those views no longer need it. Revocation is idempotent.
-Unknown or revoked URLs produce reader errors.
-
-Object URLs have no sibling filenames. Automatic index discovery falls back to streaming;
-for a region query, create a second URL for the index and pass
-`index_path := '<index blob URL>'`. Keep both URLs live through the query and revoke both
-afterwards. Access is read-only and requires a worker in the creating page's storage
-partition; it does not grant another origin access to local files.
-
-Chromium serves byte ranges for these URLs. If a transport ignores Range, the backend
-caches the full response in JavaScript and copies only requested chunks into Wasm memory.
-That fallback can consume browser memory proportional to the file size.
+Keep the URL live until every query or result stream using it finishes, including
+queries against views that retain it. Object URLs have no sibling filenames: automatic
+index discovery falls back to streaming, and a region query needs a second URL for the
+index passed as `index_path := '<index blob URL>'`. If a transport ignores Range, the
+backend caches the full response in JavaScript, which costs browser memory
+proportional to the file size.
 
 Files registered with duckdb-wasm (`registerFileBuffer`, `registerFileHandle`,
 `registerFileText`) remain **invisible** to DuckHTS readers. The file-system integration
