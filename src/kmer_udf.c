@@ -180,8 +180,8 @@ static inline int64_t get_int64_at(duckdb_vector vector, idx_t row) {
 /* Both representations use the same complete scan. No-CIGAR succeeds with
    seen_ops == 0 so wrappers can distinguish metric NULL from presence false.
    On failure the caller must discard all accumulated metrics. */
-static duckhts_cigar_status_t cigar_scan_metrics(duckhts_cigar_cursor_t *cursor,
-                                               cigar_metrics_t *metrics) {
+static inline duckhts_cigar_status_t cigar_scan_metrics(duckhts_cigar_cursor_t *cursor,
+                                                      cigar_metrics_t *metrics) {
     duckhts_cigar_op_t op;
     duckhts_cigar_status_t status;
 
@@ -1192,11 +1192,11 @@ static void cigar_block_sink_publish(duckdb_function_info info, cigar_block_sink
     }
 }
 
-/* Validate before candidate writes; the wrapper rewinds the entire row on
+/* Validate each operation before its candidate write; the wrapper rewinds the entire row on
    failure. Reservation includes every input op, so writing a candidate for
    nonaligned ops is safe and only aligned ops advance the output cursor. */
-static duckhts_cigar_status_t cigar_scan_blocks(cigar_block_sink_t *sink,
-                                              duckhts_cigar_cursor_t *cursor, int64_t pos) {
+static inline duckhts_cigar_status_t cigar_scan_blocks(cigar_block_sink_t *sink,
+                                                     duckhts_cigar_cursor_t *cursor, int64_t pos) {
     duckhts_cigar_op_t op;
     duckhts_cigar_status_t status;
     size_t op_start = cursor->offset;

@@ -6,7 +6,8 @@
   consumed-span arithmetic. Metrics and presence checks return NULL for malformed
   suffixes or lengths/spans outside BIGINT, including invalid suffixes after an
   operator match. Unsupported requested operators return NULL in both forms.
-  Requested-operator case folding is ASCII and locale-independent.
+  Requested-operator case folding is ASCII and locale-independent. Full-input
+  checking adds validation work to operator-presence calls.
 - Add an optional final `strict` BOOLEAN to the CIGAR metrics, operator test and
   aligned-block functions. Its default is FALSE; TRUE raises an error for invalid
   input under the same checked grammar. Diagnostics identify the function and
