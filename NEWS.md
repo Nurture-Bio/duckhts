@@ -2,6 +2,17 @@
 
 # duckhts 1.5.2.9000
 
+- Add the `duckhts` npm package under `js/` for `@duckdb/duckdb-wasm`
+  (https://github.com/RGenomicsETL/duckhts/issues/246). It ships the signed
+  community-repository wasm builds of DuckHTS 1.5.2 byte for byte (staged by
+  `js/scripts/stage.mjs` against pinned sha256 values in `js/artifacts.json`), and a
+  `loadDuckhts(conn, { baseUrl })` loader that picks the build for `PRAGMA platform`,
+  so web applications can serve the extension from their own origin with unsigned
+  extensions disallowed. A Playwright test loads it into duckdb-wasm
+  `1.33.1-dev57.0` (DuckDB v1.5.4) and reads BED and GFF over same-origin HTTP. It
+  records two current limits: files registered with duckdb-wasm are not visible to
+  htslib-backed readers, and LOAD fails on DuckDB v1.4.x
+  (https://github.com/RGenomicsETL/duckhts/issues/247).
 - Show contributor avatars and credit Ryan Ward / Nurture Bio for GenBank
   support in the README footer, with links to upstream acknowledgements.
 
