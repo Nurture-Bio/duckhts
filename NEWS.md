@@ -2,6 +2,11 @@
 
 # duckhts 1.5.2.9000
 
+- Test the native half of the "readers take URLs, not only paths" contract in
+  `test/sql/htslib_contract.test`: `read_bed` over `data:` URLs (percent-encoded and
+  base64) and `preload:` of a committed fixture, with expected rows taken from the
+  literal inputs. Browser builds cover `blob:` in `test/wasm/blob-readers.spec.ts`.
+
 - Emscripten builds accept read-only `blob:` URLs through the htslib XHR backend,
   including local File reads and explicit `index_path` object URLs for indexed
   regions. Missing auto-discovered sidecars allow streaming; callers own URL

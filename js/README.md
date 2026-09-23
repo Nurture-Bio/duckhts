@@ -49,10 +49,17 @@ work, and cross-origin URLs need permissive CORS.
 ### Local files
 
 `localFileUrl(file)` accepts a browser `File` or `Blob` and returns `{ url, revoke }`.
-With an Emscripten extension built from source with `blob:` support, a page can pass a
-file from a drop event or file input to a reader without copying it into DuckDB's virtual
-file system. The signed binaries currently pinned in `artifacts.json` do **not** include
-this handler; use a locally built extension with `allowUnsignedExtensions: true` for now.
+The URL is a capability, not a path: unguessable, read-only, scoped to the page that
+created it, and revocable. The user grants access to exactly the file they dropped or
+picked, and the reader can open nothing else. Anything the page holds as a `Blob` works
+the same way: a file from `<input type="file">` or a drop event, an OPFS file
+(`handle.getFile()`), a Blob kept in IndexedDB, or bytes the page fetched with its own
+credentials. SQL stays the same: `read_bed(url)` does not care where the bytes came
+from, just as native builds read paths, `data:` URLs and `/dev/fd/N`.
+
+`blob:` support needs a DuckHTS build that includes it. The signed binaries currently
+pinned in `artifacts.json` do **not**; use a locally built extension with
+`allowUnsignedExtensions: true` until the next release reaches the community repository.
 
 ```js
 import { localFileUrl } from "duckhts";
