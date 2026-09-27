@@ -1,0 +1,8 @@
+# .git stays in the context: `make configure` reads the extension version from it.
+build
+cmake_build
+configure
+venv
+duckdb_unittest_tempdir
+.idea
+.tmp

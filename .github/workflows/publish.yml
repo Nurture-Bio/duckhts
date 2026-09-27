@@ -1,0 +1,59 @@
+# Builds this repository's image and pushes it to ECR in the Shared Services account,
+# tagged with the full commit SHA.
+name: publish
+on:
+  push: { branches: [main, NB-485-add-build-and-publish-pipeline] }
+  workflow_dispatch: {}
+permissions: { id-token: write, contents: read }
+concurrency:
+  group: publish-${{ github.sha }}
+env:
+  EXTENSION_FILE: ext/duckhts.duckdb_extension
+  PROD_ROLE_ARN: arn:aws:iam::501250588276:role/tellus-publisher-prod-duckhts
+  NONPROD_ROLE_ARN: arn:aws:iam::501250588276:role/tellus-publisher-nonprod-duckhts
+  REGISTRY: 501250588276.dkr.ecr.us-west-2.amazonaws.com
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      CHANNEL: ${{ github.ref == 'refs/heads/main' && 'prod' || 'nonprod' }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-west-2
+          role-to-assume: ${{ env.CHANNEL == 'prod' && env.PROD_ROLE_ARN || env.NONPROD_ROLE_ARN }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push the image unless this version exists
+        env:
+          REPO: ${{ env.CHANNEL }}/tellus/duckhts
+        run: |
+          if aws ecr describe-images --registry-id 501250588276 --repository-name "$REPO" \
+               --image-ids imageTag="$SHA" >/dev/null 2>&1; then
+            echo "$REPO:$SHA already published"; exit 0
+          fi
+          build=(docker buildx build --platform linux/amd64 --provenance=false --sbom=false)
+          labels=(--label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+                  --label "org.opencontainers.image.revision=$SHA")
+          abi=
+          if [ -n "$EXTENSION_FILE" ]; then
+            "${build[@]}" --output type=local,dest=out .
+            read -r abi version platform < <(python3 -c '
+          import sys; d = open(sys.argv[1], "rb").read()[-512:]
+          f = [d[i*32:(i+1)*32].rstrip(b"\0").decode() for i in range(8)][::-1]
+          assert f[0] == "4", "no DuckDB extension footer"
+          print(f[4], f[2], f[1])' "out/$EXTENSION_FILE")
+            read -r want_abi want_version < <(scripts/duckdb-target.sh)
+            if [ "$abi $version $platform" != "$want_abi $want_version linux_amd64" ]; then
+              echo "::error::footer says $abi $version $platform; repository targets $want_abi $want_version linux_amd64"
+              exit 1
+            fi
+            labels+=(--label "bio.nurture.duckdb.abi=$abi" --label "bio.nurture.duckdb.version=$version"
+                     --label "bio.nurture.duckdb.platform=$platform")
+          fi
+          "${build[@]}" "${labels[@]}" -t "$REGISTRY/$REPO:$SHA" --push .
+          echo "Published \`$REPO:$SHA\` ${abi:+($abi $version $platform)}" >> "$GITHUB_STEP_SUMMARY"
