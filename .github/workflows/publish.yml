@@ -1,8 +1,11 @@
 # Builds this repository's image and pushes it to ECR in the Shared Services account,
-# tagged with the full commit SHA.
+# tagged with the full commit SHA. A merge to main publishes to prod/tellus/*; a manual
+# run (Actions → publish → Run workflow) on any other branch publishes to nonprod/tellus/*.
+#
+# TODO in future story - add support to build and publish from a local machine
 name: publish
 on:
-  push: { branches: [main, NB-485-add-build-and-publish-pipeline] }
+  push: { branches: [main] }
   workflow_dispatch: {}
 permissions: { id-token: write, contents: read }
 concurrency:
